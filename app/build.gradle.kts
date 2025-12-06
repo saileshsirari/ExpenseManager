@@ -64,4 +64,6 @@ dependencies {
     kapt(libs.hilt.compiler)
 
     implementation(project(":feature-smsimport"))
+    implementation(project(":core"))
+
 }

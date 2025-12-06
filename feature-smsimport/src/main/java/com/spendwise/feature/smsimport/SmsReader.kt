@@ -22,8 +22,10 @@ class SmsReaderImpl(private val resolver: ContentResolver): SmsReader {
             while (it.moveToNext()) {
                 val sender = it.getString(0) ?: ""
                 val body = it.getString(1) ?: ""
-                val date = it.getLong(2)
-                list.add(SmsRaw(sender, body, date))
+                val timestamp = cursor.getLong(2).let { ts ->
+                    if (ts < 10_000_000_000L) ts * 1000 else ts   // convert seconds → ms
+                }
+                list.add(SmsRaw(sender, body, timestamp))
             }
         }
         list
