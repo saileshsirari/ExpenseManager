@@ -24,6 +24,7 @@ import androidx.compose.material3.Divider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -83,9 +84,12 @@ fun DashboardScreen(viewModel: SmsImportViewModel = hiltViewModel()) {
             items = items,
             key = { it.id }  // required for stable expansion state
         ) { tx ->
-            SmsListItem(tx) { clicked ->
+            SmsListItem(tx, onClick = {clicked->
                 viewModel.onMessageClicked(clicked)
+            }) {
+                viewModel.fixMerchant(it, it.sender)
             }
+
         }
     }
 
@@ -95,7 +99,8 @@ fun DashboardScreen(viewModel: SmsImportViewModel = hiltViewModel()) {
 @Composable
 fun SmsListItem(
     tx: SmsEntity,
-    onClick: (SmsEntity) -> Unit
+    onClick: (SmsEntity) -> Unit,
+    onRequestMerchantFix: (SmsEntity) -> Unit
 ) {
     var expanded by rememberSaveable(tx.id) { mutableStateOf(false) }
 
@@ -186,8 +191,16 @@ fun SmsListItem(
                 ) {
                     Text(tx.body, lineHeight = 18.sp)
                 }
+
+                Spacer(Modifier.height(6.dp))
+
+                // ⭐ ADD THIS
+                TextButton(onClick = { onRequestMerchantFix(tx) }) {
+                    Text("Fix Merchant")
+                }
             }
         }
+
 
         Spacer(Modifier.height(12.dp))
         Divider()

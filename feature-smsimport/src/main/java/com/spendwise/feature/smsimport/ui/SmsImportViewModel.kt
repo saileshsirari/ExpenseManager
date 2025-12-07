@@ -41,6 +41,17 @@ class SmsImportViewModel @Inject constructor(private val repo: SmsRepositoryImpl
             _selectedExplanation.value = log
         }
     }
+    fun fixMerchant(tx: SmsEntity, newMerchant: String) {
+        viewModelScope.launch {
+            repo.saveMerchantOverride(tx.merchant ?: tx.sender, newMerchant)
+
+            // Force reclassification for this item only
+            val updated = repo.reclassifySingle(tx.id)
+
+            // update list in UI
+            refresh()
+        }
+    }
 
     @RequiresApi(Build.VERSION_CODES.O)
     fun getMonthlySummary(
@@ -108,6 +119,12 @@ class SmsImportViewModel @Inject constructor(private val repo: SmsRepositoryImpl
         val categoryTotals: Map<String, Double> = emptyMap(),
         val dailyTotals: Map<Int, Double> = emptyMap()
     )
-
+    fun refresh() {
+        viewModelScope.launch {
+            repo.getAll().collect { list ->
+                _items.value = list
+            }
+        }
+    }
 
 }

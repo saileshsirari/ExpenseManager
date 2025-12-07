@@ -11,8 +11,11 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -27,6 +30,7 @@ import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.spendwise.app.ui.SmsListItem
+import com.spendwise.feature.smsimport.data.SmsEntity
 import com.spendwise.feature.smsimport.ui.SmsImportViewModel
 import java.time.Instant
 import java.time.YearMonth
@@ -39,6 +43,18 @@ fun MonthlyDashboardScreen(
 ) {
     val items by viewModel.items.collectAsState()
     val  selectedExplanation by viewModel.selectedExplanation.collectAsState()
+    var showFixDialog by remember { mutableStateOf<SmsEntity?>(null) }
+
+    if (showFixDialog != null) {
+        FixMerchantDialog(
+            tx = showFixDialog!!,
+            onConfirm = { newName ->
+                viewModel.fixMerchant(showFixDialog!!, newName)
+                showFixDialog = null
+            },
+            onDismiss = { showFixDialog = null }
+        )
+    }
 
     var selectedCategory by remember { mutableStateOf<String?>(null) }
     var selectedDay by remember { mutableStateOf<Int?>(null) }
@@ -143,10 +159,45 @@ fun MonthlyDashboardScreen(
 
         // Scrolling list items
         items(filtered) { tx ->
-            SmsListItem(tx) { clicked ->
+            SmsListItem(tx, onClick = {clicked->
                 viewModel.onMessageClicked(clicked)
+            }) {
+                showFixDialog = it
             }
+
         }
     }
 }
+
+@Composable
+fun FixMerchantDialog(
+    tx: SmsEntity,
+    onConfirm: (String) -> Unit,
+    onDismiss: () -> Unit
+) {
+    var text by remember { mutableStateOf(tx.merchant ?: tx.sender) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Fix Merchant") },
+        text = {
+            OutlinedTextField(
+                value = text,
+                onValueChange = { text = it },
+                label = { Text("Merchant Name") }
+            )
+        },
+        confirmButton = {
+            TextButton(onClick = { onConfirm(text.trim()) }) {
+                Text("Save")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Cancel")
+            }
+        }
+    )
+}
+
 

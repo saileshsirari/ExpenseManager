@@ -123,5 +123,31 @@ class SmsRepositoryImpl @Inject constructor(
             }
         )?.explanation
     }
+    suspend fun reclassifySingle(id: Long): SmsEntity? {
+        val tx = db.smsDao().getById(id) ?: return null
+
+        val parsedAmount = SmsParser.parseAmount(tx.body) ?: return null
+
+        val result = SmsMlPipeline.classify(
+            raw = RawSms(tx.sender, tx.body, tx.timestamp),
+            parsedAmount = parsedAmount,
+            overrideProvider = { key ->
+                db.userMlOverrideDao().getValue(key)
+            }
+        ) ?: return null
+
+        val updated = tx.copy(
+            merchant = result.merchant,
+            category = result.category.name,
+            type = if (result.isCredit) "credit" else "debit"
+        )
+
+        db.smsDao().update(updated)
+        return updated
+    }
+
+    override fun getAll(): Flow<List<SmsEntity>> {
+        return db.smsDao().getAll()
+    }
 
 }
