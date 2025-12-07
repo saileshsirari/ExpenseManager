@@ -5,7 +5,6 @@ import android.content.pm.PackageManager
 import android.os.Build
 import android.util.Log
 import androidx.annotation.RequiresApi
-import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
@@ -35,11 +34,13 @@ import java.time.ZoneId
 
 @RequiresApi(Build.VERSION_CODES.O)
 @Composable
-fun MonthlyDashboardScreen(viewModel: SmsImportViewModel = hiltViewModel()) {
+fun MonthlyDashboardScreen(
+    viewModel: SmsImportViewModel = hiltViewModel()
+) {
+    val items by viewModel.items.collectAsState()
 
     var selectedCategory by remember { mutableStateOf<String?>(null) }
     var selectedDay by remember { mutableStateOf<Int?>(null) }
-
     val context = LocalContext.current
     val hasPermission = ContextCompat.checkSelfPermission(
         context,
@@ -62,43 +63,87 @@ fun MonthlyDashboardScreen(viewModel: SmsImportViewModel = hiltViewModel()) {
     }
     val summary = viewModel.getMonthlySummary(allTransactions, month)
 
-    Column(Modifier.fillMaxSize().padding(16.dp)) {
-
-        MonthSelector(month = month, onMonthChange = { month = it })
-
-        Spacer(Modifier.height(16.dp))
-
-        Text(
-            "Total Spending: ₹${summary.total}",
-            style = MaterialTheme.typography.headlineMedium,
-            fontWeight = FontWeight.Bold
-        )
-
-        Spacer(Modifier.height(20.dp))
-
-        Text("Category Breakdown", style = MaterialTheme.typography.titleMedium)
-        CategoryPieChart(summary.categoryTotals, onSliceClick = { cat -> selectedCategory = cat })
-
-        Spacer(Modifier.height(32.dp))
-
-        Text("Daily Spending", style = MaterialTheme.typography.titleMedium)
-        DailyBarChart(summary.dailyTotals, onBarClick = { day -> selectedDay = day })
-
-        Spacer(Modifier.height(20.dp))
-
-        val filtered = when {
-            selectedCategory != null -> allTransactions.filter { it.type == selectedCategory }
-            selectedDay != null -> allTransactions.filter {
-                Instant.ofEpochMilli(it.timestamp)
-                    .atZone(ZoneId.systemDefault())
-                    .dayOfMonth == selectedDay
-            }
-            else -> emptyList()
+    val filtered = when {
+        selectedCategory != null -> items.filter { it.type == selectedCategory }
+        selectedDay != null -> items.filter {
+            Instant.ofEpochMilli(it.timestamp)
+                .atZone(ZoneId.systemDefault())
+                .dayOfMonth == selectedDay
         }
-        LazyColumn {
-            items(filtered) { tx ->
-                SmsListItem(tx)
+        else -> emptyList()
+    }
+
+    LazyColumn(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(16.dp)
+    ) {
+
+        // Month Selector
+        item {
+            MonthSelector(
+                month = month,
+                onMonthChange = {
+                    month = it
+                    selectedCategory = null
+                    selectedDay = null
+                }
+            )
+            Spacer(Modifier.height(16.dp))
+        }
+
+        // Total Spending
+        item {
+            Text(
+                "Total Spending: ₹${summary.total}",
+                style = MaterialTheme.typography.headlineMedium,
+                fontWeight = FontWeight.Bold
+            )
+            Spacer(Modifier.height(20.dp))
+        }
+
+        // Pie Chart Section
+        item {
+            Text("Category Breakdown", style = MaterialTheme.typography.titleMedium)
+            Spacer(Modifier.height(8.dp))
+
+            CategoryPieChart(
+                data = summary.categoryTotals,
+                onSliceClick = { selectedCategory = it; selectedDay = null }
+            )
+
+            Spacer(Modifier.height(20.dp))
+        }
+
+        // Bar Chart Section
+        item {
+            Text("Daily Spending", style = MaterialTheme.typography.titleMedium)
+            Spacer(Modifier.height(8.dp))
+
+            DailyBarChart(
+                data = summary.dailyTotals,
+                onBarClick = { selectedDay = it; selectedCategory = null }
+            )
+
+            Spacer(Modifier.height(20.dp))
+        }
+
+        // Filtered results header
+        if (filtered.isNotEmpty()) {
+            item {
+                Text(
+                    text = "Filtered Results (${filtered.size})",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold
+                )
+                Spacer(Modifier.height(12.dp))
             }
+        }
+
+        // Scrolling list items
+        items(filtered) { tx ->
+            SmsListItem(tx)
         }
     }
 }
+

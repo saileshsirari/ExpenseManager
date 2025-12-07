@@ -21,14 +21,48 @@ class SmsRepositoryImpl @Inject constructor(private val db: AppDatabase) : SmsRe
                 val reader = SmsReaderImpl(resolver)
                 reader.readAllSms()   // can be thousands, but now runs off main thread
             }
+            val bankSenders = listOf(
+                "icici", "hdfc", "sbi", "axis", "kotak", "idfc", "pnb",
+                "boi", "canara", "unionbank", "indusind", "yesbank", "federal",
+                "aubank", "barodabnk", "cbssbi", "sbin", "icicibank", "hdfcbk"
+            )
+            val rejectKeywords = listOf(
+                "due on", "bill", "pay now", "ignore if paid",
+                "payment reminder", "due date", "last date",
+                "initiated"   // <— ADD THIS!
+            )
+
+            val txnIndicators = listOf(
+                "debited",
+                "credited",
+                "withdrawn",
+                "spent",
+                "payment of",
+                "paid towards",
+                "upi transaction",
+                "upi id",
+                "transaction of",
+                "pos transaction"
+            )
             withContext(Dispatchers.IO) {
+
                 val entities = raw.mapNotNull { sms ->
-                    if (!sms.body.contains("debited", ignoreCase = true) &&
-                        !sms.body.contains("credited", ignoreCase = true) &&
-                        !sms.body.contains("txn", ignoreCase = true)
-                    ) {
+
+                    val senderLower = sms.sender.lowercase()
+                    if (!bankSenders.any { senderLower.contains(it) }) {
                         return@mapNotNull null
                     }
+
+
+
+
+                    val bodyLower = sms.body.lowercase()
+                    if (rejectKeywords.any { bodyLower.contains(it) }) {
+                        return@mapNotNull null
+                    }
+
+
+                    val isTxn = txnIndicators.any { bodyLower.contains(it) }
                     SmsParser.parse(sms.body)?.let {
                         SmsEntity(
                             sender = sms.sender,
