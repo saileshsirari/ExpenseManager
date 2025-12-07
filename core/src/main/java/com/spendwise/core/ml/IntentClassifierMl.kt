@@ -1,10 +1,24 @@
 package com.spendwise.core.ml
 
 object IntentClassifierMl {
-
+    private val ignoreKeywords = listOf(
+        "will be debited",
+        "will be deducted",
+        "payment due",
+        "bill due",
+        "due date",
+        "upcoming",
+        "alert",
+        "auto debit",
+        "auto-debit",
+        "scheduled"
+    )
     fun classify(senderType: SenderType, body: String): IntentType {
         val b = body.lowercase()
-
+// If contains ignore keyword → not an actual txn
+        if (ignoreKeywords.any { b.contains(it) }) {
+            return IntentType.IGNORE
+        }
         // Hard rejects: clearly non-transactional
         val reminderKeywords = listOf(
             "bill", "due on", "due date", "last date",

@@ -11,7 +11,7 @@ enum class SenderType {
 }
 
 enum class IntentType {
-    DEBIT, CREDIT, REFUND, PENDING, REMINDER, PROMO, BALANCE, UNKNOWN
+    DEBIT, CREDIT, REFUND, PENDING, REMINDER, PROMO, BALANCE, UNKNOWN, IGNORE
 }
 
 enum class CategoryType {

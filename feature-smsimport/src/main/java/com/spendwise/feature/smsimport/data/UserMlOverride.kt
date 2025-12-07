@@ -3,8 +3,9 @@ package com.spendwise.feature.smsimport.data
 import androidx.room.Entity
 import androidx.room.PrimaryKey
 
-@Entity
+@Entity(tableName = "user_ml_override")
 data class UserMlOverride(
-    @PrimaryKey val key: String,      // "merchant:Zomato", "category:Uber"
-    val value: String                 // replacement merchant/category
+    @PrimaryKey val key: String,
+    val value: String
 )
+

@@ -8,9 +8,13 @@ import androidx.room.Query
 @Dao
 interface UserMlOverrideDao {
 
-    @Query("SELECT value FROM UserMlOverride WHERE `key` = :key LIMIT 1")
+    @Query("SELECT value FROM user_ml_override WHERE `key` = :key LIMIT 1")
     suspend fun getValue(key: String): String?
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
-    suspend fun save(override: UserMlOverride)
+    suspend fun save(item: UserMlOverride)
+
+    @Query("SELECT value FROM user_ml_override WHERE `key` LIKE 'ignore_pattern:%'")
+    suspend fun getIgnorePatterns(): List<String>
 }
+

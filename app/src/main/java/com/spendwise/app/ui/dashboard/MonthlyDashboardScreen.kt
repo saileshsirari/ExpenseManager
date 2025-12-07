@@ -159,11 +159,13 @@ fun MonthlyDashboardScreen(
 
         // Scrolling list items
         items(filtered) { tx ->
-            SmsListItem(tx, onClick = {clicked->
+
+            SmsListItem(tx, onClick = { clicked ->
                 viewModel.onMessageClicked(clicked)
-            }) {
+            }, onRequestMerchantFix = {
                 showFixDialog = it
-            }
+
+            }, onMarkNotExpense = { clicked -> viewModel.markNotExpense(clicked) })
 
         }
     }

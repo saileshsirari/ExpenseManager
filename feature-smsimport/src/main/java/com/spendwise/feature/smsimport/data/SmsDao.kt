@@ -30,4 +30,8 @@ interface SmsDao {
     @Update
     suspend fun update(item: SmsEntity)
 
+    @Query("SELECT * FROM sms")
+    suspend fun getAllOnce(): List<SmsEntity>
+
+
 }

@@ -19,6 +19,8 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Block
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Divider
 import androidx.compose.material3.Icon
@@ -84,11 +86,12 @@ fun DashboardScreen(viewModel: SmsImportViewModel = hiltViewModel()) {
             items = items,
             key = { it.id }  // required for stable expansion state
         ) { tx ->
-            SmsListItem(tx, onClick = {clicked->
+            SmsListItem(tx, onClick = { clicked ->
                 viewModel.onMessageClicked(clicked)
-            }) {
+            }, onRequestMerchantFix = {
                 viewModel.fixMerchant(it, it.sender)
-            }
+
+            }, onMarkNotExpense = { clicked -> viewModel.markNotExpense(clicked) })
 
         }
     }
@@ -100,7 +103,8 @@ fun DashboardScreen(viewModel: SmsImportViewModel = hiltViewModel()) {
 fun SmsListItem(
     tx: SmsEntity,
     onClick: (SmsEntity) -> Unit,
-    onRequestMerchantFix: (SmsEntity) -> Unit
+    onRequestMerchantFix: (SmsEntity) -> Unit,
+    onMarkNotExpense: (SmsEntity) -> Unit
 ) {
     var expanded by rememberSaveable(tx.id) { mutableStateOf(false) }
 
@@ -197,6 +201,14 @@ fun SmsListItem(
                 // ⭐ ADD THIS
                 TextButton(onClick = { onRequestMerchantFix(tx) }) {
                     Text("Fix Merchant")
+                }
+
+                Spacer(Modifier.height(6.dp))
+
+                TextButton(onClick = { onMarkNotExpense(tx) }) {
+                    Icon(Icons.Default.Block, contentDescription = null)
+                    Spacer(Modifier.width(6.dp))
+                    Text("Mark as Not Expense")
                 }
             }
         }

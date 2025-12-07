@@ -43,15 +43,21 @@ class SmsImportViewModel @Inject constructor(private val repo: SmsRepositoryImpl
     }
     fun fixMerchant(tx: SmsEntity, newMerchant: String) {
         viewModelScope.launch {
-            repo.saveMerchantOverride(tx.merchant ?: tx.sender, newMerchant)
 
-            // Force reclassification for this item only
-            val updated = repo.reclassifySingle(tx.id)
+            // 1️⃣ Determine correct merchant key to override
+            val originalKey = (tx.merchant ?: tx.sender).trim()
 
-            // update list in UI
+            // 2️⃣ Save override
+            repo.saveMerchantOverride(originalKey, newMerchant.trim())
+
+            // 3️⃣ Re-run ML pipeline for THIS transaction only
+            repo.reclassifySingle(tx.id)
+
+            // 4️⃣ Refresh list in UI
             refresh()
         }
     }
+
 
     @RequiresApi(Build.VERSION_CODES.O)
     fun getMonthlySummary(
@@ -126,5 +132,13 @@ class SmsImportViewModel @Inject constructor(private val repo: SmsRepositoryImpl
             }
         }
     }
+
+    fun markNotExpense(tx: SmsEntity) {
+        viewModelScope.launch {
+            repo.saveIgnorePattern(tx.body)
+            refresh()
+        }
+    }
+
 
 }
