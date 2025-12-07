@@ -4,7 +4,6 @@ import android.Manifest
 import android.content.pm.PackageManager
 import android.icu.text.SimpleDateFormat
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -16,7 +15,6 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -44,7 +42,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import androidx.hilt.navigation.compose.hiltViewModel
-import com.spendwise.core.MerchantClassifier
+import com.spendwise.app.ui.dashboard.MerchantLogo
 import com.spendwise.core.R
 import com.spendwise.feature.smsimport.data.SmsEntity
 import com.spendwise.feature.smsimport.ui.SmsImportViewModel
@@ -101,24 +99,22 @@ fun SmsListItem(
 ) {
     var expanded by rememberSaveable(tx.id) { mutableStateOf(false) }
 
-    val classify = remember(tx.merchant, tx.body) {
-        MerchantClassifier.classify(tx.merchant ?: tx.sender, tx.body)
-    }
+    // --- Merchant + Category directly from ML pipeline ---
+    val merchantName = tx.merchant ?: tx.sender
+    val categoryName = tx.category ?: "OTHER"
 
-    val category = classify.category
-    val logoRes = classify.logoRes
-    val merchantName = classify.merchantName
-
+    // --- Credit/Debit color ---
     val isCredit = tx.type?.equals("credit", true) == true
     val amountColor = if (isCredit) Color(0xFF2E7D32) else Color(0xFFC62828)
 
+    // --- Format date ---
     val dateFormatted = remember(tx.timestamp) {
         SimpleDateFormat("dd MMM yyyy, hh:mm a", Locale.getDefault())
             .format(Date(tx.timestamp))
     }
 
     Column(
-        Modifier
+        modifier = Modifier
             .fillMaxWidth()
             .clickable {
                 expanded = !expanded
@@ -127,7 +123,7 @@ fun SmsListItem(
             .padding(vertical = 12.dp)
     ) {
 
-        // ROW WITH LOGO + MERCHANT + AMOUNT ------------------------------------------------
+        // ========================== TOP ROW ==========================
         Row(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween,
@@ -135,17 +131,23 @@ fun SmsListItem(
         ) {
 
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Image(
-                    painter = painterResource(id = logoRes),
-                    contentDescription = null,
-                    modifier = Modifier.size(36.dp)
-                )
+
+                // Merchant logo or PERSON avatar
+                MerchantLogo(merchantName)
 
                 Spacer(Modifier.width(12.dp))
 
                 Column {
-                    Text(merchantName, style = MaterialTheme.typography.titleMedium)
-                    Text(dateFormatted, style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+                    Text(
+                        merchantName,
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    Text(
+                        dateFormatted,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = Color.Gray
+                    )
                 }
             }
 
@@ -159,10 +161,10 @@ fun SmsListItem(
 
         Spacer(Modifier.height(6.dp))
 
-        // CATEGORY CHIP ---------------------------------------------------------------------
+        // ========================== CATEGORY CHIP ==========================
         AssistChip(
             onClick = {},
-            label = { Text(category) },
+            label = { Text(categoryName) },
             leadingIcon = {
                 Icon(
                     painterResource(R.drawable.ic_category),
@@ -171,7 +173,7 @@ fun SmsListItem(
             }
         )
 
-        // EXPANDED SMS BODY -----------------------------------------------------------------
+        // ========================== EXPANDED BODY ==========================
         AnimatedVisibility(visible = expanded) {
             Column(Modifier.padding(top = 10.dp)) {
                 Text("Original SMS:", fontWeight = FontWeight.SemiBold)
@@ -191,6 +193,7 @@ fun SmsListItem(
         Divider()
     }
 }
+
 
 
 

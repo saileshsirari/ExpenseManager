@@ -1,25 +1,31 @@
 package com.spendwise.core.ml
 
-/**
- * Given raw SMS + parsed amount (from your existing regex parser),
- * decide if it's a real transaction and classify it.
- *
- * If returns null → ignore this SMS (not a txn).
- */
 object SmsMlPipeline {
 
-   suspend fun classify(raw: RawSms, parsedAmount: Double?, overrideProvider: suspend (String) -> String?): ClassifiedTxn? {
+    suspend fun classify(
+        raw: RawSms,
+        parsedAmount: Double?,
+        overrideProvider: suspend (String) -> String?
+    ): ClassifiedTxn? {
+
         val amount = parsedAmount ?: return null
 
+        // Build explanation output
         val senderReason = StringBuilder()
         val intentReason = StringBuilder()
         val merchantReason = StringBuilder()
         val categoryReason = StringBuilder()
 
+        // -----------------------------------------------------------
+        // 1️⃣ Sender type classification
+        // -----------------------------------------------------------
         val senderType = SenderClassifierMl.classify(raw.sender, raw.body).also {
             senderReason.append("Detected sender type as $it because sender=${raw.sender}")
         }
 
+        // -----------------------------------------------------------
+        // 2️⃣ Intent classification (debit/credit/refund/etc)
+        // -----------------------------------------------------------
         val intentType = IntentClassifierMl.classify(senderType, raw.body).also {
             intentReason.append("Detected intent as $it based on keywords in message.")
         }
@@ -29,32 +35,56 @@ object SmsMlPipeline {
             return null
         }
 
+        // -----------------------------------------------------------
+        // 3️⃣ Merchant extraction
+        // -----------------------------------------------------------
         val merchant = MerchantExtractorMl.extract(
-            senderType,
-            raw.sender,
-            raw.body,
-            overrideProvider
-        )
+            senderType = senderType,
+            sender = raw.sender,
+            body = raw.body,
+            overrideProvider = overrideProvider
+        ).also { m ->
+            if (m != null)
+                merchantReason.append("Merchant resolved as '$m'.")
+            else
+                merchantReason.append("No merchant detected.")
+        }
 
+        // -----------------------------------------------------------
+        // 4️⃣ Category classification
+        // -----------------------------------------------------------
         val category = CategoryClassifierMl.classify(
-            merchant,
-            raw.body,
-            intentType,
-            overrideProvider
-        )
+            merchant = merchant,
+            body = raw.body,
+            intentType = intentType,
+            overrideProvider = overrideProvider
+        ).also { cat ->
+            if (cat != null)
+                categoryReason.append("Category resolved as ${cat.name}.")
+            else
+                categoryReason.append("Category not identifiable.")
+        }
 
-
+        // -----------------------------------------------------------
+        // 5️⃣ Credit/Debit logic
+        // -----------------------------------------------------------
         val isCredit = intentType == IntentType.CREDIT || intentType == IntentType.REFUND
 
+        // -----------------------------------------------------------
+        // 6️⃣ Build explanation bundle
+        // -----------------------------------------------------------
         val reasons = MlReasonBundle(
-            senderReason.toString(),
-            intentReason.toString(),
-            merchantReason.toString(),
-            categoryReason.toString()
+            senderReason = senderReason.toString(),
+            intentReason = intentReason.toString(),
+            merchantReason = merchantReason.toString(),
+            categoryReason = categoryReason.toString()
         )
 
-        // Debug log
-    /*    MlDebugLogger.logPipelineStep(
+        // -----------------------------------------------------------
+        // 7️⃣ Debug log (optional)
+        // -----------------------------------------------------------
+        /*
+        MlDebugLogger.logPipelineStep(
             raw = raw,
             senderType = senderType,
             intentType = intentType,
@@ -62,8 +92,12 @@ object SmsMlPipeline {
             category = category,
             amount = amount,
             reason = reasons
-        )*/
+        )
+        */
 
+        // -----------------------------------------------------------
+        // 8️⃣ Return final classified transaction
+        // -----------------------------------------------------------
         return ClassifiedTxn(
             rawSms = raw,
             senderType = senderType,
@@ -72,7 +106,7 @@ object SmsMlPipeline {
             category = category,
             amount = amount,
             isCredit = isCredit,
-            explanation = reasons   // ← Add this field
+            explanation = reasons
         )
     }
 }

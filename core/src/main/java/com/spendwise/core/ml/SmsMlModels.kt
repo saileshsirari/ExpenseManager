@@ -15,9 +15,22 @@ enum class IntentType {
 }
 
 enum class CategoryType {
-    FOOD, TRAVEL, SHOPPING, FUEL, BILLS, UTILITIES, ENTERTAINMENT,
-    HEALTH, EDUCATION, TRANSFER, ATM_CASH, INCOME, OTHER
+    FOOD,
+    TRAVEL,
+    SHOPPING,
+    FUEL,
+    BILLS,
+    UTILITIES,
+    ENTERTAINMENT,
+    HEALTH,
+    EDUCATION,
+    TRANSFER,
+    ATM_CASH,
+    INCOME,
+    PERSON,   // 👈 ADD THIS
+    OTHER
 }
+
 
 /**
  * Final output of ML pipeline.
