@@ -38,6 +38,7 @@ fun MonthlyDashboardScreen(
     viewModel: SmsImportViewModel = hiltViewModel()
 ) {
     val items by viewModel.items.collectAsState()
+    val  selectedExplanation by viewModel.selectedExplanation.collectAsState()
 
     var selectedCategory by remember { mutableStateOf<String?>(null) }
     var selectedDay by remember { mutableStateOf<Int?>(null) }
@@ -142,7 +143,9 @@ fun MonthlyDashboardScreen(
 
         // Scrolling list items
         items(filtered) { tx ->
-            SmsListItem(tx)
+            SmsListItem(tx) { clicked ->
+                viewModel.onMessageClicked(clicked)
+            }
         }
     }
 }

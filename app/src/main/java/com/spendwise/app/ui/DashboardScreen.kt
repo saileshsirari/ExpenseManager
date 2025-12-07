@@ -85,7 +85,9 @@ fun DashboardScreen(viewModel: SmsImportViewModel = hiltViewModel()) {
             items = items,
             key = { it.id }  // required for stable expansion state
         ) { tx ->
-            SmsListItem(tx = tx)
+            SmsListItem(tx) { clicked ->
+                viewModel.onMessageClicked(clicked)
+            }
         }
     }
 
@@ -94,7 +96,8 @@ fun DashboardScreen(viewModel: SmsImportViewModel = hiltViewModel()) {
 
 @Composable
 fun SmsListItem(
-    tx: SmsEntity
+    tx: SmsEntity,
+    onClick: (SmsEntity) -> Unit
 ) {
     var expanded by rememberSaveable(tx.id) { mutableStateOf(false) }
 
@@ -117,7 +120,10 @@ fun SmsListItem(
     Column(
         Modifier
             .fillMaxWidth()
-            .clickable { expanded = !expanded }
+            .clickable {
+                expanded = !expanded
+                onClick(tx)
+            }
             .padding(vertical = 12.dp)
     ) {
 

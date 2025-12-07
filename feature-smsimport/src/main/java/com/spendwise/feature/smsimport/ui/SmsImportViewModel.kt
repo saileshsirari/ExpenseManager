@@ -6,6 +6,7 @@ import android.util.Log
 import androidx.annotation.RequiresApi
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.spendwise.core.ml.MlReasonBundle
 import com.spendwise.feature.smsimport.data.SmsEntity
 import com.spendwise.feature.smsimport.repo.SmsRepositoryImpl
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -22,12 +23,22 @@ import javax.inject.Inject
 class SmsImportViewModel @Inject constructor(private val repo: SmsRepositoryImpl): ViewModel() {
     private val _items = MutableStateFlow<List<SmsEntity>>(emptyList())
     val items: StateFlow<List<SmsEntity>> = _items
+    private val _selectedExplanation = MutableStateFlow<MlReasonBundle?>(null)
+    val selectedExplanation = _selectedExplanation
 
     fun importAll(resolverProvider: () -> android.content.ContentResolver) {
         viewModelScope.launch {
             repo.importAll(resolverProvider).collect {
                 list -> _items.value = list
             }
+        }
+    }
+    fun onMessageClicked(tx: SmsEntity) {
+        viewModelScope.launch {
+            val log = repo.getMlExplanationFor(tx)
+            Log.d("expense",log.toString())
+            Log.d("expense",tx.body)
+            _selectedExplanation.value = log
         }
     }
 

@@ -4,6 +4,7 @@ package com.spendwise.feature.smsimport
 import android.content.ContentResolver
 import android.database.Cursor
 import android.net.Uri
+import com.spendwise.core.ml.RawSms
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -11,6 +12,8 @@ data class SmsRaw(val sender: String, val body: String, val timestamp: Long)
 
 interface SmsReader {
     suspend fun readAllSms(): List<SmsRaw>
+    fun readSince(timestamp: Long): List<RawSms>
+
 }
 
 class SmsReaderImpl(private val resolver: ContentResolver): SmsReader {
@@ -30,4 +33,27 @@ class SmsReaderImpl(private val resolver: ContentResolver): SmsReader {
         }
         list
     }
+
+   override fun readSince(timestamp: Long): List<RawSms> {
+        val cursor = resolver.query(
+            Uri.parse("content://sms"),
+            arrayOf("_id", "address", "body", "date"),
+            "date > ?",
+            arrayOf(timestamp.toString()),
+            "date ASC"
+        ) ?: return emptyList()
+
+        val list = mutableListOf<RawSms>()
+
+        cursor.use {
+            while (cursor.moveToNext()) {
+                val sender = cursor.getString(1) ?: ""
+                val body = cursor.getString(2) ?: ""
+                val date = cursor.getLong(3)
+                list.add(RawSms(sender, body, date))
+            }
+        }
+        return list
+    }
+
 }

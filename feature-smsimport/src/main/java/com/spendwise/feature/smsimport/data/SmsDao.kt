@@ -7,6 +7,7 @@ import androidx.room.OnConflictStrategy
 import androidx.room.Query
 import kotlinx.coroutines.flow.Flow
 
+
 @Dao
 interface SmsDao {
 
@@ -18,4 +19,7 @@ interface SmsDao {
 
     @Query("SELECT * FROM sms ORDER BY timestamp DESC")
     fun getAll(): Flow<List<SmsEntity>>
+
+    @Query("SELECT MAX(timestamp) FROM sms")
+    suspend fun getLastTimestamp(): Long?
 }

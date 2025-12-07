@@ -18,5 +18,6 @@ data class SmsEntity(
     val timestamp: Long,
     val amount: Double,
     val merchant: String?,
-    val type: String?
+    val type: String?,
+    val  category: String?
 )
