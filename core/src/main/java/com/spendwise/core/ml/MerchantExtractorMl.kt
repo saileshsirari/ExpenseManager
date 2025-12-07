@@ -18,19 +18,17 @@ object MerchantExtractorMl {
         "bookmyshow" to "BookMyShow",
         "dominos" to "Domino's",
         "pizza hut" to "Pizza Hut",
-        "petrol pump" to "Petrol Pump",
         "hpcl" to "HPCL",
         "bpcl" to "BPCL",
         "ioc" to "Indian Oil",
-        "hp petrol" to "HP Petrol",
         "reliance" to "Reliance",
         "razorpay" to "Razorpay",
         "cashfree" to "Cashfree",
-        "payu"     to "PayU",
-        "phonepe"  to "PhonePe",
-        "gpay"     to "Google Pay",
+        "payu" to "PayU",
+        "phonepe" to "PhonePe",
+        "gpay" to "Google Pay",
         "google pay" to "Google Pay",
-        "paytm"     to "Paytm"
+        "paytm" to "Paytm"
     )
     internal val merchantKeywords = merchantMap.keys
 
@@ -48,60 +46,70 @@ object MerchantExtractorMl {
 
         val lowerBody = body.lowercase()
 
-        // Normalize sender for override lookup
-        val normalizedSender = normalize(sender)
+        // --------------------------------------------------------------------
+        // 1. User override (strongest rule)
+        // --------------------------------------------------------------------
+        overrideProvider("merchant:$sender")?.let { return it }
 
-        // ---------------------------------------------------------------
-        // 1. USER OVERRIDE (strongest signal)
-        // ---------------------------------------------------------------
-        overrideProvider("merchant:$normalizedSender")?.let { return it }
-
-        // ---------------------------------------------------------------
-        // 2. Detect P2P transfers: "To MANISH KUMAR"
-        // ---------------------------------------------------------------
+        // --------------------------------------------------------------------
+        // 2. Detect personal UPI transfers → "To MANISH KUMAR"
+        // --------------------------------------------------------------------
         val personMatch = personNameRegex.find(lowerBody)
         if (personMatch != null) {
             val rawName = personMatch.groupValues[1].trim()
-            val normalizedPerson = normalize(rawName)
 
-            // Avoid accidentally matching keywords like Pizza → MANISH PIZZA
-            if (!merchantKeywords.any { rawName.lowercase().contains(it) }) {
-
-                // Check override for this person
-                overrideProvider("merchant:$normalizedPerson")?.let { return it }
-
-                return rawName.uppercase()
+            if (!merchantMap.keys.any { rawName.lowercase().contains(it) }) {
+                val norm = normalize(rawName)
+                overrideProvider("merchant:$norm")?.let { return it }
+                return norm.uppercase()
             }
         }
 
-        // ---------------------------------------------------------------
-        // 3. Merchant sender (VM-SWIGGY, IM-AMAZONPAY)
-        // ---------------------------------------------------------------
+        // --------------------------------------------------------------------
+        // 3. **Strong POS detection rule (NEW)**
+        //    If SMS says "At <merchant>" → use it (even for BANK senders)
+        // --------------------------------------------------------------------
+        val atIdx = lowerBody.indexOf(" at ")
+        if (atIdx != -1) {
+            val merchantCandidate = extractUntilStopChar(lowerBody.substring(atIdx + 4))
+
+            if (!merchantCandidate.isNullOrBlank()) {
+                val norm = normalize(merchantCandidate)
+
+                // Avoid accidental bank names
+                val bankTokens = listOf("hdfc", "sbi", "icici", "axis", "kotak")
+                if (!bankTokens.any { norm.contains(it) }) {
+                    overrideProvider("merchant:$norm")?.let { return it }
+                    return norm
+                }
+            }
+        }
+
+        // --------------------------------------------------------------------
+        // 4. If sender resembles merchant sender (IM-AMAZONPAY)
+        // --------------------------------------------------------------------
         if (senderType == SenderType.MERCHANT) {
             val cleaned = cleanSenderName(sender)
-            val normalized = normalize(cleaned)
-
-            overrideProvider("merchant:$normalized")?.let { return it }
+            overrideProvider("merchant:$cleaned")?.let { return it }
             return cleaned
         }
 
-        // ---------------------------------------------------------------
-        // 4. Keyword lookup matches inside SMS body
-        // ---------------------------------------------------------------
+        // --------------------------------------------------------------------
+        // 5. Keyword merchant detection inside SMS body
+        // --------------------------------------------------------------------
         merchantMap.forEach { (token, pretty) ->
             if (lowerBody.contains(token)) {
-                val normalizedKey = normalize(pretty)
-                overrideProvider("merchant:$normalizedKey")?.let { return it }
+                overrideProvider("merchant:$pretty")?.let { return it }
                 return pretty
             }
         }
 
-        // ---------------------------------------------------------------
-        // 5. Razorpay merchant extraction
-        // ---------------------------------------------------------------
+        // --------------------------------------------------------------------
+        // 6. Razorpay merchant extraction
+        // --------------------------------------------------------------------
         if (lowerBody.contains("razorpay")) {
-            val index = lowerBody.indexOf("razorpay")
-            val tail = lowerBody.substring(index)
+            val idx = lowerBody.indexOf("razorpay")
+            val tail = lowerBody.substring(idx)
                 .replace("razorpay", "")
                 .replace("via", "")
                 .replace("by", "")
@@ -109,68 +117,42 @@ object MerchantExtractorMl {
 
             val merchant = extractFirstWord(tail)
             if (!merchant.isNullOrBlank()) {
-                val normalized = normalize(merchant)
-                overrideProvider("merchant:$normalized")?.let { return it }
-                return normalizedName(merchant)
+                val norm = normalize(merchant)
+                overrideProvider("merchant:$norm")?.let { return it }
+                return norm
             }
         }
 
-        // ---------------------------------------------------------------
-        // 6. UPI merchant extraction
-        // ---------------------------------------------------------------
-        val upiKeys = listOf("paid to", "sent to", "payment to", "to ")
-
+        // --------------------------------------------------------------------
+        // 7. UPI merchant: "paid to X", "sent to X"
+        // --------------------------------------------------------------------
+        val upiKeys = listOf("paid to", "sent to", "payment to")
         for (key in upiKeys) {
             val idx = lowerBody.indexOf(key)
             if (idx != -1) {
-                val tail = lowerBody.substring(idx + key.length).trim()
-                val merchant = extractFirstWord(tail)
-
+                val merchant = extractFirstWord(lowerBody.substring(idx + key.length).trim())
                 if (!merchant.isNullOrBlank()) {
-                    val normalized = normalize(merchant)
-                    overrideProvider("merchant:$normalized")?.let { return it }
-                    return normalizedName(merchant)
+                    val norm = normalize(merchant)
+                    overrideProvider("merchant:$norm")?.let { return it }
+                    return norm
                 }
             }
         }
 
-        // ---------------------------------------------------------------
-        // 7. POS / Card Swipes → "at <store>"
-        // ---------------------------------------------------------------
-        val atIdx = lowerBody.indexOf(" at ")
-        if (atIdx != -1) {
-            val merchant = extractUntilStopChar(lowerBody.substring(atIdx + 4))
-            if (!merchant.isNullOrBlank()) {
-                val normalized = normalize(merchant)
-                overrideProvider("merchant:$normalized")?.let { return it }
-                return normalizedName(merchant)
-            }
-        }
-
-        // ---------------------------------------------------------------
-        // 8. BANK SENDER fallback
-        // ---------------------------------------------------------------
+        // --------------------------------------------------------------------
+        // 8. Fallback for BANK sender
+        // --------------------------------------------------------------------
         if (senderType == SenderType.BANK) {
             val cleaned = cleanSenderName(sender)
-            val normalized = normalize(cleaned)
-
-            overrideProvider("merchant:$normalized")?.let { return it }
+            overrideProvider("merchant:$cleaned")?.let { return it }
             return cleaned
         }
 
         return null
     }
 
-    // ---------------------------------------------------------------
-    // Helper functions
-    // ---------------------------------------------------------------
 
-    private fun normalize(input: String): String =
-        input.lowercase().replace(Regex("[^a-z0-9]"), "")
-
-    private fun normalizedName(name: String): String =
-        name.replace(Regex("[^A-Za-z0-9 ]"), "")
-            .replaceFirstChar { it.uppercase() }
+    // ============================== HELPERS ==============================
 
     private fun extractFirstWord(text: String): String? =
         text.split(" ", ",", ".", "(", "\n")
@@ -179,6 +161,10 @@ object MerchantExtractorMl {
 
     private fun extractUntilStopChar(text: String): String =
         text.takeWhile { it !in listOf('.', ',', '(', '\n') }.trim()
+
+    private fun normalize(name: String): String =
+        name.replace(Regex("[^A-Za-z0-9 ]"), "")
+            .replaceFirstChar { it.uppercase() }
 
     private fun cleanSenderName(sender: String): String {
         val core = sender.split("-", " ").lastOrNull() ?: sender
