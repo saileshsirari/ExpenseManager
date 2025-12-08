@@ -62,6 +62,9 @@ dependencies {
     implementation(libs.androidx.navigation.compose)
     implementation(libs.androidx.hilt.navigation.compose)
     kapt(libs.hilt.compiler)
+    implementation(libs.androidx.material.icons.extended)
 
     implementation(project(":feature-smsimport"))
+    implementation(project(":core"))
+
 }

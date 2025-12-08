@@ -58,6 +58,6 @@ dependencies {
     implementation(platform(libs.androidx.compose.bom))
     implementation(libs.material3)
     implementation(libs.androidx.hilt.navigation.compose)
-
+    implementation(project(":core"))
 
 }
