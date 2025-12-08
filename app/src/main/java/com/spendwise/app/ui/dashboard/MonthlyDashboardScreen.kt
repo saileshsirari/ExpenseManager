@@ -79,16 +79,58 @@ fun MonthlyDashboardScreen(
         Log.d("DASH", "Items in dashboard = ${allTransactions.size}")
     }
     val summary = viewModel.getMonthlySummary(allTransactions, month)
+    LaunchedEffect(selectedCategory, selectedDay, month, allTransactions) {
+        Log.d("expense", "Selected category = $selectedCategory, day = $selectedDay")
+
+        val countMonth = allTransactions.count {
+            YearMonth.from(
+                Instant.ofEpochMilli(it.timestamp)
+                    .atZone(ZoneId.systemDefault())
+                    .toLocalDate()
+            ) == month
+        }
+        Log.d("expense", "Transactions in month = $countMonth")
+    }
 
     val filtered = when {
-        selectedCategory != null -> items.filter { it.type == selectedCategory }
-        selectedDay != null -> items.filter {
-            Instant.ofEpochMilli(it.timestamp)
-                .atZone(ZoneId.systemDefault())
-                .dayOfMonth == selectedDay
+        // 1️⃣ Day filter takes highest priority (user taps day second)
+        selectedDay != null -> {
+            allTransactions.filter { tx ->
+                val date = Instant.ofEpochMilli(tx.timestamp)
+                    .atZone(ZoneId.systemDefault())
+                    .toLocalDate()
+
+                date.dayOfMonth == selectedDay &&
+                        YearMonth.from(date) == month
+            }
         }
-        else -> emptyList()
+
+        // 2️⃣ Category filter is secondary
+        selectedCategory != null -> {
+            allTransactions.filter { tx ->
+
+                val date = Instant.ofEpochMilli(tx.timestamp)
+                    .atZone(ZoneId.systemDefault())
+                    .toLocalDate()
+                tx.type.equals(selectedCategory, ignoreCase = true)
+                        &&
+                        YearMonth.from(date) == month
+            }
+        }
+
+        // 3️⃣ No filter → show entire month
+        else -> {
+            allTransactions.filter { tx ->
+                YearMonth.from(
+                    Instant.ofEpochMilli(tx.timestamp)
+                        .atZone(ZoneId.systemDefault())
+                        .toLocalDate()
+                ) == month
+            }
+        }
     }
+
+
 
     LazyColumn(
         modifier = Modifier
@@ -126,7 +168,9 @@ fun MonthlyDashboardScreen(
 
             CategoryPieChart(
                 data = summary.categoryTotals,
-                onSliceClick = { selectedCategory = it; selectedDay = null }
+                onSliceClick = {
+                    selectedCategory = it
+                    selectedDay = null }
             )
 
             Spacer(Modifier.height(20.dp))
@@ -139,7 +183,11 @@ fun MonthlyDashboardScreen(
 
             DailyBarChart(
                 data = summary.dailyTotals,
-                onBarClick = { selectedDay = it; selectedCategory = null }
+                onBarClick = {
+                    selectedDay = it
+                    selectedCategory = null  // clear category
+                }
+
             )
 
             Spacer(Modifier.height(20.dp))

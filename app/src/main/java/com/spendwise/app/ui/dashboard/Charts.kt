@@ -58,7 +58,7 @@ fun MonthSelector(
 fun CategoryPieChart(
     data: Map<String, Double>,
     onSliceClick: (String) -> Unit
-){
+) {
     if (data.isEmpty()) return
 
     val colors = listOf(
@@ -67,53 +67,57 @@ fun CategoryPieChart(
     )
 
     val total = data.values.sum().toFloat()
-
-    // Convert angles to Float
-    val sweepAngles = data.values.map { value ->
-        ((value.toFloat() / total) * 360f)
-    }
-    val touchPoint = remember { mutableStateOf<Offset?>(null) }
+    val entries = data.entries.toList()
 
     Canvas(
         modifier = Modifier
             .size(220.dp)
-            .pointerInput(true) {
-                detectTapGestures { offset -> touchPoint.value = offset }
+            .pointerInput(entries) {
+                detectTapGestures { tapOffset ->
+
+                    val center = Offset((size.width / 2).toFloat(), (size.height / 2).toFloat())
+                    val dx = tapOffset.x - center.x
+                    val dy = tapOffset.y - center.y
+
+                    // Check if tap is inside the circle
+                    val radius = size.width / 2
+                    if (dx * dx + dy * dy > radius * radius) return@detectTapGestures
+
+                    // Angle in normal coordinate system (-180..180)
+                    var angle = Math.toDegrees(atan2(dy, dx).toDouble()).toFloat()
+
+                    // Convert: 0° should be TOP, clockwise rotation
+                    angle = (angle + 450) % 360   // this fixes EVERYTHING
+
+                    var start = 0f
+                    entries.forEachIndexed { index, entry ->
+                        val sweep = (entry.value.toFloat() / total) * 360f
+                        val end = start + sweep
+
+                        if (angle in start..end) {
+                            onSliceClick(entry.key)
+                            return@detectTapGestures
+                        }
+
+                        start = end
+                    }
+                }
             }
     ) {
-        val sliceAngles = data.mapValues { (it.value.toFloat() / total) * 360f }
-        var startAngle = -90f
 
+        var startAngle = 0f
 
-        val radius = size.minDimension / 2
-
-        sliceAngles.entries.forEachIndexed { index, entry ->
-            val cat = entry.key
-            val angle = entry.value
+        entries.forEachIndexed { i, entry ->
+            val sweepAngle = (entry.value.toFloat() / total) * 360f
 
             drawArc(
-                color = colors[index % colors.size],
-                startAngle = startAngle,
-                sweepAngle = angle,
+                color = colors[i % colors.size],
+                startAngle = startAngle - 90,   // rotate entire pie
+                sweepAngle = sweepAngle,
                 useCenter = true
             )
 
-            // handle tap:
-            touchPoint.value?.let { pt ->
-                val dx = pt.x - size.width / 2
-                val dy = pt.y - size.height / 2
-                val touchAngle = Math.toDegrees(atan2(dy, dx).toDouble()).toFloat()
-                    .let { if (it < -90) it + 360 else it }
-
-                val sectorStart = startAngle
-                val sectorEnd = startAngle + angle
-
-                if (touchAngle in sectorStart..sectorEnd) {
-                    onSliceClick(cat)
-                }
-            }
-
-            startAngle += angle
+            startAngle += sweepAngle
         }
     }
 }
