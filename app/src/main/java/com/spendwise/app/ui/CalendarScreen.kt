@@ -1,5 +1,5 @@
-
 package com.spendwise.app.ui
+
 import android.os.Build
 import androidx.annotation.RequiresApi
 import androidx.compose.foundation.layout.Spacer
@@ -12,32 +12,29 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
-import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
-import com.spendwise.app.ui.dashboard.CategoryPieChart
 import com.spendwise.app.ui.dashboard.DailyBarChart
 import com.spendwise.app.ui.dashboard.MonthSelector
 import com.spendwise.feature.smsimport.ui.SmsImportViewModel
 import java.time.Instant
 import java.time.YearMonth
 import java.time.ZoneId
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
 
 @RequiresApi(Build.VERSION_CODES.O)
 @Composable
-fun DashboardScreen(
+fun CalendarScreen(
     viewModel: SmsImportViewModel = hiltViewModel()
 ) {
-
-
     val allTransactions by viewModel.items.collectAsState()
     var month by remember { mutableStateOf(YearMonth.now()) }
-    var selectedType by remember { mutableStateOf<String?>(null) } // "DEBIT" / "CREDIT"
+    var selectedDay by remember { mutableStateOf<Int?>(null) }
 
     val monthTx = remember(allTransactions, month) {
         allTransactions.filter { tx ->
@@ -48,14 +45,6 @@ fun DashboardScreen(
         }
     }
 
-    val totalDebit = monthTx.filter { it.type.equals("DEBIT", true) }.sumOf { it.amount }
-    val totalCredit = monthTx.filter { it.type.equals("CREDIT", true) }.sumOf { it.amount }
-
-    val debitCreditTotals = mapOf(
-        "DEBIT" to totalDebit,
-        "CREDIT" to totalCredit
-    ).filter { it.value > 0.0 }
-
     val dailyTotals = remember(monthTx) {
         monthTx.groupBy { tx ->
             Instant.ofEpochMilli(tx.timestamp)
@@ -64,9 +53,14 @@ fun DashboardScreen(
         }.mapValues { (_, list) -> list.sumOf { it.amount } }
     }
 
-    val filteredTx = remember(monthTx, selectedType) {
-        if (selectedType == null) monthTx
-        else monthTx.filter { it.type.equals(selectedType, ignoreCase = true) }
+    val filteredTx = remember(monthTx, selectedDay) {
+        if (selectedDay == null) emptyList()
+        else monthTx.filter { tx ->
+            val date = Instant.ofEpochMilli(tx.timestamp)
+                .atZone(ZoneId.systemDefault())
+                .toLocalDate()
+            date.dayOfMonth == selectedDay
+        }
     }
 
     LazyColumn(
@@ -80,7 +74,7 @@ fun DashboardScreen(
                 month = month,
                 onMonthChange = {
                     month = it
-                    selectedType = null
+                    selectedDay = null
                 }
             )
             Spacer(Modifier.height(16.dp))
@@ -88,68 +82,43 @@ fun DashboardScreen(
 
         item {
             Text(
-                "Dashboard",
+                "Calendar & Daily Trends",
                 style = MaterialTheme.typography.titleLarge,
                 fontWeight = FontWeight.Bold
             )
             Spacer(Modifier.height(8.dp))
-            Text("Total Debit: ₹${totalDebit.toInt()}")
-            Text("Total Credit: ₹${totalCredit.toInt()}")
-            Spacer(Modifier.height(16.dp))
         }
 
         item {
-            Text("Debit vs Credit", style = MaterialTheme.typography.titleMedium)
-            Spacer(Modifier.height(8.dp))
-
-            CategoryPieChart(
-                data = debitCreditTotals,
-                onSliceClick = { clicked ->
-                    selectedType = if (selectedType == clicked) null else clicked
-                }
-            )
-
-            Spacer(Modifier.height(20.dp))
-        }
-
-        item {
-            Text("Daily Spending (All Types)", style = MaterialTheme.typography.titleMedium)
+            Text("Daily Spending", style = MaterialTheme.typography.titleMedium)
             Spacer(Modifier.height(8.dp))
 
             DailyBarChart(
                 data = dailyTotals,
-                onBarClick = { /* could navigate to Calendar screen with preselect */ }
+                onBarClick = { day -> selectedDay = day }
             )
 
-            Spacer(Modifier.height(20.dp))
+            Spacer(Modifier.height(16.dp))
         }
 
-        item {
-            Text(
-                text = if (selectedType == null)
-                    "Recent Transactions (This Month)"
-                else
-                    "Transactions: $selectedType (This Month)",
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.SemiBold
-            )
-            Spacer(Modifier.height(12.dp))
-        }
+        if (selectedDay != null) {
+            item {
+                Text(
+                    "Transactions on $selectedDay",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold
+                )
+                Spacer(Modifier.height(12.dp))
+            }
 
-        items(filteredTx.take(10)) { tx ->
-            SmsListItem(
-                sms = tx,
-                onClick = { viewModel.onMessageClicked(it) },
-                onRequestMerchantFix = { viewModel.fixMerchant(it, it.merchant ?: "") },
-                onMarkNotExpense = { viewModel.markNotExpense(it) }
-            )
+            items(filteredTx) { tx ->
+                SmsListItem(
+                    sms = tx,
+                    onClick = { viewModel.onMessageClicked(it) },
+                    onRequestMerchantFix = { viewModel.fixMerchant(it, it.merchant ?: "") },
+                    onMarkNotExpense = { viewModel.markNotExpense(it) }
+                )
+            }
         }
     }
 }
-
-
-
-
-
-
-

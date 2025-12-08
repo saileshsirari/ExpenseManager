@@ -23,7 +23,7 @@ fun PermissionScreen(onPermissionGranted: () -> Unit) {
         Text("SpendWise needs SMS permission to detect expenses. We ignore OTPs and private chats.")
         Spacer(Modifier.height(24.dp))
         Button(onClick = {
-            activity.requestSmsPermission()
+          //  activity.requestSmsPermission()
         }) {
             Text("Grant Permission")
         }
