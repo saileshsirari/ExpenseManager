@@ -6,6 +6,7 @@ import android.util.Log
 import androidx.annotation.RequiresApi
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.spendwise.core.ml.MerchantExtractorMl
 import com.spendwise.core.ml.MlReasonBundle
 import com.spendwise.feature.smsimport.data.SmsEntity
 import com.spendwise.feature.smsimport.repo.SmsRepositoryImpl
@@ -44,19 +45,26 @@ class SmsImportViewModel @Inject constructor(private val repo: SmsRepositoryImpl
     fun fixMerchant(tx: SmsEntity, newMerchant: String) {
         viewModelScope.launch {
 
-            // 1️⃣ Determine correct merchant key to override
-            val originalKey = (tx.merchant ?: tx.sender).trim()
+            // 1️⃣ Normalize the CURRENT merchant value
+            val originalNorm = MerchantExtractorMl.normalize(tx.merchant ?: tx.sender)
 
-            // 2️⃣ Save override
-            repo.saveMerchantOverride(originalKey, newMerchant.trim())
+            // 2️⃣ Build correct key
+            val key = "merchant:$originalNorm"    // must be lowercase normalized
 
-            // 3️⃣ Re-run ML pipeline for THIS transaction only
+            Log.d("OVERRIDE_SAVE", "Saving override: $key -> ${newMerchant.trim()}")
+
+            // 3️⃣ Save override (repo expects already-normalized key)
+            repo.saveMerchantOverride(originalNorm, newMerchant.trim())
+
+            // 4️⃣ Re-run ML for this one transaction
             repo.reclassifySingle(tx.id)
 
-            // 4️⃣ Refresh list in UI
+            // 5️⃣ Refresh UI
             refresh()
         }
-    }
+
+}
+
 
 
     @RequiresApi(Build.VERSION_CODES.O)
