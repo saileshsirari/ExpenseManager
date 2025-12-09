@@ -25,10 +25,10 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.spendwise.app.ui.dashboard.MonthSelector
+import com.spendwise.core.extensions.active
+import com.spendwise.core.extensions.inMonth
 import com.spendwise.feature.smsimport.ui.SmsImportViewModel
-import java.time.Instant
 import java.time.YearMonth
-import java.time.ZoneId
 
 @RequiresApi(Build.VERSION_CODES.O)
 @Composable
@@ -45,14 +45,9 @@ fun MerchantsScreen(
         val count: Int
     )
 
-    val monthTx = remember(allTransactions, month) {
-        allTransactions.filter { tx ->
-            val date = Instant.ofEpochMilli(tx.timestamp)
-                .atZone(ZoneId.systemDefault())
-                .toLocalDate()
-            YearMonth.from(date) == month
-        }
-    }
+    val monthTx = allTransactions
+        .active()
+        .inMonth(month)
 
     val merchants = remember(monthTx) {
         monthTx

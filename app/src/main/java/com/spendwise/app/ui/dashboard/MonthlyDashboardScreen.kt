@@ -42,7 +42,7 @@ fun MonthlyDashboardScreen(
     viewModel: SmsImportViewModel = hiltViewModel()
 ) {
     val items by viewModel.items.collectAsState()
-    val  selectedExplanation by viewModel.selectedExplanation.collectAsState()
+    val selectedExplanation by viewModel.selectedExplanation.collectAsState()
     var showFixDialog by remember { mutableStateOf<SmsEntity?>(null) }
 
     if (showFixDialog != null) {
@@ -66,7 +66,7 @@ fun MonthlyDashboardScreen(
 
     LaunchedEffect(hasPermission) {
         if (hasPermission) {
-            viewModel.importAll{
+            viewModel.importAll {
                 context.contentResolver
             }
         }
@@ -170,7 +170,8 @@ fun MonthlyDashboardScreen(
                 data = summary.categoryTotals,
                 onSliceClick = {
                     selectedCategory = it
-                    selectedDay = null }
+                    selectedDay = null
+                }
             )
 
             Spacer(Modifier.height(20.dp))
@@ -213,7 +214,9 @@ fun MonthlyDashboardScreen(
             }, onRequestMerchantFix = {
                 showFixDialog = it
 
-            }, onMarkNotExpense = { clicked -> viewModel.markNotExpense(clicked) })
+            }, onMarkNotExpense = { sms, isChecked ->
+                viewModel.setIgnoredState(sms, isChecked)
+            })
 
         }
     }

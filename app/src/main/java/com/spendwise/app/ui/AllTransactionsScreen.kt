@@ -45,7 +45,9 @@ fun AllTransactionsScreen(
                 sms = tx,
                 onClick = { viewModel.onMessageClicked(it) },
                 onRequestMerchantFix = { viewModel.fixMerchant(it, it.merchant ?: "") },
-                onMarkNotExpense = { viewModel.markNotExpense(it) }
+                onMarkNotExpense = { sms, isChecked ->
+                    viewModel.setIgnoredState(sms, isChecked)
+                }
             )
         }
     }

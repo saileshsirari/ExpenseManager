@@ -8,107 +8,121 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.width
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.spendwise.feature.smsimport.data.SmsEntity
-import java.time.Instant
-import java.time.ZoneId
-import java.time.format.DateTimeFormatter
 
 @RequiresApi(Build.VERSION_CODES.O)
 @Composable
 fun SmsListItem(
     sms: SmsEntity,
-    onClick: (SmsEntity) -> Unit,
-    onRequestMerchantFix: (SmsEntity) -> Unit,
-    onMarkNotExpense: (SmsEntity) -> Unit
+    onClick: (SmsEntity) -> Unit = {},
+    onRequestMerchantFix: (SmsEntity) -> Unit = {},
+    onMarkNotExpense: (SmsEntity, Boolean) -> Unit = { _, _ -> }
 ) {
-    val merchant = sms.merchant ?: sms.sender.orEmpty()
-    val category = sms.category ?: "OTHER"
-    val amountText = "₹${sms.amount.toInt()}" // assuming Double/Float
+    var expanded by remember { mutableStateOf(false) }
 
-    val dateTime = Instant.ofEpochMilli(sms.timestamp)
-        .atZone(ZoneId.systemDefault())
-        .toLocalDateTime()
-
-    val dateStr = dateTime.format(DateTimeFormatter.ofPattern("dd MMM, HH:mm"))
-
-    Card(
+    androidx.compose.material3.Card(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(vertical = 4.dp)
-            .clickable { onClick(sms) },
-        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+            .padding(vertical = 6.dp)
+            .clickable {
+                expanded = !expanded
+                onClick(sms)
+            },
+        shape = MaterialTheme.shapes.medium
     ) {
         Column(modifier = Modifier.padding(12.dp)) {
 
-            // Top row: Merchant + Amount
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = merchant,
-                        style = MaterialTheme.typography.bodyLarge,
-                        fontWeight = FontWeight.SemiBold,
-                        maxLines = 1
-                    )
-                    Text(
-                        text = category,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.primary
-                    )
-                }
-
-                Text(
-                    text = amountText,
-                    style = MaterialTheme.typography.bodyLarge,
-                    fontWeight = FontWeight.Bold
-                )
-            }
-
-            Spacer(modifier = Modifier.padding(top = 4.dp))
-
-            // Second row: type + date
+            // ROW: Merchant + amount
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
                 Text(
-                    text = sms.type ?: "",
-                    style = MaterialTheme.typography.bodySmall
+                    sms.merchant ?: sms.sender,
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold
                 )
+
                 Text(
-                    text = dateStr,
-                    style = MaterialTheme.typography.bodySmall
+                    "₹${sms.amount.toInt()}",
+                    style = MaterialTheme.typography.titleMedium,
+                    color = if (sms.type.equals("credit", true))
+                        Color(0xFF4CAF50)
+                    else
+                        Color(0xFFE57373)
                 )
             }
 
-            Spacer(modifier = Modifier.padding(top = 4.dp))
+            // Sub row: category + type
+            Spacer(Modifier.height(4.dp))
+            Text(
+                "${sms.category} • ${sms.type?.uppercase()}",
+                style = MaterialTheme.typography.labelMedium
+            )
 
-            // Actions row
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.End
-            ) {
-                TextButton(onClick = { onRequestMerchantFix(sms) }) {
-                    Text("Fix Merchant")
+            // ———————————————
+            // EXPANDED CONTENT
+            // ———————————————
+            if (expanded) {
+                Spacer(Modifier.height(8.dp))
+
+                Text(
+                    text = sms.body,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = Color.DarkGray
+                )
+
+                Spacer(Modifier.height(8.dp))
+
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    verticalAlignment = androidx.compose.ui.Alignment.CenterVertically
+                ) {
+                    Text(
+                        "Fix Merchant",
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.clickable {
+                            onRequestMerchantFix(sms)
+                        }
+                    )
+
+                    Row(
+                        verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+                        modifier = Modifier.clickable {
+                            onMarkNotExpense(sms, !sms.isIgnored)  // toggle on label tap
+                        }
+                    ) {
+                        Text(
+                            text = "Not Expense",
+                            style = MaterialTheme.typography.bodyMedium,
+                            modifier = Modifier.padding(end = 6.dp)
+                        )
+
+                        Switch(
+                            checked = sms.isIgnored,
+                            onCheckedChange = { isChecked ->
+                                onMarkNotExpense(sms, isChecked)
+                            }
+                        )
+                    }
                 }
-                Spacer(Modifier.width(4.dp))
-                TextButton(onClick = { onMarkNotExpense(sms) }) {
-                    Text("Not Expense")
-                }
+
             }
         }
     }
 }
+

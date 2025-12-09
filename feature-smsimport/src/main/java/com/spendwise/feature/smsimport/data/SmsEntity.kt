@@ -19,5 +19,6 @@ data class SmsEntity(
     val amount: Double,
     val merchant: String?,
     val type: String?,
-    val  category: String?
+    val  category: String?,
+    val isIgnored: Boolean = false
 )

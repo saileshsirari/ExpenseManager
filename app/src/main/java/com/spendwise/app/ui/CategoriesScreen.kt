@@ -23,6 +23,8 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import com.spendwise.app.ui.dashboard.CategoryPieChart
 import com.spendwise.app.ui.dashboard.DailyBarChart
 import com.spendwise.app.ui.dashboard.MonthSelector
+import com.spendwise.core.extensions.active
+import com.spendwise.core.extensions.inMonth
 import com.spendwise.feature.smsimport.ui.SmsImportViewModel
 import java.time.Instant
 import java.time.YearMonth
@@ -37,14 +39,9 @@ fun CategoriesScreen(
     var month by remember { mutableStateOf(YearMonth.now()) }
     var selectedCategory by remember { mutableStateOf<String?>(null) }
 
-    val monthTx = remember(allTransactions, month) {
-        allTransactions.filter { tx ->
-            val date = Instant.ofEpochMilli(tx.timestamp)
-                .atZone(ZoneId.systemDefault())
-                .toLocalDate()
-            YearMonth.from(date) == month
-        }
-    }
+    val monthTx = allTransactions
+        .active()
+        .inMonth(month)
 
     val categoryTotals = remember(monthTx) {
         monthTx
@@ -142,7 +139,9 @@ fun CategoriesScreen(
                 sms = tx,
                 onClick = { viewModel.onMessageClicked(it) },
                 onRequestMerchantFix = { viewModel.fixMerchant(it, it.merchant ?: "") },
-                onMarkNotExpense = { viewModel.markNotExpense(it) }
+                onMarkNotExpense = { sms, isChecked ->
+                    viewModel.setIgnoredState(sms, isChecked)
+                }
             )
         }
     }

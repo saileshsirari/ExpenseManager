@@ -2,7 +2,10 @@ package com.spendwise.feature.smsimport.repo
 
 import SmsMlPipeline
 import android.content.ContentResolver
+import android.os.Build
 import android.util.Log
+import androidx.annotation.RequiresApi
+import com.spendwise.core.ml.CategoryType
 import com.spendwise.core.ml.IgnorePatternBuilder
 import com.spendwise.core.ml.MerchantExtractorMl
 import com.spendwise.core.ml.MlReasonBundle
@@ -18,6 +21,8 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.withContext
+import java.time.LocalDate
+import java.time.ZoneId
 import javax.inject.Inject
 
 class SmsRepositoryImpl @Inject constructor(
@@ -218,5 +223,33 @@ class SmsRepositoryImpl @Inject constructor(
     // ------------------------------------------------------------
     override fun getAll(): Flow<List<SmsEntity>> {
         return db.smsDao().getAll()
+    }
+
+    @RequiresApi(Build.VERSION_CODES.O)
+    suspend fun saveManualExpense(
+        amount: Double,
+        merchant: String,
+        category: CategoryType,
+        date: LocalDate,
+        note: String
+    ) {
+        db.smsDao().insert(
+            SmsEntity(
+                sender = "MANUAL",
+                body = note,
+                timestamp = date.atStartOfDay(ZoneId.systemDefault()).toEpochSecond() * 1000,
+                amount = amount,
+                merchant = merchant,
+                type = "DEBIT",
+                category = category.name
+            )
+        )
+    }
+   override suspend fun markIgnored(tx: SmsEntity) {
+        val updated = tx.copy(isIgnored = true)
+        db.smsDao().update(updated)
+    }
+   override suspend fun setIgnored(id: Long, ignored: Boolean) {
+        db.smsDao().setIgnored(id, if (ignored) 1 else 0)
     }
 }

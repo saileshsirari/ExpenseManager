@@ -12,20 +12,22 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.spendwise.app.ui.dashboard.DailyBarChart
 import com.spendwise.app.ui.dashboard.MonthSelector
+import com.spendwise.core.extensions.active
+import com.spendwise.core.extensions.inMonth
 import com.spendwise.feature.smsimport.ui.SmsImportViewModel
 import java.time.Instant
 import java.time.YearMonth
 import java.time.ZoneId
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.setValue
 
 @RequiresApi(Build.VERSION_CODES.O)
 @Composable
@@ -36,14 +38,9 @@ fun CalendarScreen(
     var month by remember { mutableStateOf(YearMonth.now()) }
     var selectedDay by remember { mutableStateOf<Int?>(null) }
 
-    val monthTx = remember(allTransactions, month) {
-        allTransactions.filter { tx ->
-            val date = Instant.ofEpochMilli(tx.timestamp)
-                .atZone(ZoneId.systemDefault())
-                .toLocalDate()
-            YearMonth.from(date) == month
-        }
-    }
+    val monthTx = allTransactions
+        .active()
+        .inMonth(month)
 
     val dailyTotals = remember(monthTx) {
         monthTx.groupBy { tx ->
@@ -116,7 +113,9 @@ fun CalendarScreen(
                     sms = tx,
                     onClick = { viewModel.onMessageClicked(it) },
                     onRequestMerchantFix = { viewModel.fixMerchant(it, it.merchant ?: "") },
-                    onMarkNotExpense = { viewModel.markNotExpense(it) }
+                    onMarkNotExpense = { sms, isChecked ->
+                        viewModel.setIgnoredState(sms, isChecked)
+                    }
                 )
             }
         }

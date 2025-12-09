@@ -6,6 +6,7 @@ import android.util.Log
 import androidx.annotation.RequiresApi
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.spendwise.core.ml.CategoryType
 import com.spendwise.core.ml.MerchantExtractorMl
 import com.spendwise.core.ml.MlReasonBundle
 import com.spendwise.feature.smsimport.data.SmsEntity
@@ -15,6 +16,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 import java.time.Instant
+import java.time.LocalDate
 import java.time.LocalTime
 import java.time.YearMonth
 import java.time.ZoneId
@@ -143,8 +145,47 @@ class SmsImportViewModel @Inject constructor(private val repo: SmsRepositoryImpl
 
     fun markNotExpense(tx: SmsEntity) {
         viewModelScope.launch {
-            repo.saveIgnorePattern(tx.body)
+            repo.markIgnored(tx)
             refresh()
+        }
+    }
+
+
+
+
+
+
+
+    fun addManualExpense(
+        amount: Double,
+        merchant: String,
+        category: CategoryType,
+        date: LocalDate,
+        note: String
+    ) {
+        viewModelScope.launch {
+            repo.saveManualExpense(
+                amount = amount,
+                merchant = merchant,
+                category = category,
+                date = date,
+                note = note
+            )
+            refresh()
+        }
+    }
+
+    fun fixCategory(tx: SmsEntity, newCategory: CategoryType) {
+        viewModelScope.launch {
+            repo.saveCategoryOverride(tx.merchant ?: tx.sender, newCategory.name)
+            repo.reclassifySingle(tx.id)
+            refresh()
+        }
+    }
+    fun setIgnoredState(tx: SmsEntity, ignored: Boolean) {
+        viewModelScope.launch {
+            repo.setIgnored(tx.id, ignored)
+            refresh()   // reload list
         }
     }
 

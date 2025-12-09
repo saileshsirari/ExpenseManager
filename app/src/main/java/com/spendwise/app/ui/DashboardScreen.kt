@@ -8,7 +8,12 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material3.FloatingActionButton
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
@@ -20,10 +25,16 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.navigation.NavController
+import com.spendwise.app.navigation.Screen
 import com.spendwise.app.ui.dashboard.CategoryPieChart
 import com.spendwise.app.ui.dashboard.DailyBarChart
 import com.spendwise.app.ui.dashboard.FixMerchantDialog
 import com.spendwise.app.ui.dashboard.MonthSelector
+import com.spendwise.core.extensions.active
+import com.spendwise.core.extensions.inMonth
+import com.spendwise.core.extensions.ofType
+import com.spendwise.core.extensions.onDay
 import com.spendwise.feature.smsimport.data.SmsEntity
 import com.spendwise.feature.smsimport.ui.SmsImportViewModel
 import java.time.Instant
@@ -33,38 +44,33 @@ import java.time.ZoneId
 @RequiresApi(Build.VERSION_CODES.O)
 @Composable
 fun DashboardScreen(
+    navController: NavController,
     viewModel: SmsImportViewModel = hiltViewModel()
 ) {
     val allTransactions by viewModel.items.collectAsState()
-    var showFixDialog by remember { mutableStateOf<SmsEntity?>(null) }
 
-    if (showFixDialog != null) {
+    var showFixDialog by remember { mutableStateOf<SmsEntity?>(null) }
+    var month by remember { mutableStateOf(YearMonth.now()) }
+    var selectedType by remember { mutableStateOf<String?>(null) }
+    var selectedDay by remember { mutableStateOf<Int?>(null) }
+
+    // Fix Merchant Dialog
+    showFixDialog?.let { tx ->
         FixMerchantDialog(
-            tx = showFixDialog!!,
+            tx = tx,
             onConfirm = { newName ->
-                viewModel.fixMerchant(showFixDialog!!, newName)
+                viewModel.fixMerchant(tx, newName)
                 showFixDialog = null
             },
             onDismiss = { showFixDialog = null }
         )
     }
-    var month by remember { mutableStateOf(YearMonth.now()) }
-    var selectedType by remember { mutableStateOf<String?>(null) }   // DEBIT / CREDIT
-    var selectedDay by remember { mutableStateOf<Int?>(null) }
 
-    // -----------------------------
-    // MONTH FILTER
-    // -----------------------------
-    val monthTx = remember(allTransactions, month) {
-        allTransactions.filter { tx ->
-            val date = Instant.ofEpochMilli(tx.timestamp)
-                .atZone(ZoneId.systemDefault())
-                .toLocalDate()
-            YearMonth.from(date) == month
-        }
-    }
+    // FILTERING LOGIC
+    val monthTx = allTransactions
+        .active()
+        .inMonth(month)
 
-    // Totals
     val totalDebit = monthTx.filter { it.type.equals("DEBIT", true) }.sumOf { it.amount }
     val totalCredit = monthTx.filter { it.type.equals("CREDIT", true) }.sumOf { it.amount }
 
@@ -73,153 +79,142 @@ fun DashboardScreen(
         "CREDIT" to totalCredit
     ).filter { it.value > 0.0 }
 
-    // Daily totals for bar chart
     val dailyTotals = remember(monthTx) {
         monthTx.groupBy { tx ->
             Instant.ofEpochMilli(tx.timestamp)
                 .atZone(ZoneId.systemDefault())
                 .dayOfMonth
-        }.mapValues { (_, list) ->
-            list.sumOf { it.amount }
-        }
+        }.mapValues { (_, list) -> list.sumOf { it.amount } }
     }
 
-    // -----------------------------
-    // CLICK FILTER: DAY
-    // -----------------------------
-    val dayTransactions = remember(selectedDay, monthTx) {
-        if (selectedDay == null) emptyList()
-        else monthTx.filter { tx ->
-            val date = Instant.ofEpochMilli(tx.timestamp)
-                .atZone(ZoneId.systemDefault())
-                .toLocalDate()
-            date.dayOfMonth == selectedDay
-        }
-    }
+    // ❌ list items should NOT exclude ignored
+    val monthTxAll = allTransactions.inMonth(month)
 
-    // -----------------------------
-    // CLICK FILTER: DEBIT / CREDIT
-    // -----------------------------
-    val typeFilteredTx = remember(monthTx, selectedType) {
-        if (selectedType == null) monthTx
-        else monthTx.filter { it.type.equals(selectedType, ignoreCase = true) }
-    }
+    val dayTransactions = monthTxAll.onDay(selectedDay ?: -1, month)
 
-    // -----------------------------
-    // FINAL LIST: Priority
-    // 1) Day filter
-    // 2) Type filter
-    // 3) Recent (fallback)
-    // -----------------------------
+    val typeFiltered = monthTxAll.ofType(selectedType)
+
     val listToShow = when {
         selectedDay != null -> dayTransactions
-        selectedType != null -> typeFilteredTx
-        else -> monthTx.take(10)
+        selectedType != null -> typeFiltered
+        else -> monthTxAll.take(10)
     }
 
-    // -----------------------------
-    // UI
-    // -----------------------------
-    LazyColumn(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(16.dp)
-    ) {
+    // -------------------------------------------------------
+    // SCAFFOLD WRAPPER
+    // -------------------------------------------------------
 
-        // Month Selector
-        item {
-            MonthSelector(
-                month = month,
-                onMonthChange = {
-                    month = it
-                    selectedType = null
-                    selectedDay = null
-                }
-            )
-            Spacer(Modifier.height(16.dp))
+    Scaffold(
+        floatingActionButton = {
+            FloatingActionButton(
+                onClick = { navController.navigate(Screen.AddExpense.route) }
+            ) {
+                Icon(Icons.Default.Add, contentDescription = "Add Expense")
+            }
         }
+    ) { padding ->
 
-        // Header + totals
-        item {
-            Text(
-                "Dashboard",
-                style = MaterialTheme.typography.titleLarge,
-                fontWeight = FontWeight.Bold
-            )
-            Spacer(Modifier.height(8.dp))
-            Text("Total Debit: ₹${totalDebit.toInt()}")
-            Text("Total Credit: ₹${totalCredit.toInt()}")
-            Spacer(Modifier.height(16.dp))
-        }
+        LazyColumn(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(padding)
+                .padding(16.dp)
+        ) {
 
-        // Pie Chart
-        item {
-            Text("Debit vs Credit", style = MaterialTheme.typography.titleMedium)
-            Spacer(Modifier.height(8.dp))
+            // Month selector
+            item {
+                MonthSelector(
+                    month = month,
+                    onMonthChange = {
+                        month = it
+                        selectedType = null
+                        selectedDay = null
+                    }
+                )
+                Spacer(Modifier.height(16.dp))
+            }
 
-            CategoryPieChart(
-                data = debitCreditTotals,
-                onSliceClick = { clicked ->
-                    selectedType = if (selectedType == clicked) null else clicked
-                    selectedDay = null  // clear day filter
-                }
-            )
+            // Totals
+            item {
+                Text("Dashboard",
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.Bold
+                )
+                Spacer(Modifier.height(8.dp))
+                Text("Total Debit: ₹${totalDebit.toInt()}")
+                Text("Total Credit: ₹${totalCredit.toInt()}")
+                Spacer(Modifier.height(16.dp))
+            }
 
-            Spacer(Modifier.height(20.dp))
-        }
+            // Pie Chart
+            item {
+                Text("Debit vs Credit", style = MaterialTheme.typography.titleMedium)
+                Spacer(Modifier.height(8.dp))
 
-        // Bar Chart
-        item {
-            Text("Daily Spending", style = MaterialTheme.typography.titleMedium)
-            Spacer(Modifier.height(8.dp))
+                CategoryPieChart(
+                    data = debitCreditTotals,
+                    onSliceClick = { clicked ->
+                        selectedType = if (selectedType == clicked) null else clicked
+                        selectedDay = null
+                    }
+                )
 
-            DailyBarChart(
-                data = dailyTotals,
-                onBarClick = { day ->
-                    selectedDay = if (selectedDay == day) null else day
-                    selectedType = null // clear type filter
-                }
-            )
+                Spacer(Modifier.height(20.dp))
+            }
 
-            Spacer(Modifier.height(20.dp))
-        }
+            // Bar Chart
+            item {
+                Text("Daily Spending", style = MaterialTheme.typography.titleMedium)
+                Spacer(Modifier.height(8.dp))
 
-        // List Header (Changes depending on filter)
-        item {
-            when {
-                selectedDay != null -> {
-                    Text(
-                        "Transactions on $selectedDay ${month.month.name.lowercase().replaceFirstChar { it.uppercase() }}",
+                DailyBarChart(
+                    data = dailyTotals,
+                    onBarClick = { day ->
+                        selectedDay = if (selectedDay == day) null else day
+                        selectedType = null
+                    }
+                )
+
+                Spacer(Modifier.height(20.dp))
+            }
+
+            // List header
+            item {
+                when {
+                    selectedDay != null -> Text(
+                        "Transactions on $selectedDay ${
+                            month.month.name.lowercase().replaceFirstChar { it.uppercase() }
+                        }",
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.SemiBold
                     )
-                }
-                selectedType != null -> {
-                    Text(
+
+                    selectedType != null -> Text(
                         "$selectedType Transactions",
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.SemiBold
                     )
-                }
-                else -> {
-                    Text(
+
+                    else -> Text(
                         "Recent Transactions",
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.SemiBold
                     )
                 }
+                Spacer(Modifier.height(12.dp))
             }
-            Spacer(Modifier.height(12.dp))
-        }
 
-        // Final list
-        items(listToShow) { tx ->
-            SmsListItem(
-                sms = tx,
-                onClick = { viewModel.onMessageClicked(it) },
-                onRequestMerchantFix = {    showFixDialog = it },
-                onMarkNotExpense = { viewModel.markNotExpense(it) }
-            )
+            // List items
+            items(listToShow) { tx ->
+                SmsListItem(
+                    sms = tx,
+                    onClick = { viewModel.onMessageClicked(it) },
+                    onRequestMerchantFix = { showFixDialog = it },
+                    onMarkNotExpense = { sms, isChecked ->
+                        viewModel.setIgnoredState(sms, isChecked)
+                    }
+                )
+            }
         }
     }
 }

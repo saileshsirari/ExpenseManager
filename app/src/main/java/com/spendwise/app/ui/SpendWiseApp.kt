@@ -59,11 +59,16 @@ fun SpendWiseApp() {
             startDestination = Screen.Dashboard.route,
             modifier = Modifier.padding(padding)
         ) {
-            composable(Screen.Dashboard.route) { DashboardScreen(viewModel) }
+            composable(Screen.Dashboard.route) { DashboardScreen(navController,viewModel) }
             composable(Screen.Categories.route) { CategoriesScreen(viewModel) }
             composable(Screen.Merchants.route) { MerchantsScreen(viewModel) }
             composable(Screen.Calendar.route) { CalendarScreen(viewModel) }
             composable(Screen.Transactions.route) { AllTransactionsScreen(viewModel) }
+            composable(Screen.AddExpense.route) {
+                AddExpenseScreen(
+                    onDone = { navController.popBackStack() }
+                )
+            }
         }
     }
 }

@@ -33,5 +33,7 @@ interface SmsDao {
     @Query("SELECT * FROM sms")
     suspend fun getAllOnce(): List<SmsEntity>
 
+    @Query("UPDATE sms SET isIgnored = :ignored WHERE id = :id")
+    suspend fun setIgnored(id: Long, ignored: Int)
 
 }
