@@ -64,11 +64,11 @@ fun DashboardScreen(
     var mode by remember { mutableStateOf(DashboardMode.MONTH) }
     var period by remember { mutableStateOf(YearMonth.now()) }
 
-    var selectedType by remember { mutableStateOf<String?>(null) }    // "DEBIT" / "CREDIT"
-    var selectedDay by remember { mutableStateOf<Int?>(null) }        // for Month mode
-    var selectedMonthFilter by remember { mutableStateOf<Int?>(null) } // for Quarter/Year
+    var selectedType by remember { mutableStateOf<String?>(null) }
+    var selectedDay by remember { mutableStateOf<Int?>(null) }
+    var selectedMonthFilter by remember { mutableStateOf<Int?>(null) }
 
-    // ---- Fix Merchant Dialog ----
+    // Fix Merchant Dialog
     showFixDialog?.let { tx ->
         FixMerchantDialog(
             tx = tx,
@@ -97,7 +97,7 @@ fun DashboardScreen(
                 .padding(16.dp)
         ) {
 
-            // ---- Mode Tabs ----
+            // ------------------- MODE TABS -------------------
             item {
                 Row {
                     ModeTab("Month", mode == DashboardMode.MONTH) {
@@ -122,7 +122,7 @@ fun DashboardScreen(
                 Spacer(Modifier.height(12.dp))
             }
 
-            // ---- Period Header (with Prev / Next) ----
+            // ------------------- PERIOD HEADER -------------------
             item {
                 PeriodHeader(
                     mode = mode,
@@ -137,77 +137,67 @@ fun DashboardScreen(
                 Spacer(Modifier.height(16.dp))
             }
 
-            // ---- Crossfade based on mode (Month / Quarter / Year) ----
+            // ------------------- MODE CONTENT -------------------
             item {
                 Crossfade(
                     targetState = Triple(mode, period, allTransactions),
                     label = "dashboard-mode-crossfade"
                 ) { (currentMode, currentPeriod, txList) ->
 
-                    // 1) Base list = active (not ignored)
                     val base = txList.active()
 
-                    // 2) Range list based on mode
-                    val rangeTx = when (currentMode) {
+                    // ------------------- RANGE FILTER -------------------
+                    val periodTx = when (currentMode) {
                         DashboardMode.MONTH -> base.inMonth(currentPeriod)
                         DashboardMode.QUARTER -> base.inQuarter(currentPeriod)
                         DashboardMode.YEAR -> base.inYear(currentPeriod.year)
                     }
 
-                    // 3) Totals
-                    val totalDebit = rangeTx.filter { it.type.equals("DEBIT", true) }.sumOf { it.amount }
-                    val totalCredit = rangeTx.filter { it.type.equals("CREDIT", true) }.sumOf { it.amount }
+                    // ------------------- TOTALS -------------------
+                    val totalDebit = periodTx.filter { it.type.equals("DEBIT", true) }.sumOf { it.amount }
+                    val totalCredit = periodTx.filter { it.type.equals("CREDIT", true) }.sumOf { it.amount }
 
                     val debitCreditTotals = mapOf(
                         "DEBIT" to totalDebit,
                         "CREDIT" to totalCredit
                     ).filter { it.value > 0.0 }
 
-                    // 4) Bar data
+                    // ------------------- BAR DATA -------------------
                     val barData: Map<Int, Double> = when (currentMode) {
-                        DashboardMode.MONTH -> {
-                            // Day-wise
-                            rangeTx.groupBy { it.localDate().dayOfMonth }
-                                .mapValues { (_, list) -> list.sumOf { it.amount } }
-                        }
-                        DashboardMode.QUARTER, DashboardMode.YEAR -> {
-                            // Month-wise
-                            rangeTx.groupBy { it.localDate().monthValue }
-                                .mapValues { (_, list) -> list.sumOf { it.amount } }
-                        }
+                        DashboardMode.MONTH ->
+                            periodTx.groupBy { it.localDate().dayOfMonth }
+                                .mapValues { it.value.sumOf { tx -> tx.amount } }
+
+                        DashboardMode.QUARTER, DashboardMode.YEAR ->
+                            periodTx.groupBy { it.localDate().monthValue }
+                                .mapValues { it.value.sumOf { tx -> tx.amount } }
                     }
 
-                    // 5) List filtering: Day / Month & Type
-                    val filteredByDayOrMonth: List<SmsEntity> = when {
-                        currentMode == DashboardMode.MONTH && selectedDay != null -> {
-                            rangeTx.filter { it.localDate().dayOfMonth == selectedDay }
-                        }
-                        currentMode != DashboardMode.MONTH && selectedMonthFilter != null -> {
-                            rangeTx.filter { it.localDate().monthValue == selectedMonthFilter }
-                        }
-                        else -> rangeTx
+                    // ------------------- FILTERING LOGIC -------------------
+                    val filteredByDate = when {
+                        currentMode == DashboardMode.MONTH && selectedDay != null ->
+                            periodTx.filter { it.localDate().dayOfMonth == selectedDay }
+
+                        currentMode != DashboardMode.MONTH && selectedMonthFilter != null ->
+                            periodTx.filter { it.localDate().monthValue == selectedMonthFilter }
+
+                        else -> periodTx
                     }
 
-                    val finalList = filteredByDayOrMonth.ofType(selectedType)
-                    val listToShow = finalList.take(20)
+                    val finalList = filteredByDate.ofType(selectedType)
+
+                    // ALWAYS show all results — not recent
+                    val listToShow = finalList
 
                     Column {
-                        // ---- Totals ----
-                        Text(
-                            "Total Debit: ₹${totalDebit.toInt()}",
-                            style = MaterialTheme.typography.bodyLarge
-                        )
-                        Text(
-                            "Total Credit: ₹${totalCredit.toInt()}",
-                            style = MaterialTheme.typography.bodyLarge
-                        )
+
+                        // ------------------- TOTALS UI -------------------
+                        Text("Total Debit: ₹${totalDebit.toInt()}", style = MaterialTheme.typography.bodyLarge)
+                        Text("Total Credit: ₹${totalCredit.toInt()}", style = MaterialTheme.typography.bodyLarge)
                         Spacer(Modifier.height(20.dp))
 
-                        // ---- Pie Chart ----
-                        Text(
-                            "Debit vs Credit",
-                            style = MaterialTheme.typography.titleMedium
-                        )
+                        // ------------------- PIE CHART -------------------
+                        Text("Debit vs Credit", style = MaterialTheme.typography.titleMedium)
                         Spacer(Modifier.height(8.dp))
 
                         CategoryPieChart(
@@ -215,7 +205,6 @@ fun DashboardScreen(
                             onSliceClick = { clicked ->
                                 selectedType =
                                     if (selectedType == clicked) null else clicked
-                                // reset day/month filter when changing type filter
                                 selectedDay = null
                                 selectedMonthFilter = null
                             }
@@ -223,10 +212,10 @@ fun DashboardScreen(
 
                         Spacer(Modifier.height(20.dp))
 
-                        // ---- Bar Chart ----
+                        // ------------------- BAR CHART -------------------
                         val barTitle = when (currentMode) {
                             DashboardMode.MONTH -> "Daily Spending"
-                            DashboardMode.QUARTER, DashboardMode.YEAR -> "Spending by Month"
+                            else -> "Spending by Month"
                         }
 
                         Text(barTitle, style = MaterialTheme.typography.titleMedium)
@@ -234,48 +223,49 @@ fun DashboardScreen(
 
                         DailyBarChart(
                             data = barData,
-                            onBarClick = { indexValue ->
+                            onBarClick = { index ->
                                 when (currentMode) {
-                                    DashboardMode.MONTH -> {
-                                        selectedDay =
-                                            if (selectedDay == indexValue) null else indexValue
-                                        selectedMonthFilter = null
-                                    }
-                                    DashboardMode.QUARTER, DashboardMode.YEAR -> {
-                                        selectedMonthFilter =
-                                            if (selectedMonthFilter == indexValue) null else indexValue
-                                        selectedDay = null
-                                    }
+                                    DashboardMode.MONTH ->
+                                        selectedDay = if (selectedDay == index) null else index
+
+                                    DashboardMode.QUARTER, DashboardMode.YEAR ->
+                                        selectedMonthFilter = if (selectedMonthFilter == index) null else index
                                 }
-                                // Clear type if you want bar selection to dominate
-                                // or keep as-is to combine filters
+                                selectedType = null
                             }
                         )
 
                         Spacer(Modifier.height(20.dp))
 
-                        // ---- List header ----
+                        // ------------------- HEADER TEXT -------------------
                         val headerText = when {
-                            currentMode == DashboardMode.MONTH && selectedDay != null -> {
+                            currentMode == DashboardMode.MONTH && selectedDay != null ->
                                 "Transactions on $selectedDay"
-                            }
+
                             currentMode != DashboardMode.MONTH && selectedMonthFilter != null -> {
-                                val monthName = java.time.Month.of(selectedMonthFilter!!)
-                                    .name.lowercase().replaceFirstChar { it.uppercase() }
-                                "Transactions in $monthName"
+                                val m = java.time.Month.of(selectedMonthFilter!!)
+                                "Transactions in ${m.name.lowercase().replaceFirstChar { it.uppercase() }}"
                             }
-                            selectedType != null -> "$selectedType Transactions"
-                            else -> "Recent Transactions"
+
+                            selectedType != null ->
+                                "$selectedType Transactions"
+
+                            currentMode == DashboardMode.MONTH ->
+                                "All Transactions This Month"
+
+                            currentMode == DashboardMode.QUARTER ->
+                                "All Transactions This Quarter"
+
+                            currentMode == DashboardMode.YEAR ->
+                                "All Transactions This Year"
+
+                            else -> "Transactions"
                         }
 
-                        Text(
-                            headerText,
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.SemiBold
-                        )
+                        Text(headerText, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
                         Spacer(Modifier.height(12.dp))
 
-                        // ---- Items ----
+                        // ------------------- LIST -------------------
                         listToShow.forEach { tx ->
                             SmsListItem(
                                 sms = tx,
@@ -355,3 +345,4 @@ fun PeriodHeader(
         }
     }
 }
+
