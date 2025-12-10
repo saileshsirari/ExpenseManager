@@ -16,9 +16,18 @@ data class SmsEntity(
     val sender: String,
     val body: String,
     val timestamp: Long,
+
+    // Extracted data
     val amount: Double,
     val merchant: String?,
-    val type: String?,
-    val  category: String?,
-    val isIgnored: Boolean = false
+    val type: String?,          // debit/credit/etc (from ML)
+    val category: String?,
+    val isIgnored: Boolean = false,
+
+    // Linked-transfer fields
+    val linkId: String? = null,
+    val linkType: String? = null,         // INTERNAL_TRANSFER / POSSIBLE_TRANSFER
+    val linkConfidence: Int = 0,
+    val isNetZero: Boolean = false        // true when auto-excluded by linking
 )
+

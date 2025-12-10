@@ -9,7 +9,6 @@ import com.spendwise.core.ml.RawSms
 import com.spendwise.core.ml.SenderClassifierMl
 
 object SmsMlPipeline {
-
     suspend fun classify(
         raw: RawSms,
         parsedAmount: Double?,
@@ -76,6 +75,9 @@ object SmsMlPipeline {
         ).also { cat ->
             categoryReason.append("Category resolved as ${cat.name}.")
         }
+
+
+
 
         val isCredit = intentType == IntentType.CREDIT || intentType == IntentType.REFUND
 
