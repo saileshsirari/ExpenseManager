@@ -21,8 +21,14 @@ object IntentClassifierMl {
         }
         // Hard rejects: clearly non-transactional
         val reminderKeywords = listOf(
-            "bill", "due on", "due date", "last date",
-            "payment reminder", "pay now", "ignore if paid", "overdue"
+            "bill due",
+            "bill payment due",
+            "due on",
+            "due date",
+            "last date",
+            "payment reminder",
+            "ignore if paid",
+            "overdue"
         )
         if (reminderKeywords.any { b.contains(it) }) {
             return IntentType.REMINDER
@@ -44,9 +50,12 @@ object IntentClassifierMl {
 
         // Core txn detection
         val isDebit = listOf(
-            "debited", "debit of", "withdrawn", "spent",
-            "payment of", "paid towards", "pos transaction", "atm wdl", "atm withdrawal"
+            "debited", "debit of", "deducted", "deduct", "deduction",
+            "withdrawn", "spent",
+            "payment of", "paid towards", "pos transaction",
+            "atm wdl", "atm withdrawal"
         ).any { b.contains(it) }
+
 
         val isCredit = listOf(
             "credited", "credit of", "received into", "received in your",

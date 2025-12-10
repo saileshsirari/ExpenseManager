@@ -36,8 +36,24 @@ class SmsRepositoryImpl @Inject constructor(
     override suspend fun importAll(resolverProvider: () -> ContentResolver): Flow<List<SmsEntity>> =
         flow {
             val resolver = resolverProvider()
-            val lastTimestamp = db.smsDao().getLastTimestamp() ?: 0L
 
+            // -----------------------------
+            // READ ONLY CURRENT MONTH
+            // -----------------------------
+            val now = LocalDate.now()
+            val monthStart = now.minusMonths(1).withDayOfMonth(1)
+            val monthStartMillis = monthStart
+                .atStartOfDay(ZoneId.systemDefault())
+                .toEpochSecond() * 1000
+
+            // Override lastTimestamp to month-start
+            val lastTimestamp = monthStartMillis - 3600_000L
+
+            Log.w("expense", "Importing SMS since: $monthStart  ($lastTimestamp)")
+
+            // -----------------------------
+            // READ SMS FROM CURRENT MONTH
+            // -----------------------------
             val rawList = withContext(Dispatchers.IO) {
                 SmsReaderImpl(resolver).readSince(lastTimestamp)
             }
@@ -48,9 +64,15 @@ class SmsRepositoryImpl @Inject constructor(
             val classified = rawList.mapNotNull { sms ->
 
                 val bodyLower = sms.body.lowercase()
+                if(sms.body.startsWith("ICICI Bank Acct XX674 debited for Rs 554.00 ")){
+                    Log.w("expense", sms.body)
 
-                if (ignorePatterns.any { it.containsMatchIn(bodyLower) })
+                }
+
+                if (ignorePatterns.any { it.containsMatchIn(bodyLower) }) {
+                    Log.w("expense", "IGNORED BY RULE — ${sms.body}")
                     return@mapNotNull null
+                }
 
                 val amount = SmsParser.parseAmount(sms.body)
                 if (amount == null || amount <= 0) return@mapNotNull null
@@ -60,11 +82,16 @@ class SmsRepositoryImpl @Inject constructor(
                     parsedAmount = amount,
                     overrideProvider = { key ->
                         val v = db.userMlOverrideDao().getValue(key)
-                        Log.d("OVERRIDE_LOOKUP", "import key=$key => $v")
+                        if (v != null) {
+                            Log.d("expense", "import key=$key => $v")
+                        }
+
                         v
                     }
                 ) ?: return@mapNotNull null
-
+                if(sms.body.startsWith("ICICI Bank Acct XX674 debited for Rs 554.00 ")){
+                    Log.w("expense", "reason ${result.explanation}")
+                }
                 SmsEntity(
                     sender = result.rawSms.sender,
                     body = result.rawSms.body,
@@ -115,7 +142,7 @@ class SmsRepositoryImpl @Inject constructor(
 
         val key = "merchant:$norm"
 
-        Log.d("OVERRIDE_SAVE", "Saving override: $key -> $newMerchant")
+        Log.d("expense", "Saving override: $key -> $newMerchant")
 
         db.userMlOverrideDao().save(
             UserMlOverride(key, newMerchant.trim())
@@ -157,7 +184,9 @@ class SmsRepositoryImpl @Inject constructor(
             parsedAmount = amount,
             overrideProvider = { key ->
                 val v = db.userMlOverrideDao().getValue(key)
-                Log.d("OVERRIDE_LOOKUP", "exp key=$key => $v")
+                if(v!=null) {
+                    Log.d("expense", "exp key=$key => $v")
+                }
                 v
             }
         )?.explanation
@@ -175,7 +204,7 @@ class SmsRepositoryImpl @Inject constructor(
         val normMerchant = MerchantExtractorMl.normalize(tx.merchant ?: tx.sender ?: "")
         val normSender = MerchantExtractorMl.normalize(tx.sender ?: "")
 
-        Log.d("RECLASSIFY", "Normalized merchant=$normMerchant, sender=$normSender")
+        Log.d("expense", "Normalized merchant=$normMerchant, sender=$normSender")
 
         val result = SmsMlPipeline.classify(
             raw = RawSms(tx.sender, tx.body, tx.timestamp),
@@ -184,23 +213,23 @@ class SmsRepositoryImpl @Inject constructor(
 
                 // 1) Exact key
                 db.userMlOverrideDao().getValue(key)?.also {
-                    Log.d("OVERRIDE_LOOKUP", "match key=$key => $it")
+                    Log.d("expense", "match key=$key => $it")
                     return@classify it
                 }
 
                 // 2) merchant:<normalizedMerchant>
                 db.userMlOverrideDao().getValue("merchant:$normMerchant")?.also {
-                    Log.d("OVERRIDE_LOOKUP", "match merchant:$normMerchant => $it")
+                    Log.d("expense", "match merchant:$normMerchant => $it")
                     return@classify it
                 }
 
                 // 3) merchant:<normalizedSender>
                 db.userMlOverrideDao().getValue("merchant:$normSender")?.also {
-                    Log.d("OVERRIDE_LOOKUP", "match merchant:$normSender => $it")
+                    Log.d("expense", "match merchant:$normSender => $it")
                     return@classify it
                 }
 
-                Log.d("OVERRIDE_LOOKUP", "NO MATCH for key=$key")
+                Log.d("expense", "NO MATCH for key=$key")
                 null
             }
         ) ?: return null
@@ -211,7 +240,7 @@ class SmsRepositoryImpl @Inject constructor(
             type = if (result.isCredit) "CREDIT" else "DEBIT"
         )
 
-        Log.d("RECLASSIFY", "Updated merchant=${updated.merchant}")
+        Log.d("expense", "Updated merchant=${updated.merchant}")
 
         db.smsDao().update(updated)
         return updated

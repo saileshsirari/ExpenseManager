@@ -10,6 +10,10 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Scaffold
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.core.content.ContextCompat
@@ -25,31 +29,35 @@ import com.spendwise.feature.smsimport.ui.SmsImportViewModel
 fun SpendWiseApp() {
 
     val context = LocalContext.current
-    val viewModel: SmsImportViewModel = hiltViewModel()  // <-- activity scoped
+    val navController = rememberNavController()
+
+    // Correct global-scoped ViewModel (activity scope)
+    val viewModel: SmsImportViewModel = hiltViewModel()
+
+    var hasRequested by remember { mutableStateOf(false) }
 
     val launcher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { granted ->
         if (granted) {
+            // Trigger ViewModel import exactly once
             viewModel.importAll { context.contentResolver }
         }
+        hasRequested = true
     }
 
     val hasPermission = ContextCompat.checkSelfPermission(
         context, Manifest.permission.READ_SMS
     ) == PackageManager.PERMISSION_GRANTED
 
-    // Import SMS ONCE when permission is granted
-    LaunchedEffect(hasPermission) {
+    // Run import exactly once per app launch
+    LaunchedEffect(Unit) {
         if (hasPermission) {
             viewModel.importAll { context.contentResolver }
         } else {
             launcher.launch(Manifest.permission.READ_SMS)
         }
     }
-
-    // ----- UI NAVIGATION -----
-    val navController = rememberNavController()
 
     Scaffold(
         bottomBar = { SpendWiseBottomBar(navController) }
@@ -59,11 +67,27 @@ fun SpendWiseApp() {
             startDestination = Screen.Dashboard.route,
             modifier = Modifier.padding(padding)
         ) {
-            composable(Screen.Dashboard.route) { DashboardScreen(navController,viewModel) }
-            composable(Screen.Categories.route) { CategoriesScreen(viewModel) }
-            composable(Screen.Merchants.route) { MerchantsScreen(viewModel) }
-            composable(Screen.Calendar.route) { CalendarScreen(viewModel) }
-            composable(Screen.Transactions.route) { AllTransactionsScreen(viewModel) }
+
+            composable(Screen.Dashboard.route) {
+                DashboardScreen(navController, viewModel)
+            }
+
+            composable(Screen.Categories.route) {
+                CategoriesScreen(viewModel)
+            }
+
+            composable(Screen.Merchants.route) {
+                MerchantsScreen(viewModel)
+            }
+
+            composable(Screen.Calendar.route) {
+                CalendarScreen(viewModel)
+            }
+
+            composable(Screen.Transactions.route) {
+                AllTransactionsScreen(viewModel)
+            }
+
             composable(Screen.AddExpense.route) {
                 AddExpenseScreen(
                     onDone = { navController.popBackStack() }
@@ -72,3 +96,4 @@ fun SpendWiseApp() {
         }
     }
 }
+

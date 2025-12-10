@@ -1,3 +1,4 @@
+import android.util.Log
 import com.spendwise.core.ml.CategoryClassifierMl
 import com.spendwise.core.ml.ClassifiedTxn
 import com.spendwise.core.ml.IntentClassifierMl
@@ -27,6 +28,7 @@ object SmsMlPipeline {
         val bodyHashKey = "ignore:${raw.body.hashCode()}"
         if (overrideProvider(bodyHashKey) == "true") {
             intentReason.append("Ignored by user override for this SMS pattern.")
+            Log.w("expense", raw.body)
             return null
         }
 
@@ -42,11 +44,13 @@ object SmsMlPipeline {
 
         if (intentType == IntentType.IGNORE) {
             intentReason.append(" → Not a real transaction (alert/due/auto-debit info).")
+            Log.w("expense","intentReason $intentReason for ${raw.body}")
             return null
         }
 
         if (intentType !in listOf(IntentType.DEBIT, IntentType.CREDIT, IntentType.REFUND)) {
             intentReason.append(" → Not a financial transaction.")
+            Log.w("expense","intentReason $intentReason for ${raw.body}")
             return null
         }
 

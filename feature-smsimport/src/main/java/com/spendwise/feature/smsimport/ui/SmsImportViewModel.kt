@@ -53,7 +53,7 @@ class SmsImportViewModel @Inject constructor(private val repo: SmsRepositoryImpl
             // 2️⃣ Build correct key
             val key = "merchant:$originalNorm"    // must be lowercase normalized
 
-            Log.d("OVERRIDE_SAVE", "Saving override: $key -> ${newMerchant.trim()}")
+            Log.d("expense", "Saving override: $key -> ${newMerchant.trim()}")
 
             // 3️⃣ Save override (repo expects already-normalized key)
             repo.saveMerchantOverride(originalNorm, newMerchant.trim())
@@ -92,8 +92,8 @@ class SmsImportViewModel @Inject constructor(private val repo: SmsRepositoryImpl
             .atZone(zone)
             .toInstant()
             .toEpochMilli()
-        Log.d("SMS", "Example SMS ts=${items.first().timestamp}")
-        Log.d("SMS", "As date=" + Instant.ofEpochMilli(items.first().timestamp)
+        Log.d("expense", "Example SMS ts=${items.first().timestamp}")
+        Log.d("expense", "As date=" + Instant.ofEpochMilli(items.first().timestamp)
             .atZone(ZoneId.systemDefault())
             .toLocalDate())
         // Filter entries strictly within this month

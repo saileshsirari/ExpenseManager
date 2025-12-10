@@ -73,10 +73,10 @@ fun MonthlyDashboardScreen(
     }
     val allTransactions by viewModel.items.collectAsState()
     var month by remember { mutableStateOf(YearMonth.now()) }
-    Log.d("SUMMARY", "YearMonth.now() = $month")
+    Log.d("expense", "YearMonth.now() = $month")
 
     LaunchedEffect(allTransactions) {
-        Log.d("DASH", "Items in dashboard = ${allTransactions.size}")
+        Log.d("expense", "Items in dashboard = ${allTransactions.size}")
     }
     val summary = viewModel.getMonthlySummary(allTransactions, month)
     LaunchedEffect(selectedCategory, selectedDay, month, allTransactions) {

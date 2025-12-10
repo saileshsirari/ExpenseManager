@@ -59,6 +59,7 @@ fun DashboardScreen(
     viewModel: SmsImportViewModel = hiltViewModel()
 ) {
     val allTransactions by viewModel.items.collectAsState()
+    var sortConfig by remember { mutableStateOf(SortConfig()) }
 
     var showFixDialog by remember { mutableStateOf<SmsEntity?>(null) }
     var mode by remember { mutableStateOf(DashboardMode.MONTH) }
@@ -184,7 +185,31 @@ fun DashboardScreen(
                         else -> periodTx
                     }
 
-                    val finalList = filteredByDate.ofType(selectedType)
+                    val finalList = filteredByDate
+                        .ofType(selectedType)
+                        .sortedWith(
+                            compareBy<SmsEntity> {
+
+                                when (sortConfig.primary) {
+                                    SortField.DATE -> it.timestamp
+                                    SortField.AMOUNT -> it.amount
+                                }
+
+                            }.let {
+                                if (sortConfig.primaryOrder == SortOrder.ASC) it else it.reversed()
+                            }.thenBy {
+
+                                when (sortConfig.secondary) {
+                                    SortField.DATE -> it.timestamp
+                                    SortField.AMOUNT -> it.amount
+                                }
+
+                            }.let {
+                                if (sortConfig.secondaryOrder == SortOrder.ASC) it else it.reversed()
+                            }
+                        )
+
+
 
                     // ALWAYS show all results — not recent
                     val listToShow = finalList
@@ -261,6 +286,70 @@ fun DashboardScreen(
 
                             else -> "Transactions"
                         }
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 6.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+
+                            val dateArrow = if (sortConfig.primary == SortField.DATE)
+                                if (sortConfig.primaryOrder == SortOrder.ASC) "▲" else "▼"
+                            else ""
+
+                            val amountArrow = if (sortConfig.primary == SortField.AMOUNT)
+                                if (sortConfig.primaryOrder == SortOrder.ASC) "▲" else "▼"
+                            else ""
+
+                            // ---- Date Sort Button ----
+                            Column(
+                                modifier = Modifier.clickable {
+                                    sortConfig =
+                                        if (sortConfig.primary == SortField.DATE) {
+                                            // Toggle order
+                                            sortConfig.copy(
+                                                primaryOrder = if (sortConfig.primaryOrder == SortOrder.ASC)
+                                                    SortOrder.DESC else SortOrder.ASC
+                                            )
+                                        } else {
+                                            // Promote DATE → primary
+                                            sortConfig.copy(
+                                                primary = SortField.DATE,
+                                                primaryOrder = SortOrder.DESC,     // default
+                                                secondary = SortField.AMOUNT,
+                                                secondaryOrder = sortConfig.secondaryOrder
+                                            )
+                                        }
+                                }
+                            ) {
+                                Text("Sort: Date $dateArrow", style = MaterialTheme.typography.labelLarge)
+                            }
+
+                            // ---- Amount Sort Button ----
+                            Column(
+                                modifier = Modifier.clickable {
+                                    sortConfig =
+                                        if (sortConfig.primary == SortField.AMOUNT) {
+                                            // Toggle order
+                                            sortConfig.copy(
+                                                primaryOrder = if (sortConfig.primaryOrder == SortOrder.ASC)
+                                                    SortOrder.DESC else SortOrder.ASC
+                                            )
+                                        } else {
+                                            // Promote AMOUNT → primary
+                                            sortConfig.copy(
+                                                primary = SortField.AMOUNT,
+                                                primaryOrder = SortOrder.DESC,
+                                                secondary = SortField.DATE,
+                                                secondaryOrder = sortConfig.secondaryOrder
+                                            )
+                                        }
+                                }
+                            ) {
+                                Text("Sort: Amount $amountArrow", style = MaterialTheme.typography.labelLarge)
+                            }
+                        }
+
 
                         Text(headerText, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
                         Spacer(Modifier.height(12.dp))
@@ -345,4 +434,13 @@ fun PeriodHeader(
         }
     }
 }
+enum class SortField { DATE, AMOUNT }
+enum class SortOrder { ASC, DESC }
+
+data class SortConfig(
+    val primary: SortField = SortField.DATE,
+    val primaryOrder: SortOrder = SortOrder.DESC,
+    val secondary: SortField = SortField.AMOUNT,
+    val secondaryOrder: SortOrder = SortOrder.ASC
+)
 
