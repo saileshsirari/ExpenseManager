@@ -38,12 +38,36 @@ class SmsImportViewModel @Inject constructor(private val repo: SmsRepositoryImpl
     }
     fun onMessageClicked(tx: SmsEntity) {
         viewModelScope.launch {
+
+            // 1️⃣ Print the clicked SMS raw body
+            Log.d("expense", "\n------ CLICKED SMS ------")
+            Log.d("expense", tx.body)
+            Log.d("expense", "raw-linkId"+tx.linkId+"")
+
+            // 2️⃣ If linked, print the paired raw SMS too
+            if (tx.linkId != null) {
+                val all = repo.getAllOnce()  // safe, synchronous DB read
+                val linked = all.filter { it.linkId == tx.linkId && it.id != tx.id }
+
+                Log.d("expense", "\n------ LINKED PAIR (${linked.size}) ------")
+                linked.forEach { pair ->
+                    Log.d("expense", "ID=${pair.id}")
+                    Log.d("expense", pair.body)
+                    Log.d("expense", "---------------------"+pair.linkConfidence)
+                }
+            } else {
+                Log.d("expense", "\n(No linked SMS)")
+            }
+
+            Log.d("expense", "----------------------\n")
+
+            // 3️⃣ Show ML explanation (already existing)
             val log = repo.getMlExplanationFor(tx)
-            Log.d("expense",log.toString())
-            Log.d("expense",tx.body)
+            Log.d("expense", log.toString())
             _selectedExplanation.value = log
         }
     }
+
     fun fixMerchant(tx: SmsEntity, newMerchant: String) {
         viewModelScope.launch {
 

@@ -7,54 +7,48 @@ import kotlin.math.absoluteValue
 
 class LinkedTransactionDetector(
     private val repo: LinkedTransactionRepository,
+
+    // Weights
     private val amountWeight: Int = 60,
     private val dateWeightSameDay: Int = 15,
     private val dateWeightOneDay: Int = 10,
     private val oppositeDirWeight: Int = 10,
     private val nameSimWeight: Int = 10,
     private val bankMatchWeight: Int = 5,
+
+    // Thresholds
     private val autoLinkThreshold: Int = 80,
     private val possibleLinkThreshold: Int = 60
 ) {
+
     private val TAG = "LinkedDetector"
 
     suspend fun process(tx: TransactionCoreModel) {
+        Log.d(TAG, "\n\n--- PROCESSING TX ID=${tx.id} ---")
+        Log.d(TAG, "type=${tx.type}, sender=${tx.sender}, amount=${tx.amount}")
+        Log.d(TAG, "merchant=${tx.merchant}, category=${tx.category}")
 
-        Log.d(TAG, "--- TX ${tx.id} --- ${tx.type} amt=${tx.amount}")
-
-        val tNorm = tx.type?.trim()?.lowercase()
-        Log.d(TAG, "typeNorm=$tNorm sender=${tx.sender}")
-
-        if (!isDebitOrCredit(tx)) {
-            Log.d(TAG, "❌ Skipped (not debit/credit)")
-            return
-        }
+        if (!isDebitOrCredit(tx)) return
 
         val from = tx.timestamp - DAY_MS
         val to = tx.timestamp + DAY_MS
 
         val candidates = repo.findCandidates(tx.amount, from, to, tx.id)
 
-        Log.d(TAG, "candidates=${candidates.size}")
-
         for (cand in candidates) {
 
-            val score = compactScore(tx, cand)
+            val score = scorePair(tx, cand)
 
-            Log.d(TAG, "→ cand=${cand.id} t=${cand.type} score=$score")
+            Log.d(TAG, "Candidate ${cand.id} -> score=$score")
 
             when {
                 score >= autoLinkThreshold -> {
-                    Log.d(TAG, "✔ AUTO LINK ${tx.id} ↔ ${cand.id}")
                     applyLink(tx, cand, score, "INTERNAL_TRANSFER", true)
                     return
                 }
+
                 score >= possibleLinkThreshold -> {
-                    Log.d(TAG, "⚠ POSSIBLE LINK ${tx.id} ↔ ${cand.id}")
                     applyLink(tx, cand, score, "POSSIBLE_TRANSFER", false)
-                }
-                else -> {
-                    Log.d(TAG, "no match (score=$score)")
                 }
             }
         }
@@ -68,17 +62,40 @@ class LinkedTransactionDetector(
         isNetZero: Boolean
     ) {
         val linkId = generateLinkId(a, b)
+        Log.d(TAG, "LINKING ID=${a.id} <-> ${b.id} score=$score type=$type")
+
         repo.updateLink(a.id, linkId, type, score, isNetZero)
         repo.updateLink(b.id, linkId, type, score, isNetZero)
     }
 
-    private fun compactScore(a: TransactionCoreModel, b: TransactionCoreModel): Int {
+    private fun isDebitOrCredit(tx: TransactionCoreModel): Boolean {
+        val t = tx.type?.lowercase() ?: return false
+        return t == "debit" || t == "credit"
+    }
+
+    private fun scorePair(a: TransactionCoreModel, b: TransactionCoreModel): Int {
+
+        // ⭐ HARD BLOCK — FIXES all wrong PayZapp links
+        val typeA = a.type?.lowercase()
+        val typeB = b.type?.lowercase()
+
+        if (typeA == typeB) {
+            Log.d(TAG, "❌ BLOCKED SAME DIRECTION: $typeA & $typeB (duplicate or noise)")
+            return 0
+        }
+
+        // Amount mismatch -> no link
+        if (a.amount != b.amount) {
+            Log.d(TAG, "Amount mismatch: ${a.amount} vs ${b.amount}")
+            return 0
+        }
+
         var score = 0
 
-        if (a.amount != b.amount) return 0
-
+        // Amount always adds big weight
         score += amountWeight
 
+        // Time proximity
         val dayDiff = ((a.timestamp - b.timestamp).absoluteValue / DAY_MS)
         score += when (dayDiff) {
             0L -> dateWeightSameDay
@@ -86,24 +103,25 @@ class LinkedTransactionDetector(
             else -> 0
         }
 
-        if (isOpposite(a.type, b.type)) score += oppositeDirWeight
+        // Opposite direction bonus (only possible after hard-block)
+        if (isOpposite(a.type, b.type)) {
+            score += oppositeDirWeight
+        }
 
-        val sim = similarity(a.merchant, b.merchant)
-        score += (sim * nameSimWeight / 100)
+        // Merchant similarity scaled 0..10
+        score += (similarity(a.merchant, b.merchant) * nameSimWeight / 100)
 
-        if (a.sender == b.sender) score += bankMatchWeight
+        // Sender/bank match small bonus
+        if (!a.sender.isNullOrBlank() && a.sender == b.sender) {
+            score += bankMatchWeight
+        }
 
-        return score
-    }
-
-    private fun isDebitOrCredit(tx: TransactionCoreModel): Boolean {
-        val t = tx.type?.trim()?.lowercase() ?: return false
-        return t == "debit" || t == "credit"
+        return score.coerceIn(0, 100)
     }
 
     private fun isOpposite(a: String?, b: String?): Boolean {
-        val x = a?.trim()?.lowercase()
-        val y = b?.trim()?.lowercase()
+        val x = a?.lowercase()
+        val y = b?.lowercase()
         return (x == "debit" && y == "credit") || (x == "credit" && y == "debit")
     }
 
@@ -112,11 +130,14 @@ class LinkedTransactionDetector(
         val na = normalize(a)
         val nb = normalize(b)
         if (na == nb) return 100
-        val aSet = na.split(" ").filter { it.isNotEmpty() }.toSet()
-        val bSet = nb.split(" ").filter { it.isNotEmpty() }.toSet()
-        val intersect = aSet.intersect(bSet).size
-        val union = aSet.union(bSet).size
-        return ((intersect.toDouble() / union.toDouble()) * 100).toInt()
+
+        val aTokens = na.split(" ").filter { it.isNotEmpty() }.toSet()
+        val bTokens = nb.split(" ").filter { it.isNotEmpty() }.toSet()
+
+        val intersect = (aTokens intersect bTokens).size
+        val union = (aTokens union bTokens).size
+
+        return if (union == 0) 0 else ((intersect.toDouble() / union) * 100).toInt()
     }
 
     private fun normalize(s: String): String =
@@ -126,9 +147,8 @@ class LinkedTransactionDetector(
             .trim()
 
     private fun generateLinkId(a: TransactionCoreModel, b: TransactionCoreModel): String {
-        return UUID.nameUUIDFromBytes(
-            "${a.amount}-${a.timestamp}-${b.timestamp}-${a.merchant ?: ""}".toByteArray()
-        ).toString()
+        val raw = "${a.amount}-${a.timestamp}-${b.timestamp}-${a.merchant.orEmpty()}"
+        return UUID.nameUUIDFromBytes(raw.toByteArray()).toString()
     }
 
     companion object {

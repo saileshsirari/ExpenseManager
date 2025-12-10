@@ -300,4 +300,9 @@ class SmsRepositoryImpl @Inject constructor(
     override suspend fun setIgnored(id: Long, ignored: Boolean) {
         db.smsDao().setIgnored(id, if (ignored) 1 else 0)
     }
+
+    suspend fun getAllOnce(): List<SmsEntity> {
+        return db.smsDao().getAllOnce()
+    }
+
 }

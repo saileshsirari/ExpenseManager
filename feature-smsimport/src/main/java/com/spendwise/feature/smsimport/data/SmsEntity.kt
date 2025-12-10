@@ -29,5 +29,7 @@ data class SmsEntity(
     val linkType: String? = null,         // INTERNAL_TRANSFER / POSSIBLE_TRANSFER
     val linkConfidence: Int = 0,
     val isNetZero: Boolean = false        // true when auto-excluded by linking
+
+
 )
 
