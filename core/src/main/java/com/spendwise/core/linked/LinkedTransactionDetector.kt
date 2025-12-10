@@ -7,16 +7,12 @@ import kotlin.math.absoluteValue
 
 class LinkedTransactionDetector(
     private val repo: LinkedTransactionRepository,
-
-    // Weights
     private val amountWeight: Int = 60,
     private val dateWeightSameDay: Int = 15,
     private val dateWeightOneDay: Int = 10,
     private val oppositeDirWeight: Int = 10,
     private val nameSimWeight: Int = 10,
     private val bankMatchWeight: Int = 5,
-
-    // Thresholds
     private val autoLinkThreshold: Int = 80,
     private val possibleLinkThreshold: Int = 60
 ) {
@@ -24,36 +20,55 @@ class LinkedTransactionDetector(
     private val TAG = "LinkedDetector"
 
     suspend fun process(tx: TransactionCoreModel) {
-        Log.d(TAG, "\n\n--- PROCESSING TX ID=${tx.id} ---")
-        Log.d(TAG, "type=${tx.type}, sender=${tx.sender}, amount=${tx.amount}")
-        Log.d(TAG, "merchant=${tx.merchant}, category=${tx.category}")
 
-        if (!isDebitOrCredit(tx)) return
+        Log.d(TAG, "\n\n========== PROCESSING TX ${tx.id} ==========")
+        Log.d(TAG, "type=${tx.type}, amount=${tx.amount}")
+        Log.d(TAG, "sender=${tx.sender}, merchant=${tx.merchant}")
+        Log.d(TAG, "timestamp=${tx.timestamp}")
+
+        if (!isDebitOrCredit(tx)) {
+            Log.d(TAG, "SKIP — Not debit/credit\n")
+            return
+        }
 
         val from = tx.timestamp - DAY_MS
         val to = tx.timestamp + DAY_MS
 
-        val candidates = repo.findCandidates(tx.amount, from, to, tx.id)
+        val candidates = repo.findCandidates(
+            amount = tx.amount,
+            from = from,
+            to = to,
+            excludeId = tx.id
+        )
+
+        Log.d(TAG, "Found ${candidates.size} potential candidates")
 
         for (cand in candidates) {
 
             val score = scorePair(tx, cand)
 
-            Log.d(TAG, "Candidate ${cand.id} -> score=$score")
+            Log.d(TAG, "Score vs TX ${cand.id} = $score")
 
             when {
                 score >= autoLinkThreshold -> {
+                    Log.d(TAG, "AUTO-LINKED as INTERNAL_TRANSFER\n")
                     applyLink(tx, cand, score, "INTERNAL_TRANSFER", true)
                     return
                 }
 
                 score >= possibleLinkThreshold -> {
+                    Log.d(TAG, "POSSIBLE LINK\n")
                     applyLink(tx, cand, score, "POSSIBLE_TRANSFER", false)
                 }
+
+                else -> Log.d(TAG, "NOT LINKED\n")
             }
         }
     }
 
+    // =========================================================================
+    // APPLY LINK
+    // =========================================================================
     private suspend fun applyLink(
         a: TransactionCoreModel,
         b: TransactionCoreModel,
@@ -62,40 +77,40 @@ class LinkedTransactionDetector(
         isNetZero: Boolean
     ) {
         val linkId = generateLinkId(a, b)
-        Log.d(TAG, "LINKING ID=${a.id} <-> ${b.id} score=$score type=$type")
-
         repo.updateLink(a.id, linkId, type, score, isNetZero)
         repo.updateLink(b.id, linkId, type, score, isNetZero)
     }
 
-    private fun isDebitOrCredit(tx: TransactionCoreModel): Boolean {
-        val t = tx.type?.lowercase() ?: return false
-        return t == "debit" || t == "credit"
-    }
-
+    // =========================================================================
+    // PAIR SCORING
+    // =========================================================================
     private fun scorePair(a: TransactionCoreModel, b: TransactionCoreModel): Int {
 
-        // ⭐ HARD BLOCK — FIXES all wrong PayZapp links
-        val typeA = a.type?.lowercase()
-        val typeB = b.type?.lowercase()
-
-        if (typeA == typeB) {
-            Log.d(TAG, "❌ BLOCKED SAME DIRECTION: $typeA & $typeB (duplicate or noise)")
+        // ---------- 1. Block same direction (critical fix) ----------
+        if (a.type?.lowercase() == b.type?.lowercase()) {
+            Log.d(TAG, "BLOCKED: Same direction ${a.type} & ${b.type}")
             return 0
         }
 
-        // Amount mismatch -> no link
+        // ---------- 2. Amount mismatch (fast reject) ----------
         if (a.amount != b.amount) {
-            Log.d(TAG, "Amount mismatch: ${a.amount} vs ${b.amount}")
+            Log.d(TAG, "BLOCKED: Amount mismatch")
+            return 0
+        }
+
+        // ---------- 3. Merchant mismatch (critical fix) ----------
+        val merchantSim = similarity(a.merchant, b.merchant)
+        if (merchantSim < 10) {
+            Log.d(TAG, "BLOCKED: Merchant mismatch '${a.merchant}' vs '${b.merchant}' (sim=$merchantSim)")
             return 0
         }
 
         var score = 0
 
-        // Amount always adds big weight
+        // ---------- 4. Amount match ----------
         score += amountWeight
 
-        // Time proximity
+        // ---------- 5. Date proximity ----------
         val dayDiff = ((a.timestamp - b.timestamp).absoluteValue / DAY_MS)
         score += when (dayDiff) {
             0L -> dateWeightSameDay
@@ -103,15 +118,13 @@ class LinkedTransactionDetector(
             else -> 0
         }
 
-        // Opposite direction bonus (only possible after hard-block)
-        if (isOpposite(a.type, b.type)) {
-            score += oppositeDirWeight
-        }
+        // ---------- 6. Opposite direction ----------
+        if (isOpposite(a.type, b.type)) score += oppositeDirWeight
 
-        // Merchant similarity scaled 0..10
-        score += (similarity(a.merchant, b.merchant) * nameSimWeight / 100)
+        // ---------- 7. Merchant similarity ----------
+        score += (merchantSim * nameSimWeight / 100)
 
-        // Sender/bank match small bonus
+        // ---------- 8. Sender match (same bank) ----------
         if (!a.sender.isNullOrBlank() && a.sender == b.sender) {
             score += bankMatchWeight
         }
@@ -125,19 +138,25 @@ class LinkedTransactionDetector(
         return (x == "debit" && y == "credit") || (x == "credit" && y == "debit")
     }
 
+    // =========================================================================
+    // SIMILARITY FUNCTION
+    // =========================================================================
     private fun similarity(a: String?, b: String?): Int {
         if (a.isNullOrBlank() || b.isNullOrBlank()) return 0
+
         val na = normalize(a)
         val nb = normalize(b)
         if (na == nb) return 100
 
-        val aTokens = na.split(" ").filter { it.isNotEmpty() }.toSet()
-        val bTokens = nb.split(" ").filter { it.isNotEmpty() }.toSet()
+        val aTokens = na.split(" ").filter { it.isNotBlank() }.toSet()
+        val bTokens = nb.split(" ").filter { it.isNotBlank() }.toSet()
 
-        val intersect = (aTokens intersect bTokens).size
-        val union = (aTokens union bTokens).size
+        if (aTokens.isEmpty() || bTokens.isEmpty()) return 0
 
-        return if (union == 0) 0 else ((intersect.toDouble() / union) * 100).toInt()
+        val intersect = aTokens.intersect(bTokens).size
+        val union = aTokens.union(bTokens).size
+
+        return ((intersect.toDouble() / union.toDouble()) * 100).toInt()
     }
 
     private fun normalize(s: String): String =
@@ -147,8 +166,14 @@ class LinkedTransactionDetector(
             .trim()
 
     private fun generateLinkId(a: TransactionCoreModel, b: TransactionCoreModel): String {
-        val raw = "${a.amount}-${a.timestamp}-${b.timestamp}-${a.merchant.orEmpty()}"
-        return UUID.nameUUIDFromBytes(raw.toByteArray()).toString()
+        return UUID.nameUUIDFromBytes(
+            "${a.amount}-${a.timestamp}-${b.timestamp}-${a.merchant}".toByteArray()
+        ).toString()
+    }
+
+    private fun isDebitOrCredit(tx: TransactionCoreModel): Boolean {
+        val t = tx.type?.lowercase() ?: return false
+        return t == "debit" || t == "credit"
     }
 
     companion object {
