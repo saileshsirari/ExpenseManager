@@ -22,7 +22,7 @@ object MlDebugLogger {
     ) {
         if (!enabled) return
 
-        Log.d("ML_PIPELINE", """
+        Log.d("expense", """
             ---- ML CLASSIFICATION ----
             SMS From: ${raw.sender}
             Body: ${raw.body.take(200)}...

@@ -135,23 +135,23 @@ fun DailyBarChart(
     val sortedValues = sortedKeys.map { data[it] ?: 0.0 }
 
     val max = sortedValues.maxOrNull()?.toFloat() ?: 1f
-
-    // Precompute bar width *outside* Canvas
     val barCount = sortedKeys.size
-    val spacingFactor = 1.5f
+    val spacingFactor = 1.4f   // good balance of spacing
 
-    var barWidthPx by remember { mutableStateOf(0f) }  // updated once canvas is known
+    var barWidthPx by remember { mutableStateOf(0f) }
 
     Box(
         modifier = Modifier
             .fillMaxWidth()
             .height(200.dp)
-            .pointerInput(barCount, sortedKeys) {
+            .pointerInput(barCount, sortedKeys, barWidthPx) {
                 detectTapGestures { offset ->
 
                     if (barWidthPx == 0f) return@detectTapGestures
 
-                    val index = (offset.x / (barWidthPx * spacingFactor)).toInt()
+                    // Compute index based on bar+spacing width
+                    val slotWidth = barWidthPx * spacingFactor
+                    val index = (offset.x / slotWidth).toInt()
 
                     val day = sortedKeys.getOrNull(index)
                     if (day != null) {
@@ -160,12 +160,14 @@ fun DailyBarChart(
                 }
             }
     ) {
+
         Canvas(modifier = Modifier.fillMaxSize()) {
 
             // compute bar width now that size is known
             barWidthPx = size.width / (barCount * spacingFactor)
 
             sortedValues.forEachIndexed { index, amount ->
+
                 val barHeight = (amount.toFloat() / max) * size.height
 
                 drawRect(
@@ -180,6 +182,7 @@ fun DailyBarChart(
         }
     }
 }
+
 
 
 

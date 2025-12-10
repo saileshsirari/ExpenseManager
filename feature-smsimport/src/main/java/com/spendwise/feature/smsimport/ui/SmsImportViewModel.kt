@@ -6,6 +6,8 @@ import android.util.Log
 import androidx.annotation.RequiresApi
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.spendwise.core.ml.CategoryType
+import com.spendwise.core.ml.MerchantExtractorMl
 import com.spendwise.core.ml.MlReasonBundle
 import com.spendwise.feature.smsimport.data.SmsEntity
 import com.spendwise.feature.smsimport.repo.SmsRepositoryImpl
@@ -14,6 +16,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 import java.time.Instant
+import java.time.LocalDate
 import java.time.LocalTime
 import java.time.YearMonth
 import java.time.ZoneId
@@ -44,19 +47,26 @@ class SmsImportViewModel @Inject constructor(private val repo: SmsRepositoryImpl
     fun fixMerchant(tx: SmsEntity, newMerchant: String) {
         viewModelScope.launch {
 
-            // 1️⃣ Determine correct merchant key to override
-            val originalKey = (tx.merchant ?: tx.sender).trim()
+            // 1️⃣ Normalize the CURRENT merchant value
+            val originalNorm = MerchantExtractorMl.normalize(tx.merchant ?: tx.sender)
 
-            // 2️⃣ Save override
-            repo.saveMerchantOverride(originalKey, newMerchant.trim())
+            // 2️⃣ Build correct key
+            val key = "merchant:$originalNorm"    // must be lowercase normalized
 
-            // 3️⃣ Re-run ML pipeline for THIS transaction only
+            Log.d("expense", "Saving override: $key -> ${newMerchant.trim()}")
+
+            // 3️⃣ Save override (repo expects already-normalized key)
+            repo.saveMerchantOverride(originalNorm, newMerchant.trim())
+
+            // 4️⃣ Re-run ML for this one transaction
             repo.reclassifySingle(tx.id)
 
-            // 4️⃣ Refresh list in UI
+            // 5️⃣ Refresh UI
             refresh()
         }
-    }
+
+}
+
 
 
     @RequiresApi(Build.VERSION_CODES.O)
@@ -82,8 +92,8 @@ class SmsImportViewModel @Inject constructor(private val repo: SmsRepositoryImpl
             .atZone(zone)
             .toInstant()
             .toEpochMilli()
-        Log.d("SMS", "Example SMS ts=${items.first().timestamp}")
-        Log.d("SMS", "As date=" + Instant.ofEpochMilli(items.first().timestamp)
+        Log.d("expense", "Example SMS ts=${items.first().timestamp}")
+        Log.d("expense", "As date=" + Instant.ofEpochMilli(items.first().timestamp)
             .atZone(ZoneId.systemDefault())
             .toLocalDate())
         // Filter entries strictly within this month
@@ -135,8 +145,47 @@ class SmsImportViewModel @Inject constructor(private val repo: SmsRepositoryImpl
 
     fun markNotExpense(tx: SmsEntity) {
         viewModelScope.launch {
-            repo.saveIgnorePattern(tx.body)
+            repo.markIgnored(tx)
             refresh()
+        }
+    }
+
+
+
+
+
+
+
+    fun addManualExpense(
+        amount: Double,
+        merchant: String,
+        category: CategoryType,
+        date: LocalDate,
+        note: String
+    ) {
+        viewModelScope.launch {
+            repo.saveManualExpense(
+                amount = amount,
+                merchant = merchant,
+                category = category,
+                date = date,
+                note = note
+            )
+            refresh()
+        }
+    }
+
+    fun fixCategory(tx: SmsEntity, newCategory: CategoryType) {
+        viewModelScope.launch {
+            repo.saveCategoryOverride(tx.merchant ?: tx.sender, newCategory.name)
+            repo.reclassifySingle(tx.id)
+            refresh()
+        }
+    }
+    fun setIgnoredState(tx: SmsEntity, ignored: Boolean) {
+        viewModelScope.launch {
+            repo.setIgnored(tx.id, ignored)
+            refresh()   // reload list
         }
     }
 

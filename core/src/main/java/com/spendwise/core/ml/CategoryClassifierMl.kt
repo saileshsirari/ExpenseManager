@@ -13,27 +13,19 @@ object CategoryClassifierMl {
         val b = body.lowercase()
 
         // ------------------------------------------------------------
-        // 1️⃣ USER OVERRIDE (highest priority)
-        // ------------------------------------------------------------
-        if (!merchant.isNullOrBlank()) {
-            overrideProvider("category:$merchant")?.let {
-                return CategoryType.valueOf(it)
-            }
-        }
-
-        // ------------------------------------------------------------
-        // 2️⃣ PERSON CATEGORY DETECTION
+        // ❌ REMOVED CATEGORY OVERRIDE
+        //    This caused invalid values like "Amazon1" to crash the app.
         // ------------------------------------------------------------
 
-        // Case A: Merchant looks like a human name
+        // ------------------------------------------------------------
+        // 1️⃣ PERSON CATEGORY DETECTION
+        // ------------------------------------------------------------
         if (merchant != null && looksLikePersonName(merchant)) {
-            // Salary should NOT be marked as PERSON
             if (!b.contains("salary") && !b.contains("credited")) {
                 return CategoryType.PERSON
             }
         }
 
-        // Case B: SMS says "Paid to <Person>"
         if (intentType == IntentType.DEBIT &&
             (b.contains("paid to") || b.contains("sent to") || b.contains("to "))
         ) {
@@ -43,30 +35,27 @@ object CategoryClassifierMl {
         }
 
         // ------------------------------------------------------------
-        // 3️⃣ CREDITS = INCOME / REFUND
+        // 2️⃣ CREDITS = INCOME
         // ------------------------------------------------------------
         if (intentType == IntentType.CREDIT) {
 
-            // Salary deposits
             if (listOf("salary", "sal credited", "credited by employer", "nps", "pf payout")
                     .any { b.contains(it) }) {
                 return CategoryType.INCOME
             }
 
-            // Refunds & cashbacks
             if (listOf("refund", "reversal", "cashback", "reversed")
                     .any { b.contains(it) }) {
                 return CategoryType.INCOME
             }
 
-            // IMPS/NEFT incoming transfer → TRANSFER
             if (listOf("neft", "imps", "rtgs").any { b.contains(it) }) {
                 return CategoryType.TRANSFER
             }
         }
 
         // ------------------------------------------------------------
-        // 4️⃣ SUBSCRIPTIONS / OTT (NEW & IMPROVED)
+        // 3️⃣ ENTERTAINMENT / OTT
         // ------------------------------------------------------------
         val ottKeywords = listOf(
             "netflix", "hotstar", "prime video", "amazon prime",
@@ -79,7 +68,7 @@ object CategoryClassifierMl {
         }
 
         // ------------------------------------------------------------
-        // 5️⃣ FOOD
+        // 4️⃣ FOOD
         // ------------------------------------------------------------
         if (listOf("zomato", "swiggy", "domino", "pizza", "eat", "restaurant", "food")
                 .any { m.contains(it) || b.contains(it) }) {
@@ -87,7 +76,7 @@ object CategoryClassifierMl {
         }
 
         // ------------------------------------------------------------
-        // 6️⃣ TRAVEL
+        // 5️⃣ TRAVEL
         // ------------------------------------------------------------
         if (listOf(
                 "uber", "ola", "rapido", "irctc", "train",
@@ -98,7 +87,7 @@ object CategoryClassifierMl {
         }
 
         // ------------------------------------------------------------
-        // 7️⃣ SHOPPING / QUICK-COMMERCE
+        // 6️⃣ SHOPPING
         // ------------------------------------------------------------
         if (listOf("amazon", "flipkart", "myntra", "bigbasket", "blinkit", "zepto", "ajio", "nykaa")
                 .any { m.contains(it) || b.contains(it) }) {
@@ -106,7 +95,7 @@ object CategoryClassifierMl {
         }
 
         // ------------------------------------------------------------
-        // 8️⃣ FUEL
+        // 7️⃣ FUEL
         // ------------------------------------------------------------
         if (listOf("fuel", "petrol", "diesel", "hpcl", "bpcl", "ioc", "indian oil")
                 .any { m.contains(it) || b.contains(it) }) {
@@ -114,15 +103,16 @@ object CategoryClassifierMl {
         }
 
         // ------------------------------------------------------------
-        // 9️⃣ UTILITIES (Electricity, LPG, Water)
+        // 8️⃣ UTILITIES
         // ------------------------------------------------------------
-        if (listOf("electricity", "power", "billdesk", "bescom", "tneb", "mseb", "gas", "lpg", "bharat gas")
+        if (listOf("electricity", "power", "billdesk", "bescom", "tneb", "mseb",
+                "gas", "lpg", "bharat gas")
                 .any { b.contains(it) }) {
             return CategoryType.UTILITIES
         }
 
         // ------------------------------------------------------------
-        // 🔟 INTERNET/BROADBAND
+        // 9️⃣ INTERNET/BROADBAND
         // ------------------------------------------------------------
         if (listOf("broadband", "fibre", "fiber", "wifi", "internet", "jiofiber", "act fibernet")
                 .any { b.contains(it) }) {
@@ -130,7 +120,7 @@ object CategoryClassifierMl {
         }
 
         // ------------------------------------------------------------
-        // 1️⃣1️⃣ HEALTH
+        // 1️⃣0️⃣ HEALTH
         // ------------------------------------------------------------
         if (listOf("hospital", "clinic", "pharma", "medic", "apollo", "fortis", "max health", "diagnostic")
                 .any { b.contains(it) }) {
@@ -138,7 +128,7 @@ object CategoryClassifierMl {
         }
 
         // ------------------------------------------------------------
-        // 1️⃣2️⃣ EDUCATION
+        // 1️⃣1️⃣ EDUCATION
         // ------------------------------------------------------------
         if (listOf("school", "college", "tuition", "coaching", "academy")
                 .any { b.contains(it) }) {
@@ -146,7 +136,7 @@ object CategoryClassifierMl {
         }
 
         // ------------------------------------------------------------
-        // 1️⃣3️⃣ ATM / CASH WITHDRAWAL
+        // 1️⃣2️⃣ ATM / CASH WITHDRAWAL
         // ------------------------------------------------------------
         if (listOf("atm", "cash withdrawal", "atm wdl")
                 .any { b.contains(it) }) {
@@ -154,7 +144,7 @@ object CategoryClassifierMl {
         }
 
         // ------------------------------------------------------------
-        // 1️⃣4️⃣ TRANSFERS (UPI / IMPS / NEFT)
+        // 1️⃣3️⃣ TRANSFERS
         // ------------------------------------------------------------
         if (listOf("transfer to", "fund transfer", "neft", "imps", "rtgs")
                 .any { b.contains(it) }) {
@@ -169,33 +159,29 @@ object CategoryClassifierMl {
         }
 
         // ------------------------------------------------------------
-        // 1️⃣5️⃣ DEFAULT
+        // 1️⃣4️⃣ DEFAULT
         // ------------------------------------------------------------
         return CategoryType.OTHER
     }
 
+
     // --------------------------------------------------------------------
-    // PERSON-NAME HEURISTIC (much improved)
+    // PERSON DETECTION LOGIC
     // --------------------------------------------------------------------
     private fun looksLikePersonName(name: String): Boolean {
         val cleaned = name.replace(Regex("[^A-Za-z ]"), "").trim()
 
-        // Exclude known merchants
         if (MerchantExtractorMl.merchantKeywords.any { cleaned.lowercase().contains(it) })
             return false
 
-        // Require actual alphabet characters
         if (cleaned.none { it.isLetter() }) return false
 
         val parts = cleaned.split(" ").filter { it.isNotBlank() }
 
-        // Allow 1–3 names
         if (parts.size !in 1..3) return false
 
-        // Each part must start with uppercase if it's a name
         if (parts.all { it.first().isUpperCase() && it.length >= 3 }) return true
 
-        // Single names like "Ravi", "Arjun", "Meena"
         if (parts.size == 1 && cleaned.length in 3..14) return true
 
         return false

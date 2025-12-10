@@ -2,7 +2,12 @@ package com.spendwise.feature.smsimport.repo
 
 import SmsMlPipeline
 import android.content.ContentResolver
+import android.os.Build
+import android.util.Log
+import androidx.annotation.RequiresApi
+import com.spendwise.core.ml.CategoryType
 import com.spendwise.core.ml.IgnorePatternBuilder
+import com.spendwise.core.ml.MerchantExtractorMl
 import com.spendwise.core.ml.MlReasonBundle
 import com.spendwise.core.ml.RawSms
 import com.spendwise.domain.SmsRepository
@@ -16,62 +21,91 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.withContext
+import java.time.LocalDate
+import java.time.ZoneId
 import javax.inject.Inject
 
 class SmsRepositoryImpl @Inject constructor(
     private val db: AppDatabase
 ) : SmsRepository {
 
+
+    // ------------------------------------------------------------
+    // IMPORT ALL
+    // ------------------------------------------------------------
     override suspend fun importAll(resolverProvider: () -> ContentResolver): Flow<List<SmsEntity>> =
         flow {
             val resolver = resolverProvider()
 
-            val lastTimestamp = db.smsDao().getLastTimestamp() ?: 0L
+            // -----------------------------
+            // READ ONLY CURRENT MONTH
+            // -----------------------------
+            val now = LocalDate.now()
+            val monthStart = now.minusMonths(1).withDayOfMonth(1)
+            val monthStartMillis = monthStart
+                .atStartOfDay(ZoneId.systemDefault())
+                .toEpochSecond() * 1000
 
+            // Override lastTimestamp to month-start
+            val lastTimestamp = monthStartMillis - 3600_000L
+
+            Log.w("expense", "Importing SMS since: $monthStart  ($lastTimestamp)")
+
+            // -----------------------------
+            // READ SMS FROM CURRENT MONTH
+            // -----------------------------
             val rawList = withContext(Dispatchers.IO) {
                 SmsReaderImpl(resolver).readSince(lastTimestamp)
             }
 
-            // Load ignore regex list once
             val ignorePatterns = db.userMlOverrideDao().getIgnorePatterns()
                 .map { Regex(it) }
 
             val classified = rawList.mapNotNull { sms ->
 
                 val bodyLower = sms.body.lowercase()
+                if(sms.body.startsWith("ICICI Bank Acct XX674 debited for Rs 554.00 ")){
+                    Log.w("expense", sms.body)
 
-                // 1️⃣ IGNORE IF matches any rule
+                }
+
                 if (ignorePatterns.any { it.containsMatchIn(bodyLower) }) {
+                    Log.w("expense", "IGNORED BY RULE — ${sms.body}")
                     return@mapNotNull null
                 }
 
-                // 2️⃣ Extract amount
                 val amount = SmsParser.parseAmount(sms.body)
                 if (amount == null || amount <= 0) return@mapNotNull null
 
-                // 3️⃣ ML classification
                 val result = SmsMlPipeline.classify(
                     raw = RawSms(sms.sender, sms.body, sms.timestamp),
                     parsedAmount = amount,
-                    overrideProvider = { key -> db.userMlOverrideDao().getValue(key) }
-                ) ?: return@mapNotNull null
+                    overrideProvider = { key ->
+                        val v = db.userMlOverrideDao().getValue(key)
+                        if (v != null) {
+                            Log.d("expense", "import key=$key => $v")
+                        }
 
+                        v
+                    }
+                ) ?: return@mapNotNull null
+                if(sms.body.startsWith("ICICI Bank Acct XX674 debited for Rs 554.00 ")){
+                    Log.w("expense", "reason ${result.explanation}")
+                }
                 SmsEntity(
                     sender = result.rawSms.sender,
                     body = result.rawSms.body,
                     timestamp = result.rawSms.timestamp,
                     amount = result.amount,
                     merchant = result.merchant,
-                    type = if (result.isCredit) "credit" else "debit",
+                    type = if (result.isCredit) "CREDIT" else "DEBIT",
                     category = result.category.name
                 )
             }
 
             if (classified.isNotEmpty()) {
                 withContext(Dispatchers.IO) {
-                    classified.chunked(300).forEach { chunk ->
-                        db.smsDao().insertAll(chunk)
-                    }
+                    classified.chunked(300).forEach { db.smsDao().insertAll(it) }
                 }
             }
 
@@ -79,6 +113,9 @@ class SmsRepositoryImpl @Inject constructor(
         }
 
 
+    // ------------------------------------------------------------
+    // MANUAL SAVE
+    // ------------------------------------------------------------
     override suspend fun saveManual(sender: String, body: String, timestamp: Long) {
         val amount = SmsParser.parseAmount(body) ?: return
         db.smsDao().insert(
@@ -88,34 +125,56 @@ class SmsRepositoryImpl @Inject constructor(
                 timestamp = timestamp,
                 amount = amount,
                 merchant = null,
-                type = "manual",
+                type = "MANUAL",
                 category = "OTHER"
             )
         )
     }
-    suspend fun saveMerchantOverride(old: String, new: String) {
-        val normalizedOld = old.lowercase().replace(Regex("[^a-z0-9]"), "")
+
+
+    // ------------------------------------------------------------
+    // MERCHANT OVERRIDE  (CORRECTED)
+    // ------------------------------------------------------------
+    suspend fun saveMerchantOverride(originalMerchant: String, newMerchant: String) {
+
+        // normalize only merchant name, not full key
+        val norm = MerchantExtractorMl.normalize(originalMerchant)
+
+        val key = "merchant:$norm"
+
+        Log.d("expense", "Saving override: $key -> $newMerchant")
+
         db.userMlOverrideDao().save(
-            UserMlOverride("merchant:$normalizedOld", new.trim())
+            UserMlOverride(key, newMerchant.trim())
         )
     }
 
+
+    // ------------------------------------------------------------
+    // IGNORE PATTERN
+    // ------------------------------------------------------------
     suspend fun saveIgnorePattern(body: String) {
         val pattern = IgnorePatternBuilder.build(body)
         db.userMlOverrideDao().save(
-            UserMlOverride(
-                key = "ignore_pattern:${pattern.hashCode()}",
-                value = pattern
-            )
+            UserMlOverride("ignore_pattern:${pattern.hashCode()}", pattern)
         )
     }
 
+
+    // ------------------------------------------------------------
+    // CATEGORY OVERRIDE  (CORRECTED)
+    // ------------------------------------------------------------
     suspend fun saveCategoryOverride(merchant: String, newCategory: String) {
+        val normalized = MerchantExtractorMl.normalize(merchant)
         db.userMlOverrideDao().save(
-            UserMlOverride("category:$merchant", newCategory)
+            UserMlOverride("category:$normalized", newCategory)
         )
     }
 
+
+    // ------------------------------------------------------------
+    // ML EXPLANATION
+    // ------------------------------------------------------------
     suspend fun getMlExplanationFor(tx: SmsEntity): MlReasonBundle? {
         val amount = tx.amount
         if (amount <= 0) return null
@@ -123,34 +182,103 @@ class SmsRepositoryImpl @Inject constructor(
         return SmsMlPipeline.classify(
             raw = RawSms(tx.sender, tx.body, tx.timestamp),
             parsedAmount = amount,
-            overrideProvider = { key -> db.userMlOverrideDao().getValue(key) }
+            overrideProvider = { key ->
+                val v = db.userMlOverrideDao().getValue(key)
+                if(v!=null) {
+                    Log.d("expense", "exp key=$key => $v")
+                }
+                v
+            }
         )?.explanation
     }
-    suspend fun reclassifySingle(id: Long): SmsEntity? {
+
+
+    // ------------------------------------------------------------
+    // RECLASSIFY SINGLE  (FULLY FIXED)
+    // ------------------------------------------------------------
+    override suspend fun reclassifySingle(id: Long): SmsEntity? {
         val tx = db.smsDao().getById(id) ?: return null
 
         val parsedAmount = SmsParser.parseAmount(tx.body) ?: return null
+
+        val normMerchant = MerchantExtractorMl.normalize(tx.merchant ?: tx.sender ?: "")
+        val normSender = MerchantExtractorMl.normalize(tx.sender ?: "")
+
+        Log.d("expense", "Normalized merchant=$normMerchant, sender=$normSender")
 
         val result = SmsMlPipeline.classify(
             raw = RawSms(tx.sender, tx.body, tx.timestamp),
             parsedAmount = parsedAmount,
             overrideProvider = { key ->
-                db.userMlOverrideDao().getValue(key)
+
+                // 1) Exact key
+                db.userMlOverrideDao().getValue(key)?.also {
+                    Log.d("expense", "match key=$key => $it")
+                    return@classify it
+                }
+
+                // 2) merchant:<normalizedMerchant>
+                db.userMlOverrideDao().getValue("merchant:$normMerchant")?.also {
+                    Log.d("expense", "match merchant:$normMerchant => $it")
+                    return@classify it
+                }
+
+                // 3) merchant:<normalizedSender>
+                db.userMlOverrideDao().getValue("merchant:$normSender")?.also {
+                    Log.d("expense", "match merchant:$normSender => $it")
+                    return@classify it
+                }
+
+                Log.d("expense", "NO MATCH for key=$key")
+                null
             }
         ) ?: return null
 
         val updated = tx.copy(
             merchant = result.merchant,
             category = result.category.name,
-            type = if (result.isCredit) "credit" else "debit"
+            type = if (result.isCredit) "CREDIT" else "DEBIT"
         )
+
+        Log.d("expense", "Updated merchant=${updated.merchant}")
 
         db.smsDao().update(updated)
         return updated
     }
 
+
+    // ------------------------------------------------------------
+    // GET ALL
+    // ------------------------------------------------------------
     override fun getAll(): Flow<List<SmsEntity>> {
         return db.smsDao().getAll()
     }
 
+    @RequiresApi(Build.VERSION_CODES.O)
+    suspend fun saveManualExpense(
+        amount: Double,
+        merchant: String,
+        category: CategoryType,
+        date: LocalDate,
+        note: String
+    ) {
+        db.smsDao().insert(
+            SmsEntity(
+                sender = "MANUAL",
+                body = note,
+                timestamp = date.atStartOfDay(ZoneId.systemDefault()).toEpochSecond() * 1000,
+                amount = amount,
+                merchant = merchant,
+                type = "DEBIT",
+                category = category.name
+            )
+        )
+    }
+   override suspend fun markIgnored(tx: SmsEntity) {
+        val updated = tx.copy(isIgnored = true)
+        db.smsDao().update(updated)
+    }
+   override suspend fun setIgnored(id: Long, ignored: Boolean) {
+        db.smsDao().setIgnored(id, if (ignored) 1 else 0)
+    }
 }

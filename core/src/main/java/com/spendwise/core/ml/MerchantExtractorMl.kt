@@ -1,5 +1,7 @@
 package com.spendwise.core.ml
 
+import android.util.Log
+
 object MerchantExtractorMl {
 
     // --------------------------------------------------------------------
@@ -85,7 +87,9 @@ object MerchantExtractorMl {
         val upperSender = sender.uppercase()
 
         // 1. User override
-        overrideProvider("merchant:$sender")?.let { return it }
+        overrideProvider("merchant:$sender")?.let {
+            Log.d("expense", "Override applied for sender: $it")
+            return it }
 
 
         // ----------------------------------------------------------------
@@ -108,7 +112,10 @@ object MerchantExtractorMl {
 
             if (!merchantMap.keys.any { rawName.lowercase().contains(it) }) {
                 val norm = normalize(rawName)
-                overrideProvider("merchant:$norm")?.let { return it }
+                overrideProvider("merchant:$norm")?.let {
+                    Log.d("expense", "Override applied for norm: $it")
+                    return it
+                }
                 return norm.uppercase()
             }
         }
@@ -130,7 +137,10 @@ object MerchantExtractorMl {
 
             if (candidate.isNotBlank()) {
                 val norm = normalize(candidate)
-                overrideProvider("merchant:$norm")?.let { return it }
+                Log.d("expense", "Normalized original = $norm")
+                overrideProvider("merchant:$norm")?.let {
+                    Log.d("expense", "Override applied for norm: $it")
+                    return it }
                 return norm
             }
         }
@@ -168,7 +178,9 @@ object MerchantExtractorMl {
 
             extractFirstWord(raw)?.let { merchant ->
                 val norm = normalize(merchant)
-                overrideProvider("merchant:$norm")?.let { return it }
+                overrideProvider("merchant:$norm")?.let {
+                    Log.d("expense", "Override applied for norm: $it")
+                    return it }
                 return norm
             }
         }
@@ -212,11 +224,11 @@ object MerchantExtractorMl {
             .firstOrNull { it.isNotBlank() }
             ?.trim()
 
-    private fun normalize(name: String): String =
-        name.replace(Regex("[^A-Za-z0-9 ]"), "")
-            .replace(Regex("\\s+"), " ")
+    fun normalize(name: String): String =
+        name.lowercase()
             .trim()
-            .replaceFirstChar { it.uppercase() }
+            .replace(Regex("[^a-z0-9 ]"), "")
+            .replace(Regex("\\s+"), " ")
 
     private fun cleanSenderName(sender: String): String {
         val core = sender.split("-", " ").lastOrNull() ?: sender
