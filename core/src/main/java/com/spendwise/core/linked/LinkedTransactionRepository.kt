@@ -19,19 +19,13 @@ interface LinkedTransactionRepository {
         isNetZero: Boolean
     )
 
-    /**
-     * Returns ALL SMS entries that already have a linkId.
-     * Detector uses this to detect repeated transfer patterns
-     * and infer missing credit/debit SMS.
-     */
     suspend fun getAllLinked(): List<TransactionCoreModel>
 
-    /**
-     * Returns all learned pattern signatures.
-     * Used for missing-credit inference.
-     */
     suspend fun getAllLinkedPatterns(): Set<String>
 
     suspend fun getAllLinkedDebitPatterns(): Set<String>
 
+    suspend fun getAllLinkedCreditPatterns(): Set<String>
+
+    suspend fun saveLinkedPattern(pattern: String)
 }

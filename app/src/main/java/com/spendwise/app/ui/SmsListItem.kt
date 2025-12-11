@@ -38,9 +38,10 @@ fun SmsListItem(
     val isLinked = sms.linkId != null && sms.linkType == "INTERNAL_TRANSFER"
     val isPossible = sms.linkId != null && sms.linkType == "POSSIBLE_TRANSFER"
 
+    // Highlighted backgrounds
     val cardColor = when {
-        isLinked -> Color(0xFFDFF7DF)     // light green
-        isPossible -> Color(0xFFFFF3CD)   // light yellow
+        isLinked -> Color(0xFFDFF7DF)       // light green
+        isPossible -> Color(0xFFFFF3CD)     // light yellow
         else -> MaterialTheme.colorScheme.surface
     }
 
@@ -50,22 +51,23 @@ fun SmsListItem(
             .clickable { onClick(sms) },
         colors = CardDefaults.elevatedCardColors(containerColor = cardColor),
         shape = RoundedCornerShape(14.dp),
-        elevation = CardDefaults.cardElevation(defaultElevation = 4.dp)
+        elevation = CardDefaults.cardElevation(defaultElevation = 3.dp)
     ) {
 
         Column(Modifier.padding(14.dp)) {
 
-            // 🔗 Top Tag
+            // --------------------------- TAG (Transfer / Possible-transfer)
             if (isLinked || isPossible) {
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.padding(bottom = 4.dp)
+                    modifier = Modifier.padding(bottom = 6.dp)
                 ) {
                     Icon(
                         imageVector = if (isLinked) Icons.Default.CompareArrows else Icons.Default.Warning,
-                        contentDescription = "",
-                        tint = if (isLinked) Color(0xFF2E7D32) else Color(0xFFB76E00)
+                        contentDescription = null,
+                        tint = if (isLinked) Color(0xFF2E7D32) else Color(0xFFB76E00) // dark green / dark yellow
                     )
+
                     Text(
                         text = if (isLinked) "Internal Transfer" else "Possible Transfer",
                         color = if (isLinked) Color(0xFF2E7D32) else Color(0xFFB76E00),
@@ -75,7 +77,7 @@ fun SmsListItem(
                 }
             }
 
-            // Main Row
+            // --------------------------- MAIN ROW
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -83,48 +85,60 @@ fun SmsListItem(
             ) {
 
                 Column(Modifier.weight(1f)) {
+
+                    // Merchant/title
                     Text(
                         sms.merchant ?: sms.sender,
                         style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.SemiBold
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 1
                     )
 
+                    // Body (short preview)
                     Text(
-                        sms.body.take(60),
+                        sms.body.take(80),
                         style = MaterialTheme.typography.bodySmall,
-                        maxLines = 2
+                        maxLines = 2,
+                        modifier = Modifier.padding(top = 3.dp)
                     )
                 }
 
+                // Amount
                 Text(
                     text = "₹${sms.amount.toInt()}",
-                    color = if (sms.type.equals("DEBIT", true)) Color(0xFFD32F2F) else Color(0xFF1B5E20),
+                    color = if (sms.type.equals("DEBIT", true))
+                        Color(0xFFD32F2F) else Color(0xFF1B5E20),
                     style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.padding(start = 8.dp)
                 )
             }
 
-            Spacer(Modifier.height(8.dp))
+            Spacer(Modifier.height(10.dp))
 
-            // Footer actions
+            // --------------------------- FOOTER ACTION ROW
             Row(
                 horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier.fillMaxWidth()
             ) {
 
                 TextButton(onClick = { onRequestMerchantFix(sms) }) {
-                    Icon(Icons.Default.Link, contentDescription = "")
+                    Icon(Icons.Default.Link, contentDescription = null)
                     Text("Fix Merchant", modifier = Modifier.padding(start = 4.dp))
                 }
 
                 Row(verticalAlignment = Alignment.CenterVertically) {
+
                     Checkbox(
                         checked = sms.isIgnored,
                         onCheckedChange = { onMarkNotExpense(sms, it) }
                     )
+
                     Text("Not Expense")
                 }
             }
         }
     }
 }
+

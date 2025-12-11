@@ -14,150 +14,69 @@ class LinkedTransactionDetector(
     private val nameSimWeight: Int = 10,
     private val bankMatchWeight: Int = 5,
     private val autoLinkThreshold: Int = 80,
-    private val possibleLinkThreshold: Int = 60
+    private val possibleLinkThreshold: Int = 60,
+    private val inferenceWindowDays: Int = 120   // ±120 days for missing-credit matching
 ) {
 
     private val TAG = "LinkedDetector"
 
+    // ------------------------------------------------------------
+    // MAIN ENTRY
+    // ------------------------------------------------------------
     suspend fun process(tx: TransactionCoreModel) {
 
-        Log.d(TAG, "\n\n========== PROCESSING TX ${tx.id} ==========")
-        Log.d(TAG, "type=${tx.type}, amount=${tx.amount}")
-        Log.d(TAG, "sender=${tx.sender}, merchant=${tx.merchant}")
-        Log.d(TAG, "timestamp=${tx.timestamp}")
+        Log.d(TAG, "\n\n========== PROCESS TX ${tx.id} ==========")
+        Log.d(TAG, "type=${tx.type}, merchant=${tx.merchant}, sender=${tx.sender}")
+        Log.d(TAG, "amount=${tx.amount}, ts=${tx.timestamp} (${tsReadable(tx.timestamp)})")
 
         if (!isDebitOrCredit(tx)) {
             Log.d(TAG, "SKIP — Not debit/credit\n")
             return
         }
 
-        var linked = false
-
-        // -----------------------------------------------------
-        // 1) NORMAL SAME-DAY LINKING
-        // -----------------------------------------------------
+        // ============================================================
+        // 1) SAME-DAY CANDIDATE LINKING
+        // ============================================================
         val from = tx.timestamp - DAY_MS
         val to = tx.timestamp + DAY_MS
 
-        val candidates = repo.findCandidates(
-            amount = tx.amount,
-            from = from,
-            to = to,
-            excludeId = tx.id
-        )
+        val candidates = repo.findCandidates(tx.amount, from, to, tx.id)
+        Log.d(TAG, "Found ${candidates.size} same-day candidates")
 
-        Log.d(TAG, "Found ${candidates.size} potential candidates (same-day window)")
+        var autoLinked = false
 
         for (cand in candidates) {
-
             val score = scorePair(tx, cand)
 
-            Log.d(TAG, "Score vs TX ${cand.id} = $score (type=${cand.type}, merchant=${cand.merchant}, sender=${cand.sender})")
+            Log.d(TAG, " → Score vs TX ${cand.id} = $score (merchant=${cand.merchant}, sender=${cand.sender})")
 
             when {
                 score >= autoLinkThreshold -> {
-                    Log.d(TAG, "AUTO-LINKED as INTERNAL_TRANSFER (score=$score)\n")
+                    Log.d(TAG, " ⭐ AUTO-LINKED (Internal Transfer)")
                     applyLink(tx, cand, score, "INTERNAL_TRANSFER", true)
-                    linked = true
+                    autoLinked = true
                     break
                 }
-
                 score >= possibleLinkThreshold -> {
-                    Log.d(TAG, "POSSIBLE LINK (score=$score)\n")
+                    Log.d(TAG, " ⚠️ POSSIBLE-LINK")
                     applyLink(tx, cand, score, "POSSIBLE_TRANSFER", false)
-                    linked = true
-                    // continue searching — could find an auto link candidate
                 }
-
-                else -> Log.d(TAG, "NOT LINKED (score=$score)\n")
+                else -> Log.d(TAG, " ❌ Not linked (score=$score)")
             }
         }
 
-        if (linked) return
+        if (autoLinked) return
 
-        // -----------------------------------------------------
-        // 2) MISSING CREDIT INFERENCE (try historical inference)
-        // -----------------------------------------------------
+        // ============================================================
+        // 2) MISSING CREDIT INFERENCE (wide window search)
+        // ============================================================
         inferMissingCredit(tx)
     }
 
-    // =========================================================================
-    // INFER MISSING CREDIT (search historical patterns & larger window)
-    // =========================================================================
-    private suspend fun inferMissingCredit(tx: TransactionCoreModel) {
-        Log.d(TAG, "Normal linking FAILED → Running missing-credit inference for TX ${tx.id}")
 
-        // Debug header
-        Log.d(TAG, "---- Missing Credit DEBUG for TX ${tx.id} ----")
-        Log.d(TAG, "TX type=${tx.type}, amount=${tx.amount}, merchant=${tx.merchant}, sender=${tx.sender}")
-        Log.d(TAG, "TX body=${tx.body ?: "(no body)"}")
-
-        // 1) Load historical linked patterns (merchant+phrase WITHOUT bank prefix)
-        val patterns = repo.getAllLinkedPatterns()
-        Log.d(TAG, "Loaded ${patterns.size} historical patterns:")
-        patterns.forEach { Log.d(TAG, "   pattern = $it") }
-
-        // 2) Build current pattern key (merchant + phrase) — deliberately IGNORE bank/prefix
-        val normMerchant = normalize(tx.merchant ?: tx.sender ?: "")
-        val phrase = extractPhrase(tx.body ?: "")
-        val currentKey = buildPatternKey(normMerchant, phrase)
-
-        Log.d(TAG, "normalizeName('$normMerchant') = '$normMerchant'")
-        Log.d(TAG, "extractPhrase('${tx.body ?: ""}') = '$phrase'")
-        Log.d(TAG, "Current TX PatternKey = $currentKey")
-
-        // 3) If we have matching historical pattern, try to find historical opposite-direction candidate
-        if (!patterns.contains(currentKey)) {
-            Log.d(TAG, "❌ NO MATCH for pattern key. This is why inference failed.")
-            return
-        }
-
-        Log.d(TAG, "✅ Pattern match found. Searching historical candidates (wider window)")
-
-        // widen window: +/- 120 days (configurable)
-        val window = 120 * DAY_MS
-        val histFrom = tx.timestamp - window
-        val histTo = tx.timestamp + window
-
-        val histCandidates = repo.findCandidates(
-            amount = tx.amount,
-            from = histFrom,
-            to = histTo,
-            excludeId = tx.id
-        )
-
-        Log.d(TAG, "Found ${histCandidates.size} historical candidates in +/-120d window")
-
-        // Filter candidates by opposite direction and merchant similarity (looser)
-        val filtered = histCandidates.filter { isOpposite(tx.type, it.type) }
-            .filter { similarity(tx.merchant, it.merchant) >= 20 } // relaxed requirement
-
-        Log.d(TAG, "Filtered to ${filtered.size} opposite-direction + merchant-sim candidates")
-
-        var best: Pair<TransactionCoreModel, Int>? = null
-        for (cand in filtered) {
-            val score = scorePair(tx, cand)
-            Log.d(TAG, "Historical score vs ${cand.id} = $score (type=${cand.type}, timestamp=${cand.timestamp})")
-            if (best == null || score > best.second) best = Pair(cand, score)
-        }
-
-        if (best != null) {
-            val (cand, score) = best
-            // For inferred historical matches be conservative: require >= possibleLinkThreshold
-            if (score >= possibleLinkThreshold) {
-                Log.d(TAG, "✅ INFERRED LINK — applying POSSIBLE_TRANSFER (score=$score) to ${cand.id}")
-                applyLink(tx, cand, score, "POSSIBLE_TRANSFER", false)
-            } else {
-                Log.d(TAG, "❌ Best historical match score=$score < possibleLinkThreshold. Not linking.")
-            }
-        } else {
-            Log.d(TAG, "❌ No usable historical candidate found.")
-        }
-    }
-
-    // =========================================================================
-    // APPLY LINK
-    // =========================================================================
+    // ------------------------------------------------------------
+    // LINKING LOGIC
+    // ------------------------------------------------------------
     private suspend fun applyLink(
         a: TransactionCoreModel,
         b: TransactionCoreModel,
@@ -166,41 +85,49 @@ class LinkedTransactionDetector(
         isNetZero: Boolean
     ) {
         val linkId = generateLinkId(a, b)
+
         repo.updateLink(a.id, linkId, type, score, isNetZero)
         repo.updateLink(b.id, linkId, type, score, isNetZero)
-        Log.d(TAG, "APPLIED LINK: $linkId to ${a.id} and ${b.id} (type=$type score=$score isNetZero=$isNetZero)")
+
+        addLearnedPattern(a)
+        addLearnedPattern(b)
+
+        Log.d(TAG, "LINK APPLIED → $linkId  [${a.id} ↔ ${b.id}] (type=$type)")
     }
 
-    // =========================================================================
-    // PAIR SCORING
-    // =========================================================================
+    private suspend fun addLearnedPattern(tx: TransactionCoreModel) {
+        if (!isDebitOrCredit(tx)) return
+
+        val rawMerchant = tx.merchant ?: return
+        val merchant = normalize(
+            rawMerchant.replace("payzapp wallet", "") // prevent noise pollution
+        )
+
+        val phrase = extractPhrase(tx.body ?: return)
+        val key = "$merchant|$phrase"
+
+        Log.d(TAG, "Learning pattern: $key")
+        repo.saveLinkedPattern(key)
+    }
+
+
+    // ------------------------------------------------------------
+    // SCORING
+    // ------------------------------------------------------------
     private fun scorePair(a: TransactionCoreModel, b: TransactionCoreModel): Int {
 
-        // ---------- 1. Block same direction (must be opposite) ----------
-        if (a.type?.lowercase() == b.type?.lowercase()) {
-            Log.d(TAG, "BLOCKED: Same direction ${a.type} & ${b.type}")
+        if (!isOpposite(a.type, b.type)) {
+            Log.d(TAG, "   block: same direction")
             return 0
         }
 
-        // ---------- 2. Amount mismatch (fast reject) ----------
-        if (a.amount != b.amount) {
-            Log.d(TAG, "BLOCKED: Amount mismatch")
-            return 0
-        }
+        if (a.amount != b.amount) return 0
 
-        // ---------- 3. Merchant mismatch (fast reject) ----------
         val merchantSim = similarity(a.merchant, b.merchant)
-        if (merchantSim < 10) {
-            Log.d(TAG, "BLOCKED: Merchant mismatch '${a.merchant}' vs '${b.merchant}' (sim=$merchantSim)")
-            return 0
-        }
+        if (merchantSim < 10) return 0
 
-        var score = 0
+        var score = amountWeight
 
-        // ---------- 4. Amount match ----------
-        score += amountWeight
-
-        // ---------- 5. Date proximity ----------
         val dayDiff = ((a.timestamp - b.timestamp).absoluteValue / DAY_MS)
         score += when (dayDiff) {
             0L -> dateWeightSameDay
@@ -208,13 +135,9 @@ class LinkedTransactionDetector(
             else -> 0
         }
 
-        // ---------- 6. Opposite direction ----------
-        if (isOpposite(a.type, b.type)) score += oppositeDirWeight
-
-        // ---------- 7. Merchant similarity ----------
+        score += oppositeDirWeight
         score += (merchantSim * nameSimWeight / 100)
 
-        // ---------- 8. Sender match (same bank) ----------
         if (!a.sender.isNullOrBlank() && a.sender == b.sender) {
             score += bankMatchWeight
         }
@@ -228,25 +151,78 @@ class LinkedTransactionDetector(
         return (x == "debit" && y == "credit") || (x == "credit" && y == "debit")
     }
 
-    // =========================================================================
-    // PATTERN BUILDERS & HELPERS (no bank/prefix used)
-    // =========================================================================
-    private fun buildPatternKey(normMerchant: String, phrase: String): String {
-        return "${normMerchant}|${phrase}"
+
+    // ------------------------------------------------------------
+    // MISSING CREDIT INFERENCE
+    // ------------------------------------------------------------
+    private suspend fun inferMissingCredit(tx: TransactionCoreModel) {
+
+        Log.d(TAG, "---- Missing Credit Inference for TX=${tx.id} ----")
+        Log.d(TAG, "merchant=${tx.merchant}, amount=${tx.amount}, sender=${tx.sender}")
+
+        val normMerchant = normalize(tx.merchant ?: tx.sender ?: "")
+        val phrase = extractPhrase(tx.body ?: "")
+        val currentKey = "$normMerchant|$phrase"
+
+        Log.d(TAG, "Current key=$currentKey")
+
+        // which patterns to look for
+        val expectedPatterns = when (tx.type?.lowercase()) {
+            "debit" -> repo.getAllLinkedCreditPatterns()
+            "credit" -> repo.getAllLinkedDebitPatterns()
+            else -> emptySet()
+        }
+
+        Log.d(TAG, "Expected pattern count = ${expectedPatterns.size}")
+        expectedPatterns.forEach { Log.d(TAG, " → ExpectedPattern = '$it'") }
+
+        if (!expectedPatterns.contains(currentKey)) {
+            Log.d(TAG, "❌ No matching opposite-pattern → skip inference.")
+            return
+        }
+
+        Log.d(TAG, "✅ Opposite-pattern FOUND → searching wider window...")
+
+        // wide window
+        val window = inferenceWindowDays * DAY_MS
+        val from = tx.timestamp - window
+        val to = tx.timestamp + window
+
+        val candidates = repo.findCandidates(tx.amount, from, to, tx.id)
+        Log.d(TAG, "Found ${candidates.size} wide-window candidates")
+
+        val filtered = candidates.filter { isOpposite(tx.type, it.type) }
+            .filter { similarity(tx.merchant, it.merchant) >= 20 }
+
+        Log.d(TAG, "Filtered to ${filtered.size} opposite-direction + merchant-sim candidates")
+
+        val best = filtered
+            .map { it to scorePair(tx, it) }
+            .filter { it.second >= possibleLinkThreshold }
+            .maxByOrNull { it.second }
+
+        if (best == null) {
+            Log.d(TAG, "❌ No strong inference candidate found.")
+            return
+        }
+
+        val (match, score) = best
+        Log.d(TAG, "✅ INFERRED MATCH → TX=${match.id}, score=$score")
+        applyLink(tx, match, score, "POSSIBLE_TRANSFER", false)
     }
 
-    private fun extractPhrase(body: String): String {
-        val b = body.lowercase()
 
-        // Normalize common phrases to limited set
-        return when {
-            b.contains("transferred to") || b.contains("transfer to") || b.contains("transferred") -> "transferred_to"
-            b.contains("deposit by transfer") || b.contains("deposit by") || b.contains("deposit") || b.contains("credited by transfer") -> "deposit_from"
-            b.contains("credited") || b.contains("credit of") || b.contains("credited to") -> "credited_to"
-            b.contains("debited") || b.contains("deducted") || b.contains("deducted from") -> "debited_from"
-            b.contains("paid") && b.contains("via") -> "paid_via"
-            b.contains("deducted from payzapp") || b.contains("payzapp") || b.contains("wallet") -> "wallet_deduction"
-            else -> "other"
+    // ------------------------------------------------------------
+    // HELPERS
+    // ------------------------------------------------------------
+
+    private fun tsReadable(ts: Long?): String {
+        if (ts == null) return "null"
+        return try {
+            val sdf = java.text.SimpleDateFormat("dd-MMM-yyyy HH:mm:ss")
+            sdf.format(java.util.Date(ts))
+        } catch (e: Exception) {
+            ts.toString()
         }
     }
 
@@ -256,9 +232,34 @@ class LinkedTransactionDetector(
             .replace("\\s+".toRegex(), " ")
             .trim()
 
-    // =========================================================================
-    // SIMILARITY FUNCTION
-    // =========================================================================
+    /**
+     * CRITICAL FIX:
+     * DEBIT and CREDIT sides of person transfers
+     * must map to the SAME phrase key → "person_transfer"
+     */
+    private fun extractPhrase(body: String): String {
+        val b = body.lowercase()
+
+        return when {
+            // Unified person-to-person transfer
+            (b.contains("transferred to") || b.contains("transfer to")) &&
+                    b.contains("mr") ->
+                "person_transfer"
+
+            b.contains("deposit by transfer") ||
+                    b.contains("deposit by") ||
+                    b.contains("deposit from") ->
+                "person_transfer"
+
+            b.contains("credited") -> "credited_to"
+            b.contains("debited") || b.contains("deducted") -> "debited_from"
+
+            b.contains("payzapp") || b.contains("wallet") -> "wallet"
+
+            else -> "other"
+        }
+    }
+
     private fun similarity(a: String?, b: String?): Int {
         if (a.isNullOrBlank() || b.isNullOrBlank()) return 0
 
@@ -274,14 +275,13 @@ class LinkedTransactionDetector(
         val intersect = aTokens.intersect(bTokens).size
         val union = aTokens.union(bTokens).size
 
-        return ((intersect.toDouble() / union.toDouble()) * 100).toInt()
+        return ((intersect.toDouble() / union) * 100).toInt()
     }
 
-    private fun generateLinkId(a: TransactionCoreModel, b: TransactionCoreModel): String {
-        return UUID.nameUUIDFromBytes(
+    private fun generateLinkId(a: TransactionCoreModel, b: TransactionCoreModel): String =
+        UUID.nameUUIDFromBytes(
             "${a.amount}-${a.timestamp}-${b.timestamp}-${a.merchant}".toByteArray()
         ).toString()
-    }
 
     private fun isDebitOrCredit(tx: TransactionCoreModel): Boolean {
         val t = tx.type?.lowercase() ?: return false

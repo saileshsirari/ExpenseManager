@@ -1,4 +1,4 @@
-package com.spendwise.app.di
+package com.spendwise.app
 
 import com.spendwise.core.linked.LinkedTransactionDetector
 import com.spendwise.core.linked.LinkedTransactionRepository

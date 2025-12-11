@@ -144,7 +144,10 @@ fun DashboardScreen(
                         DashboardMode.QUARTER -> baseList.inQuarter(currentPeriod)
                         DashboardMode.YEAR -> baseList.inYear(currentPeriod.year)
                     }
-                    val totalsList = periodTx.filter { !it.isNetZero }
+                    val totalsList = periodTx.filter {
+                        !it.isNetZero && it.linkType != "POSSIBLE_TRANSFER"
+                    }
+
 
                     // ------------------- TOTALS -------------------
                     val totalDebit = totalsList.filter { it.type.equals("DEBIT", true) }.sumOf { it.amount }
@@ -316,6 +319,7 @@ fun DashboardScreen(
                                     viewModel.setIgnoredState(item, checked)
                                 }
                             )
+
                             Spacer(Modifier.height(8.dp))
                         }
                     }
