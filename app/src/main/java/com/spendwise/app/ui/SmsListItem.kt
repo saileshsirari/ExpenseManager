@@ -27,6 +27,9 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.spendwise.feature.smsimport.data.SmsEntity
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 @Composable
 fun SmsListItem(
@@ -38,12 +41,13 @@ fun SmsListItem(
     val isLinked = sms.linkId != null && sms.linkType == "INTERNAL_TRANSFER"
     val isPossible = sms.linkId != null && sms.linkType == "POSSIBLE_TRANSFER"
 
-    // Highlighted backgrounds
     val cardColor = when {
-        isLinked -> Color(0xFFDFF7DF)       // light green
-        isPossible -> Color(0xFFFFF3CD)     // light yellow
+        isLinked -> Color(0xFFDFF7DF)
+        isPossible -> Color(0xFFFFF3CD)
         else -> MaterialTheme.colorScheme.surface
     }
+
+    val dateText = rememberFormattedDate(sms.timestamp)
 
     ElevatedCard(
         modifier = Modifier
@@ -56,7 +60,7 @@ fun SmsListItem(
 
         Column(Modifier.padding(14.dp)) {
 
-            // --------------------------- TAG (Transfer / Possible-transfer)
+            // ---------- TRANSFER TAG ----------
             if (isLinked || isPossible) {
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
@@ -65,9 +69,8 @@ fun SmsListItem(
                     Icon(
                         imageVector = if (isLinked) Icons.Default.CompareArrows else Icons.Default.Warning,
                         contentDescription = null,
-                        tint = if (isLinked) Color(0xFF2E7D32) else Color(0xFFB76E00) // dark green / dark yellow
+                        tint = if (isLinked) Color(0xFF2E7D32) else Color(0xFFB76E00)
                     )
-
                     Text(
                         text = if (isLinked) "Internal Transfer" else "Possible Transfer",
                         color = if (isLinked) Color(0xFF2E7D32) else Color(0xFFB76E00),
@@ -77,7 +80,7 @@ fun SmsListItem(
                 }
             }
 
-            // --------------------------- MAIN ROW
+            // ---------- MAIN CONTENT ----------
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -86,7 +89,6 @@ fun SmsListItem(
 
                 Column(Modifier.weight(1f)) {
 
-                    // Merchant/title
                     Text(
                         sms.merchant ?: sms.sender,
                         style = MaterialTheme.typography.titleMedium,
@@ -94,20 +96,26 @@ fun SmsListItem(
                         maxLines = 1
                     )
 
-                    // Body (short preview)
+                    // ⭐ DATE LINE (NEW)
+                    Text(
+                        text = dateText,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = Color.Gray,
+                        modifier = Modifier.padding(top = 2.dp)
+                    )
+
+                    // SMS preview
                     Text(
                         sms.body.take(80),
                         style = MaterialTheme.typography.bodySmall,
                         maxLines = 2,
-                        modifier = Modifier.padding(top = 3.dp)
+                        modifier = Modifier.padding(top = 4.dp)
                     )
                 }
 
-                // Amount
                 Text(
                     text = "₹${sms.amount.toInt()}",
-                    color = if (sms.type.equals("DEBIT", true))
-                        Color(0xFFD32F2F) else Color(0xFF1B5E20),
+                    color = if (sms.type.equals("DEBIT", true)) Color(0xFFD32F2F) else Color(0xFF1B5E20),
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.Bold,
                     modifier = Modifier.padding(start = 8.dp)
@@ -116,7 +124,7 @@ fun SmsListItem(
 
             Spacer(Modifier.height(10.dp))
 
-            // --------------------------- FOOTER ACTION ROW
+            // ---------- FOOTER ----------
             Row(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically,
@@ -129,12 +137,10 @@ fun SmsListItem(
                 }
 
                 Row(verticalAlignment = Alignment.CenterVertically) {
-
                     Checkbox(
                         checked = sms.isIgnored,
                         onCheckedChange = { onMarkNotExpense(sms, it) }
                     )
-
                     Text("Not Expense")
                 }
             }
@@ -142,3 +148,11 @@ fun SmsListItem(
     }
 }
 
+// ------------------------------------------------------
+// Helper: Format timestamp to readable UI date
+// ------------------------------------------------------
+@Composable
+private fun rememberFormattedDate(timestamp: Long): String {
+    val sdf = SimpleDateFormat("dd MMM yyyy • hh:mm a", Locale.getDefault())
+    return sdf.format(Date(timestamp))
+}

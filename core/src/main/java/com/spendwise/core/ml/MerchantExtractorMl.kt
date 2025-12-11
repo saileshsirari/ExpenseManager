@@ -143,6 +143,30 @@ object MerchantExtractorMl {
         // 1) User override
         overrideProvider("merchant:$sender")?.let { return it }
 
+        // --------------------------------------------------------------------
+// Credit Card Payment Received (Credit-side)
+// --------------------------------------------------------------------
+        if (lowerBody.contains("credit card") &&
+            lowerBody.contains("payment") &&
+            lowerBody.contains("received")
+        ) {
+            val issuer = detectIssuer(sender, lowerBody)
+            overrideProvider("merchant:${issuer.lowercase()}")?.let { return it }
+            return issuer
+        }
+
+// --------------------------------------------------------------------
+// Credit Card Bill Payment (Debit-side)
+// "Acct debited ... Amazon Pay credited" (NOT an Amazon purchase!)
+// --------------------------------------------------------------------
+        if (lowerBody.contains("credit card") &&
+            (lowerBody.contains("payment") || lowerBody.contains("bill"))
+        ) {
+            val issuer = detectIssuer(sender, lowerBody)
+            overrideProvider("merchant:${issuer.lowercase()}")?.let { return it }
+            return issuer
+        }
+
         // 2) SPECIAL MERCHANT SENDERS
         merchantSenderMap.forEach { (key, pretty) ->
             if (upperSender.contains(key)) {
@@ -196,6 +220,20 @@ object MerchantExtractorMl {
     // --------------------------------------------------------------------
     // HELPERS
     // --------------------------------------------------------------------
+
+    private fun detectIssuer(sender: String, body: String): String {
+        val t = (sender + " " + body).lowercase()
+
+        return when {
+            "icici" in t -> "ICICI Credit Card"
+            "hdfc"  in t -> "HDFC Credit Card"
+            "sbi"   in t -> "SBI Credit Card"
+            "axis"  in t -> "Axis Credit Card"
+            "kotak" in t -> "Kotak Credit Card"
+            else -> "Credit Card"
+        }
+    }
+
     fun normalize(name: String): String =
         name.lowercase()
             .trim()

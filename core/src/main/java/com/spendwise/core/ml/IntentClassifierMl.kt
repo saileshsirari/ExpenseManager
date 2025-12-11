@@ -2,117 +2,109 @@ package com.spendwise.core.ml
 
 object IntentClassifierMl {
 
-    // SMS patterns that are not real transactions
     private val ignoreKeywords = listOf(
-        "will be debited",
-        "will be deducted",
-        "payment due",
-        "bill due",
-        "due date",
-        "upcoming",
-        "alert",
-        "auto debit",
-        "auto-debit",
-        "scheduled"
+        "will be debited", "will be deducted", "payment due",
+        "bill due", "due date", "upcoming", "alert",
+        "auto debit", "auto-debit", "scheduled"
     )
 
-    private val reminderKeywords = listOf(
-        "bill due",
-        "payment due",
-        "bill payment due",
-        "due on",
-        "due date",
-        "last date",
-        "payment reminder",
-        "ignore if paid",
-        "overdue"
+    // Words indicating a credit card PAYMENT RECEIVED (credit)
+    private val creditCardReceiptKeywords = listOf(
+        "payment has been received",
+        "has been received",
+        "payment of rs",
+        "payment received",
+        "received on your credit card",
+        "credited to card",
+        "received towards your credit card",
+        "payment posted",
+        "bill paid successfully"
     )
 
     fun classify(senderType: SenderType, body: String): IntentType {
         val b = body.lowercase()
 
-        // -------------------------------------------------------
-        // 1. Ignore patterns
-        // -------------------------------------------------------
-        if (ignoreKeywords.any { b.contains(it) }) return IntentType.IGNORE
-        if (reminderKeywords.any { b.contains(it) }) return IntentType.REMINDER
+        // IGNORE patterns → non-transactional
+        if (ignoreKeywords.any { b.contains(it) }) {
+            return IntentType.IGNORE
+        }
 
-        // OTP
+        // PAYMENT REMINDERS
+        val reminderKeywords = listOf(
+            "bill due", "bill payment due", "due on",
+            "due date", "last date", "payment reminder",
+            "ignore if paid", "overdue"
+        )
+        if (reminderKeywords.any { b.contains(it) }) {
+            return IntentType.REMINDER
+        }
+
+        // OTP / security codes
         if (b.contains("otp") || b.contains("one time password")) {
             return IntentType.PROMO
         }
 
-        // Balance info
+        // Balance inquiry
         if (b.contains("balance is") || b.contains("available balance")) {
             return IntentType.BALANCE
         }
 
-        // Pending / initiated / processing
-        if (
-            b.contains("initiated") ||
-            b.contains("request received") ||
-            b.contains("scheduled") ||
-            b.contains("processing")
-        ) {
+        // Pending transaction states
+        if (b.contains("initiated") || b.contains("request received")
+            || b.contains("scheduled") || b.contains("processing")) {
             return IntentType.PENDING
         }
 
-        // =======================================================
-        // 2. SPECIAL SAFETY RULE FOR MERCHANT SENDERS
-        // Airtel / Jio / Vi confirmations SHOULD NOT BE DEBIT
-        // =======================================================
-        if (senderType == SenderType.MERCHANT) {
-
-            // Common bill-payment confirmations
-            val merchantInfoKeywords = listOf(
-                "payment received",
-                "received the payment",
-                "payment of rs",
-                "payment is updated",
-                "payment updated",
-                "thank you",
-                "e-receipt",
-                "receipt"
-            )
-
-            if (merchantInfoKeywords.any { b.contains(it) }) {
-                return IntentType.CREDIT   // or INFO; CREDIT works best in your pipeline
-            }
-
-            // Merchant messages cannot be debit unless explicit debit words appear
-            val explicitDebitWords = listOf("debited", "deducted", "charged")
-            if (!explicitDebitWords.any { b.contains(it) }) {
-                return IntentType.UNKNOWN
-            }
+        // -------------------------------------------------------------------
+        //  CREDIT CARD PAYMENT RECEIVED  (*** Fix Here ***)
+        // -------------------------------------------------------------------
+        if (creditCardReceiptKeywords.any { b.contains(it) }) {
+            return IntentType.CREDIT
         }
 
-        // =======================================================
-        // 3. CORE DEBIT / CREDIT DETECTION
-        // =======================================================
+        // Sometimes banks say:
+        // “Payment received on your CC XXXX” or “Thank you! we received your payment”
+        if ((b.contains("payment") && b.contains("received"))
+            && (b.contains("credit card") || b.contains("card xx") || b.contains("cc"))) {
+            return IntentType.CREDIT
+        }
+
+        // ICICI/HDFC style:
+        // “Payment of Rs XXXX has been received on your ICICI Bank Credit Card”
+        if (b.contains("has been received") && b.contains("credit card")) {
+            return IntentType.CREDIT
+        }
+
+        // -------------------------------------------------------------------
+        // NORMAL DEBIT & CREDIT CLASSIFICATION
+        // -------------------------------------------------------------------
         val isDebit = listOf(
-            "debited", "debit of", "deducted", "deduction",
-            "withdrawn", "spent",
-            "payment of", "paid towards", "pos transaction",
-            "atm wdl", "atm withdrawal"
+            "debited", "debit of", "deducted", "deduct", "deduction",
+            "withdrawn", "spent", "payment of", "paid towards",
+            "pos transaction", "atm wdl", "atm withdrawal"
         ).any { b.contains(it) }
 
         val isCredit = listOf(
-            "credited", "credit of",
-            "received into", "received in your",
-            "salary credited",
-            "refund of"
+            "credited", "credit of", "received into", "received in your",
+            "salary credited", "refund of"
         ).any { b.contains(it) }
 
+        if (b.contains("credit card") && b.contains("payment") && b.contains("received")) {
+            return IntentType.CREDIT
+        }
         val hasUpi = b.contains("upi") || b.contains("@upi")
 
-        // UPI typically → debit, but avoid merchant confirmations
         if (isDebit || (hasUpi && senderType != SenderType.PROMOTIONAL)) {
             return IntentType.DEBIT
         }
 
-        if (isCredit) return IntentType.CREDIT
+        if (isCredit) {
+            return IntentType.CREDIT
+        }
 
-        if (b.contains("refund")) return IntentType.REFUND
+        if (b.contains("refund")) {
+            return IntentType.REFUND
+        }
 
         if (senderType == SenderType.PROMOTIONAL) {
             return IntentType.PROMO
