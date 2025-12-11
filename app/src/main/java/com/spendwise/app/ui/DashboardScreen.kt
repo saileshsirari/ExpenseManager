@@ -147,8 +147,11 @@ fun DashboardScreen(
                         DashboardMode.QUARTER -> baseList.inQuarter(currentPeriod)
                         DashboardMode.YEAR -> baseList.inYear(currentPeriod.year)
                     }
-                    val totalsList = periodTx.filter {
-                        !it.isNetZero && it.linkType != "POSSIBLE_TRANSFER"
+                    // ⭐ Corrected totals filter — EXCLUDE ALL internal transfers
+                    val totalsList = periodTx.filter { tx ->
+                        !tx.isNetZero &&
+                                tx.linkType != "INTERNAL_TRANSFER" &&
+                                tx.linkType != "POSSIBLE_TRANSFER"
                     }
 
 

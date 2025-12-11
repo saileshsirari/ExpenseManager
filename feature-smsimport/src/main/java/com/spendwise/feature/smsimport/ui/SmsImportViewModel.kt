@@ -1,4 +1,3 @@
-
 package com.spendwise.feature.smsimport.ui
 
 import android.os.Build
@@ -23,7 +22,7 @@ import java.time.ZoneId
 import javax.inject.Inject
 
 @HiltViewModel
-class SmsImportViewModel @Inject constructor(private val repo: SmsRepositoryImpl): ViewModel() {
+class SmsImportViewModel @Inject constructor(private val repo: SmsRepositoryImpl) : ViewModel() {
     private val _items = MutableStateFlow<List<SmsEntity>>(emptyList())
     val items: StateFlow<List<SmsEntity>> = _items
     private val _selectedExplanation = MutableStateFlow<MlReasonBundle?>(null)
@@ -31,18 +30,22 @@ class SmsImportViewModel @Inject constructor(private val repo: SmsRepositoryImpl
 
     fun importAll(resolverProvider: () -> android.content.ContentResolver) {
         viewModelScope.launch {
-            repo.importAll(resolverProvider).collect {
-                list -> _items.value = list
+            repo.importAll(resolverProvider).collect { list ->
+                _items.value = list
             }
         }
     }
+
     fun onMessageClicked(tx: SmsEntity) {
         viewModelScope.launch {
 
             // 1️⃣ Print the clicked SMS raw body
             Log.d("expense", "\n------ CLICKED SMS ------")
             Log.d("expense", tx.body)
-            Log.d("expense", "raw-linkId"+tx.linkId+"")
+            Log.d(
+                "expense",
+                "raw-linkId" + tx.linkId + " tx.linkType " + tx.linkType + " tx.isNetZero " + tx.isNetZero
+            )
 
             // 2️⃣ If linked, print the paired raw SMS too
             if (tx.linkId != null) {
@@ -53,7 +56,7 @@ class SmsImportViewModel @Inject constructor(private val repo: SmsRepositoryImpl
                 linked.forEach { pair ->
                     Log.d("expense", "ID=${pair.id}")
                     Log.d("expense", pair.body)
-                    Log.d("expense", "---------------------"+pair.linkConfidence)
+                    Log.d("expense", "---------------------" + pair.linkConfidence)
                 }
             } else {
                 Log.d("expense", "\n(No linked SMS)")
@@ -89,8 +92,7 @@ class SmsImportViewModel @Inject constructor(private val repo: SmsRepositoryImpl
             refresh()
         }
 
-}
-
+    }
 
 
     @RequiresApi(Build.VERSION_CODES.O)
@@ -117,9 +119,11 @@ class SmsImportViewModel @Inject constructor(private val repo: SmsRepositoryImpl
             .toInstant()
             .toEpochMilli()
         Log.d("expense", "Example SMS ts=${items.first().timestamp}")
-        Log.d("expense", "As date=" + Instant.ofEpochMilli(items.first().timestamp)
-            .atZone(ZoneId.systemDefault())
-            .toLocalDate())
+        Log.d(
+            "expense", "As date=" + Instant.ofEpochMilli(items.first().timestamp)
+                .atZone(ZoneId.systemDefault())
+                .toLocalDate()
+        )
         // Filter entries strictly within this month
         val monthly = items.filter { it.timestamp in startMillis..endMillis }
 
@@ -159,6 +163,7 @@ class SmsImportViewModel @Inject constructor(private val repo: SmsRepositoryImpl
         val categoryTotals: Map<String, Double> = emptyMap(),
         val dailyTotals: Map<Int, Double> = emptyMap()
     )
+
     fun refresh() {
         viewModelScope.launch {
             repo.getAll().collect { list ->
@@ -173,11 +178,6 @@ class SmsImportViewModel @Inject constructor(private val repo: SmsRepositoryImpl
             refresh()
         }
     }
-
-
-
-
-
 
 
     fun addManualExpense(
@@ -206,6 +206,7 @@ class SmsImportViewModel @Inject constructor(private val repo: SmsRepositoryImpl
             refresh()
         }
     }
+
     fun setIgnoredState(tx: SmsEntity, ignored: Boolean) {
         viewModelScope.launch {
             repo.setIgnored(tx.id, ignored)
