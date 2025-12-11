@@ -1,21 +1,17 @@
 package com.spendwise.domain.com.spendwise.feature.smsimport.repo
 
-import android.util.Log
 import com.spendwise.core.linked.LinkedTransactionRepository
 import com.spendwise.core.model.TransactionCoreModel
 import com.spendwise.domain.com.spendwise.feature.smsimport.data.mapper.toDomain
 import com.spendwise.feature.smsimport.data.SmsDao
-import com.spendwise.feature.smsimport.data.SmsEntity
 
 class LinkedTransactionRepositoryImpl(
     private val dao: SmsDao
 ) : LinkedTransactionRepository {
 
-    private val TAG = "LinkedRepo"
-
-    // --------------------------------------------------------------------
-    // NORMAL CANDIDATE SEARCH (existing logic)
-    // --------------------------------------------------------------------
+    // -------------------------------------------------------------------------
+    // SAME-DAY CANDIDATE SEARCH
+    // -------------------------------------------------------------------------
     override suspend fun findCandidates(
         amount: Double,
         from: Long,
@@ -26,9 +22,9 @@ class LinkedTransactionRepositoryImpl(
             .map { it.toDomain() }
     }
 
-    // --------------------------------------------------------------------
-    // UPDATE LINK FIELDS (existing)
-    // --------------------------------------------------------------------
+    // -------------------------------------------------------------------------
+    // UPDATE LINK FIELDS
+    // -------------------------------------------------------------------------
     override suspend fun updateLink(
         id: Long,
         linkId: String?,
@@ -39,64 +35,85 @@ class LinkedTransactionRepositoryImpl(
         dao.updateLink(id, linkId, linkType, confidence, isNetZero)
     }
 
-    // ====================================================================
-    // NEW LOGIC: PATTERN LEARNING FOR MISSING-CREDIT DETECTION
-    // ====================================================================
+    // -------------------------------------------------------------------------
+    // RETURN ALL LINKED TRX (any tx with linkId != null)
+    // -------------------------------------------------------------------------
+    override suspend fun getAllLinked(): List<TransactionCoreModel> {
+        return dao.getAllOnce()
+            .filter { !it.linkId.isNullOrBlank() }
+            .map { it.toDomain() }
+    }
 
-    /** Cache for speed */
-    private var cachedPatterns: Set<String>? = null
-
-    /**
-     * Return a set of pattern keys learned from all already-linked transfers.
-     * Detector uses this to infer missing credit/debit pairs.
-     */
+    // -------------------------------------------------------------------------
+    // RETURN ALL HISTORICAL PATTERNS (merchant + phrase)
+    // -------------------------------------------------------------------------
     override suspend fun getAllLinkedPatterns(): Set<String> {
+        val linked = dao.getAllOnce().filter { !it.linkId.isNullOrBlank() }
 
-        cachedPatterns?.let { return it }
-
-        val linked = dao.getAllLinked()   // requires DAO update
-        val patterns = linked.mapNotNull { buildPattern(it) }.toSet()
-
-        Log.d(TAG, "Loaded ${patterns.size} linked transfer patterns")
-        cachedPatterns = patterns
+        val patterns = linked.map { tx ->
+            val merchant = normalize(tx.merchant ?: tx.sender ?: "")
+            val phrase = extractPhrase(tx.body ?: "")
+            "$merchant|$phrase"
+        }.toSet()
 
         return patterns
     }
 
-    // --------------------------------------------------------------------
-    // PATTERN BUILDER for each linked SMS
-    // --------------------------------------------------------------------
-    private fun buildPattern(sms: SmsEntity): String? {
+    // -------------------------------------------------------------------------
+    // RETURN ONLY DEBIT PATTERNS (For more accurate missing-credit inference)
+    // -------------------------------------------------------------------------
+    override suspend fun getAllLinkedDebitPatterns(): Set<String> {
+        val linkedDebits = dao.getAllOnce()
+            .filter { !it.linkId.isNullOrBlank() && it.type.equals("DEBIT", true) }
 
-        val merchantNorm = normalize(sms.merchant)
-        val bank = extractBank(sms.sender)
-        val phrase = extractPhrase(sms.body)
+        val patterns = linkedDebits.map { tx ->
+            val merchant = normalize(tx.merchant ?: tx.sender ?: "")
+            val phrase = extractPhrase(tx.body ?: "")
+            "$merchant|$phrase"
+        }.toSet()
 
-        if (merchantNorm == null || phrase == null) return null
-
-        return "$bank|$merchantNorm|$phrase"
+        return patterns
     }
 
-    // --------------------------------------------------------------------
-    // HELPERS (same as detector logic)
-    // --------------------------------------------------------------------
-    private fun normalize(s: String?): String? {
-        if (s.isNullOrBlank()) return null
-        return s.lowercase().replace("[^a-z]".toRegex(), "")
-    }
+    // -------------------------------------------------------------------------
+    // HELPERS — MUST MATCH DETECTOR'S NORMALIZATION & PHRASE LOGIC
+    // -------------------------------------------------------------------------
+    private fun normalize(name: String): String =
+        name.lowercase()
+            .replace("[^a-z0-9 ]".toRegex(), " ")
+            .replace("\\s+".toRegex(), " ")
+            .trim()
 
-    private fun extractBank(sender: String?): String =
-        sender?.substringBefore("-")?.uppercase() ?: "BANK"
-
-    private fun extractPhrase(body: String?): String? {
-        if (body.isNullOrBlank()) return null
-
+    private fun extractPhrase(body: String): String {
         val b = body.lowercase()
+
         return when {
-            b.contains("transferred to") -> "transferred_to"
-            b.contains("deposit by transfer from") -> "deposit_from"
-            b.contains("credit by transfer") -> "credit_transfer"
-            else -> null
+            b.contains("transferred to") || b.contains("transfer to") || b.contains("transferred") ->
+                "transferred_to"
+
+            b.contains("deposit by transfer") ||
+                    b.contains("deposit by") ||
+                    b.contains("deposit") ||
+                    b.contains("credited by transfer") ->
+                "deposit_from"
+
+            b.contains("credited") ||
+                    b.contains("credit of") ||
+                    b.contains("credited to") ->
+                "credited_to"
+
+            b.contains("debited") ||
+                    b.contains("deducted") ||
+                    b.contains("deducted from") ->
+                "debited_from"
+
+            b.contains("paid") && b.contains("via") ->
+                "paid_via"
+
+            b.contains("payzapp") || b.contains("wallet") ->
+                "wallet_deduction"
+
+            else -> "other"
         }
     }
 }
