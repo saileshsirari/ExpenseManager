@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -27,6 +28,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -70,6 +72,7 @@ fun DashboardScreen(
     var selectedType by remember { mutableStateOf<String?>(null) }
     var selectedDay by remember { mutableStateOf<Int?>(null) }
     var selectedMonthFilter by remember { mutableStateOf<Int?>(null) }
+    var showInternalTransfers by remember { mutableStateOf(false) }
 
     // ⭐ NEW — show only Transfers
     var showTransfersOnly by remember { mutableStateOf(false) }
@@ -150,8 +153,10 @@ fun DashboardScreen(
 
 
                     // ------------------- TOTALS -------------------
-                    val totalDebit = totalsList.filter { it.type.equals("DEBIT", true) }.sumOf { it.amount }
-                    val totalCredit = totalsList.filter { it.type.equals("CREDIT", true) }.sumOf { it.amount }
+                    val totalDebit =
+                        totalsList.filter { it.type.equals("DEBIT", true) }.sumOf { it.amount }
+                    val totalCredit =
+                        totalsList.filter { it.type.equals("CREDIT", true) }.sumOf { it.amount }
 
                     val debitCreditTotals = mapOf(
                         "DEBIT" to totalDebit,
@@ -184,18 +189,30 @@ fun DashboardScreen(
                     val typeFiltered = dateFiltered.ofType(selectedType)
 
                     // ⭐ NEW — Only transfers filter
-                    val finalList = if (showTransfersOnly)
-                        typeFiltered.filter { it.linkId != null }
+                    // HIDE internal transfers by default
+                    val finalList =
+                        if (showInternalTransfers)
+                            typeFiltered // include everything
+                        else
+                            typeFiltered.filter { it.linkType != "INTERNAL_TRANSFER" && it.linkType != "POSSIBLE_TRANSFER" }
 
 
-                    else typeFiltered
                     finalList.filter { it.linkId != null }.forEach {
-                        Log.d("linked","Linked: ID=${it.id}, amount=${it.amount}, type=${it.type}, linkId=${it.linkId}, linkType=${it.linkType}")
+                        Log.d(
+                            "linked",
+                            "Linked: ID=${it.id}, amount=${it.amount}, type=${it.type}, linkId=${it.linkId}, linkType=${it.linkType}"
+                        )
                     }
                     // ------------------- TOTALS UI -------------------
                     Column {
-                        Text("Total Debit: ₹${totalDebit.toInt()}", style = MaterialTheme.typography.bodyLarge)
-                        Text("Total Credit: ₹${totalCredit.toInt()}", style = MaterialTheme.typography.bodyLarge)
+                        Text(
+                            "Total Debit: ₹${totalDebit.toInt()}",
+                            style = MaterialTheme.typography.bodyLarge
+                        )
+                        Text(
+                            "Total Credit: ₹${totalCredit.toInt()}",
+                            style = MaterialTheme.typography.bodyLarge
+                        )
                         Spacer(Modifier.height(20.dp))
 
                         // PIE
@@ -228,8 +245,10 @@ fun DashboardScreen(
                                 when (currentMode) {
                                     DashboardMode.MONTH ->
                                         selectedDay = if (selectedDay == idx) null else idx
+
                                     DashboardMode.QUARTER, DashboardMode.YEAR ->
-                                        selectedMonthFilter = if (selectedMonthFilter == idx) null else idx
+                                        selectedMonthFilter =
+                                            if (selectedMonthFilter == idx) null else idx
                                 }
                                 selectedType = null
                                 showTransfersOnly = false
@@ -268,8 +287,10 @@ fun DashboardScreen(
                             showTransfersOnly -> "Linked Transfers"
                             currentMode == DashboardMode.MONTH && selectedDay != null ->
                                 "Transactions on $selectedDay"
+
                             currentMode != DashboardMode.MONTH && selectedMonthFilter != null ->
                                 "Transactions in Month $selectedMonthFilter"
+
                             selectedType != null -> "$selectedType Transactions"
                             currentMode == DashboardMode.MONTH -> "All Transactions This Month"
                             currentMode == DashboardMode.QUARTER -> "All Transactions This Quarter"
@@ -277,8 +298,33 @@ fun DashboardScreen(
                             else -> "Transactions"
                         }
 
-                        Text(headerText, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                        Text(
+                            headerText,
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.SemiBold
+                        )
                         Spacer(Modifier.height(12.dp))
+
+                        // NEW — Toggle visibility of internal/possible transfers
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(bottom = 8.dp)
+                                .clickable { showInternalTransfers = !showInternalTransfers }
+                        ) {
+                            Checkbox(
+                                checked = showInternalTransfers,
+                                onCheckedChange = { showInternalTransfers = it }
+                            )
+                            Text(
+                                text = "Show internal transfers",
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontWeight = FontWeight.Medium
+                            )
+                        }
+                        Spacer(Modifier.height(8.dp))
+
 
                         // ---------------------------------------------------
 // APPLY SORT CONFIG (primary + secondary)
@@ -308,7 +354,6 @@ fun DashboardScreen(
                         )
 
 
-
                         // ------------------- LIST -------------------
                         sortedList.forEach { tx ->
                             SmsListItem(
@@ -328,6 +373,7 @@ fun DashboardScreen(
         }
     }
 }
+
 @Composable
 fun PeriodHeader(
     mode: DashboardMode,
@@ -339,6 +385,7 @@ fun PeriodHeader(
         DashboardMode.MONTH -> period.format(
             java.time.format.DateTimeFormatter.ofPattern("MMMM yyyy")
         )
+
         DashboardMode.QUARTER -> period.toQuarterTitle()
         DashboardMode.YEAR -> period.year.toString()
     }
