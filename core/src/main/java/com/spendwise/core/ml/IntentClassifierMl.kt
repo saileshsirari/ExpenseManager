@@ -18,7 +18,8 @@ object IntentClassifierMl {
         "credited to card",
         "received towards your credit card",
         "payment posted",
-        "bill paid successfully"
+        "bill paid successfully",
+        "payment updated against your" // common Airtel/utility phrasing
     )
 
     fun classify(senderType: SenderType, body: String): IntentType {
@@ -51,12 +52,13 @@ object IntentClassifierMl {
 
         // Pending transaction states
         if (b.contains("initiated") || b.contains("request received")
-            || b.contains("scheduled") || b.contains("processing")) {
+            || b.contains("scheduled") || b.contains("processing")
+        ) {
             return IntentType.PENDING
         }
 
         // -------------------------------------------------------------------
-        //  CREDIT CARD PAYMENT RECEIVED  (*** Fix Here ***)
+        //  CREDIT CARD PAYMENT RECEIVED  (Fix for CC receipts)
         // -------------------------------------------------------------------
         if (creditCardReceiptKeywords.any { b.contains(it) }) {
             return IntentType.CREDIT
@@ -65,7 +67,8 @@ object IntentClassifierMl {
         // Sometimes banks say:
         // “Payment received on your CC XXXX” or “Thank you! we received your payment”
         if ((b.contains("payment") && b.contains("received"))
-            && (b.contains("credit card") || b.contains("card xx") || b.contains("cc"))) {
+            && (b.contains("credit card") || b.contains("card xx") || b.contains("cc"))
+        ) {
             return IntentType.CREDIT
         }
 
@@ -81,7 +84,7 @@ object IntentClassifierMl {
         val isDebit = listOf(
             "debited", "debit of", "deducted", "deduct", "deduction",
             "withdrawn", "spent", "payment of", "paid towards",
-            "pos transaction", "atm wdl", "atm withdrawal"
+            "pos transaction", "atm wdl", "atm withdrawal", "debited rs", "debited inr"
         ).any { b.contains(it) }
 
         val isCredit = listOf(
@@ -89,9 +92,11 @@ object IntentClassifierMl {
             "salary credited", "refund of"
         ).any { b.contains(it) }
 
+        // Special guard: phrases that strongly indicate credit-card payment receipt
         if (b.contains("credit card") && b.contains("payment") && b.contains("received")) {
             return IntentType.CREDIT
         }
+
         val hasUpi = b.contains("upi") || b.contains("@upi")
 
         if (isDebit || (hasUpi && senderType != SenderType.PROMOTIONAL)) {

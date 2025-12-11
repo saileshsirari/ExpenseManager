@@ -24,7 +24,7 @@ class LinkedTransactionRepositoryImpl(
     }
 
     // ---------------------------------------------------------
-    // APPLY LINK
+    // APPLY LINK TO A TX
     // ---------------------------------------------------------
     override suspend fun updateLink(
         id: Long,
@@ -37,27 +37,35 @@ class LinkedTransactionRepositoryImpl(
     }
 
     // ---------------------------------------------------------
-    // ALL TX WHERE linkId != null
+    // GET ALL ALREADY-LINKED TRANSACTIONS
     // ---------------------------------------------------------
     override suspend fun getAllLinked(): List<TransactionCoreModel> {
         return dao.getAllLinked().map { it.toDomain() }
     }
 
     // ---------------------------------------------------------
-    // PATTERN STORAGE
+    // SAVE A NEW LEARNED LINKED PATTERN
     // ---------------------------------------------------------
     override suspend fun saveLinkedPattern(pattern: String) {
         dao.insertPattern(LinkedPatternEntity(pattern))
     }
 
+    // ---------------------------------------------------------
+    // READ ALL STORED PATTERNS
+    // ---------------------------------------------------------
     override suspend fun getAllLinkedPatterns(): Set<String> {
         return dao.getAllLinkedPatterns().toSet()
     }
 
+    // Only debit-side patterns such as:
+    // "saileshsirari|transferred_to", "wallet|debited_from"
     override suspend fun getAllLinkedDebitPatterns(): Set<String> {
         return dao.getAllLinkedDebitPatterns().toSet()
     }
 
+    // ---------------------------------------------------------
+    // CREDIT-SIDE PATTERNS (Required by Detector)
+    // ---------------------------------------------------------
     override suspend fun getAllLinkedCreditPatterns(): Set<String> {
         return dao.getAllLinkedCreditPatterns().toSet()
     }

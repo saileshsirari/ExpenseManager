@@ -1,9 +1,13 @@
 package com.spendwise.core.ml
 
+import android.util.Log
+
 object MerchantExtractorMl {
 
+    private const val TAG = "MerchantDebug"
+
     // --------------------------------------------------------------------
-    // SPECIAL MERCHANT SENDERS (fixes Airtel issue)
+    // SPECIAL MERCHANT SENDERS
     // --------------------------------------------------------------------
     private val merchantSenderMap = mapOf(
         "AIRTEL" to "Airtel",
@@ -21,7 +25,6 @@ object MerchantExtractorMl {
         "netflix" to "Netflix",
         "mubi" to "Mubi",
         "youtube" to "YouTube",
-        "google *youtube" to "YouTube",
         "spotify" to "Spotify",
         "amazon prime" to "Amazon Prime",
         "prime video" to "Prime Video",
@@ -31,7 +34,16 @@ object MerchantExtractorMl {
         "apple.com/bill" to "Apple Services"
     )
 
-    // your original merchant map
+    // --------------------------------------------------------------------
+    // Internal transfer markers (ICICI/HDFC)
+    // --------------------------------------------------------------------
+    private val internalMarkers = listOf(
+        "infobil", "infoach", "infoimps", "infortgs"
+    )
+
+    // --------------------------------------------------------------------
+    // Merchant keyword dictionary
+    // --------------------------------------------------------------------
     internal val merchantMap = mapOf(
         "zomato" to "Zomato",
         "swiggy" to "Swiggy",
@@ -56,79 +68,34 @@ object MerchantExtractorMl {
         "cashfree" to "Cashfree",
         "payu" to "PayU",
         "phonepe" to "PhonePe",
-        "gpay" to "Google Pay",
         "google pay" to "Google Pay",
         "paytm" to "Paytm"
     )
     internal val merchantKeywords = merchantMap.keys
 
     // --------------------------------------------------------------------
-    // ROBUST PERSON NAME DETECTOR (NEW)
-    // SBI, HDFC, ICICI internal transfers, UPI transfers
+    // UPI / Person Name Detector
     // --------------------------------------------------------------------
-    private val personPatterns = listOf(
-        Regex(
-            "to\\s+(mr\\.?|mrs\\.?|ms\\.?|shri)?\\s*([A-Za-z][A-Za-z ]{2,50})",
-            RegexOption.IGNORE_CASE
-        ),
-        Regex(
-            "transfer(?:red)?\\s+to\\s+(mr\\.?|mrs\\.?|ms\\.?|shri)?\\s*([A-Za-z][A-Za-z ]{2,50})",
-            RegexOption.IGNORE_CASE
-        ),
-        Regex(
-            "deposit by transfer from\\s+(mr\\.?|mrs\\.?|ms\\.?|shri)?\\s*([A-Za-z][A-Za-z ]{2,50})",
-            RegexOption.IGNORE_CASE
-        ),
-        Regex(
-            "credited(?:.*)from\\s+(mr\\.?|mrs\\.?|ms\\.?|shri)?\\s*([A-Za-z][A-Za-z ]{2,50})",
-            RegexOption.IGNORE_CASE
-        )
+    private val personNameRegex = Regex(
+        "(to|from)\\s+(mr\\.?|mrs\\.?|ms\\.?|shri)?\\s*([A-Za-z][A-Za-z ]{2,50})",
+        RegexOption.IGNORE_CASE
     )
 
     private fun extractPersonName(body: String): String? {
-        val lower = body.lowercase()
+        val m = personNameRegex.find(body.lowercase()) ?: return null
+        val raw = m.groupValues[3]
 
-        for (pattern in personPatterns) {
-            val m = pattern.find(lower) ?: continue
+        val cleaned = raw
+            .replace(Regex("[^A-Za-z ]"), "")
+            .trim()
 
-            val raw = m.groupValues.last().trim()
+        if (cleaned.split(" ").size > 3) return null // avoid long garbage matches
 
-            val cleaned = raw
-                .replace("mr.", "", true)
-                .replace("mr", "", true)
-                .replace("mrs.", "", true)
-                .replace("mrs", "", true)
-                .replace("ms.", "", true)
-                .replace("ms", "", true)
-                .replace("shri", "", true)
-                .trim()
-
-            val parts = cleaned
-                .split(" ")
-                .map { it.replace("[^A-Za-z]".toRegex(), "") }
-                .filter { it.length > 1 }
-
-            if (parts.isEmpty()) return null
-
-            return parts.joinToString(" ") { it.uppercase() }
-        }
-
-        return null
+        return cleaned.uppercase()
     }
 
     // --------------------------------------------------------------------
-    // POS Detector
-    // --------------------------------------------------------------------
-    private val posAtPattern =
-        Regex("""\bat\s+([A-Za-z0-9&\-\.\s]{2,50})""", RegexOption.IGNORE_CASE)
-
-    private val cityTokens = listOf(
-        "india", "bangalore", "bengaluru", "mumbai", "delhi",
-        "chennai", "hyderabad", "pune", "kolkata", "ncr", "noida", "gurgaon"
-    )
-
-    // --------------------------------------------------------------------
-    // MAIN LOGIC
+    // MAIN EXTRACTION LOGIC
     // --------------------------------------------------------------------
     suspend fun extract(
         senderType: SenderType,
@@ -137,98 +104,129 @@ object MerchantExtractorMl {
         overrideProvider: suspend (String) -> String?
     ): String? {
 
-        val lowerBody = body.lowercase()
-        val upperSender = sender.uppercase()
+        val lower = body.lowercase()
+        Log.d(TAG, "---- EXTRACT MERCHANT ----")
+        Log.d(TAG, "Sender=$sender")
+        Log.d(TAG, "Body=$body")
 
-        // 1) User override
+        // USER OVERRIDE 1: full sender
         overrideProvider("merchant:$sender")?.let { return it }
 
+        // USER OVERRIDE 2: normalized sender
+        overrideProvider("merchant:${normalize(sender)}")?.let { return it }
+
         // --------------------------------------------------------------------
-// Credit Card Payment Received (Credit-side)
-// --------------------------------------------------------------------
-        if (lowerBody.contains("credit card") &&
-            lowerBody.contains("payment") &&
-            lowerBody.contains("received")
+        // INTERNAL TRANSFER MARKERS (ICICI/HDFC)
+        // --------------------------------------------------------------------
+        internalMarkers.forEach { marker ->
+            if (lower.contains(marker)) {
+                val name = marker.removePrefix("info").uppercase() + " TRANSFER"
+                Log.d(TAG, "Internal transfer detected → $name")
+                return name
+            }
+        }
+
+        // --------------------------------------------------------------------
+        // CREDIT CARD PAYMENT RECEIVED (CREDIT)
+        // --------------------------------------------------------------------
+        if (
+            lower.contains("credit card") &&
+            lower.contains("payment") &&
+            lower.contains("received")
         ) {
-            val issuer = detectIssuer(sender, lowerBody)
-            overrideProvider("merchant:${issuer.lowercase()}")?.let { return it }
+            val issuer = detectIssuer(sender, body)
+            Log.d(TAG, "Credit card payment detected → $issuer")
             return issuer
         }
 
-// --------------------------------------------------------------------
-// Credit Card Bill Payment (Debit-side)
-// "Acct debited ... Amazon Pay credited" (NOT an Amazon purchase!)
-// --------------------------------------------------------------------
-        if (lowerBody.contains("credit card") &&
-            (lowerBody.contains("payment") || lowerBody.contains("bill"))
+        // --------------------------------------------------------------------
+        // CREDIT CARD BILL PAYMENT (DEBIT)
+        // "Acct debited... Amazon Pay credited"
+        // Should return issuer, not Amazon
+        // --------------------------------------------------------------------
+        if (
+            lower.contains("credit card") &&
+            (lower.contains("payment") || lower.contains("bill"))
         ) {
-            val issuer = detectIssuer(sender, lowerBody)
-            overrideProvider("merchant:${issuer.lowercase()}")?.let { return it }
+            val issuer = detectIssuer(sender, body)
+            Log.d(TAG, "Credit card bill-payment detected → $issuer")
             return issuer
         }
 
-        // 2) SPECIAL MERCHANT SENDERS
+        // --------------------------------------------------------------------
+        // SPECIAL MERCHANT SENDERS (Airtel/Jio)
+        // --------------------------------------------------------------------
         merchantSenderMap.forEach { (key, pretty) ->
-            if (upperSender.contains(key)) {
-                overrideProvider("merchant:$pretty")?.let { return it }
+            if (sender.uppercase().contains(key)) {
+                Log.d(TAG, "Special sender hit → $pretty")
                 return pretty
             }
         }
 
-        // 3) OTT (Netflix, Prime etc.)
+        // --------------------------------------------------------------------
+        // OTT merchants (Netflix, Prime…)
+        // --------------------------------------------------------------------
         ottMerchants.forEach { (token, pretty) ->
-            if (lowerBody.contains(token)) return pretty
-        }
-
-        // 4) PERSON NAME DETECTOR (NEW & IMPORTANT)
-        extractPersonName(body)?.let { person ->
-            val norm = normalize(person)
-            overrideProvider("merchant:$norm")?.let { return it }
-            return norm
-        }
-
-        // 5) Strong POS detection "at XYZ store"
-        val posMatch = posAtPattern.find(lowerBody)
-        if (posMatch != null) {
-            var candidate = posMatch.groupValues[1].trim()
-            val words = candidate.split(" ").filter { it.isNotBlank() }.toMutableList()
-
-            while (words.size > 1 && cityTokens.contains(words.last().lowercase())) {
-                words.removeAt(words.lastIndex)
+            if (lower.contains(token)) {
+                Log.d(TAG, "OTT detected → $pretty")
+                return pretty
             }
+        }
 
-            val norm = normalize(words.joinToString(" "))
+        // --------------------------------------------------------------------
+        // PERSON NAME DETECTOR (UPI)
+        // --------------------------------------------------------------------
+        val person = extractPersonName(body)
+        if (person != null) {
+            Log.d(TAG, "Person-detected merchant → $person")
+            return person
+        }
+
+        // --------------------------------------------------------------------
+        // POS detector (HDFC retail POS)
+        // --------------------------------------------------------------------
+        val posMatch = Regex("at ([A-Za-z0-9 ][A-Za-z0-9 &.-]{2,40})").find(lower)
+        if (posMatch != null) {
+            val norm = normalize(posMatch.groupValues[1])
+            Log.d(TAG, "POS merchant → $norm")
             return norm
         }
 
-        // 6) Keyword merchant detection
+        // --------------------------------------------------------------------
+        // STANDARD KEYWORD MERCHANTS
+        // --------------------------------------------------------------------
         merchantMap.forEach { (token, pretty) ->
-            if (lowerBody.contains(token)) return pretty
+            if (lower.contains(token)) {
+                Log.d(TAG, "Keyword merchant → $pretty")
+                return pretty
+            }
         }
 
-        // 7) Razorpay special-case
-        if (lowerBody.contains("razorpay")) return "Razorpay"
-
-        // 8) BANK fallback
+        // --------------------------------------------------------------------
+        // FALLBACK BANK SENDER CLEANING
+        // --------------------------------------------------------------------
         if (senderType == SenderType.BANK) {
-            return cleanSenderName(sender)
+            val cleaned = cleanSenderName(sender)
+            if (cleaned.length > 2) {
+                Log.d(TAG, "BANK fallback merchant → $cleaned")
+                return cleaned
+            }
         }
 
+        Log.d(TAG, "Merchant not identified.")
         return null
     }
 
     // --------------------------------------------------------------------
     // HELPERS
     // --------------------------------------------------------------------
-
     private fun detectIssuer(sender: String, body: String): String {
-        val t = (sender + " " + body).lowercase()
-
+        val t = (sender + body).lowercase()
         return when {
             "icici" in t -> "ICICI Credit Card"
-            "hdfc"  in t -> "HDFC Credit Card"
-            "sbi"   in t -> "SBI Credit Card"
-            "axis"  in t -> "Axis Credit Card"
+            "hdfc" in t -> "HDFC Credit Card"
+            "sbi" in t -> "SBI Credit Card"
+            "axis" in t -> "Axis Credit Card"
             "kotak" in t -> "Kotak Credit Card"
             else -> "Credit Card"
         }
@@ -236,27 +234,20 @@ object MerchantExtractorMl {
 
     fun normalize(name: String): String =
         name.lowercase()
+            .replace("[^a-z0-9 ]".toRegex(), " ")
+            .replace("\\s+".toRegex(), " ")
             .trim()
-            .replace(Regex("[^a-z0-9 ]"), "")
-            .replace(Regex("\\s+"), " ")
 
     private fun cleanSenderName(sender: String): String {
         val parts = sender.split("-", " ", "_")
             .filter { it.isNotBlank() }
 
-        // Example: JM-HDFCBK-S
-        // parts = ["JM", "HDFCBK", "S"]
-
-        // Prefer the middle segment when available
-        val merchantPart = when {
-            parts.size >= 2 -> parts[parts.size - 2]  // middle
+        val chosen = when {
+            parts.size >= 2 -> parts[parts.size - 2]
             else -> parts.last()
         }
 
-        return merchantPart
-            .replace(Regex("[^A-Za-z0-9 ]"), "")
-            .replace(Regex("\\s+"), " ")
+        return chosen.replace("[^A-Za-z0-9 ]".toRegex(), "")
             .uppercase()
     }
-
 }
