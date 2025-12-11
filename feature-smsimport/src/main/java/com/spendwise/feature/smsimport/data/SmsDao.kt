@@ -65,4 +65,11 @@ interface SmsDao {
         linkConfidence: Int,
         isNetZero: Boolean
     )
+
+    @Query("""
+    SELECT * FROM sms
+    WHERE linkId IS NOT NULL
+""")
+    suspend fun getAllLinked(): List<SmsEntity>
+
 }

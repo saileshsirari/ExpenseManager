@@ -19,6 +19,9 @@ class LinkedTransactionDetector(
 
     private val TAG = "LinkedDetector"
 
+    // ---------------------------------------------------------
+    // PROCESS SMS
+    // ---------------------------------------------------------
     suspend fun process(tx: TransactionCoreModel) {
 
         Log.d(TAG, "\n\n========== PROCESSING TX ${tx.id} ==========")
@@ -31,6 +34,11 @@ class LinkedTransactionDetector(
             return
         }
 
+        var linked = false
+
+        // -----------------------------------------------------
+        // 1) NORMAL SAME-MONTH LINKING
+        // -----------------------------------------------------
         val from = tx.timestamp - DAY_MS
         val to = tx.timestamp + DAY_MS
 
@@ -53,22 +61,31 @@ class LinkedTransactionDetector(
                 score >= autoLinkThreshold -> {
                     Log.d(TAG, "AUTO-LINKED as INTERNAL_TRANSFER\n")
                     applyLink(tx, cand, score, "INTERNAL_TRANSFER", true)
-                    return
+                    linked = true
+                    break
                 }
 
                 score >= possibleLinkThreshold -> {
                     Log.d(TAG, "POSSIBLE LINK\n")
                     applyLink(tx, cand, score, "POSSIBLE_TRANSFER", false)
+                    linked = true
                 }
 
                 else -> Log.d(TAG, "NOT LINKED\n")
             }
         }
+
+        if (linked) return
+
+        // -----------------------------------------------------
+        // 2) MISSING CREDIT INFERENCE (NEW)
+        // -----------------------------------------------------
+        inferMissingCredit(tx)
     }
 
-    // =========================================================================
+    // ---------------------------------------------------------
     // APPLY LINK
-    // =========================================================================
+    // ---------------------------------------------------------
     private suspend fun applyLink(
         a: TransactionCoreModel,
         b: TransactionCoreModel,
@@ -81,24 +98,21 @@ class LinkedTransactionDetector(
         repo.updateLink(b.id, linkId, type, score, isNetZero)
     }
 
-    // =========================================================================
-    // PAIR SCORING
-    // =========================================================================
+    // ---------------------------------------------------------
+    // SCORING LOGIC (unchanged)
+    // ---------------------------------------------------------
     private fun scorePair(a: TransactionCoreModel, b: TransactionCoreModel): Int {
 
-        // ---------- 1. Block same direction (critical fix) ----------
         if (a.type?.lowercase() == b.type?.lowercase()) {
             Log.d(TAG, "BLOCKED: Same direction ${a.type} & ${b.type}")
             return 0
         }
 
-        // ---------- 2. Amount mismatch (fast reject) ----------
         if (a.amount != b.amount) {
             Log.d(TAG, "BLOCKED: Amount mismatch")
             return 0
         }
 
-        // ---------- 3. Merchant mismatch (critical fix) ----------
         val merchantSim = similarity(a.merchant, b.merchant)
         if (merchantSim < 10) {
             Log.d(TAG, "BLOCKED: Merchant mismatch '${a.merchant}' vs '${b.merchant}' (sim=$merchantSim)")
@@ -106,11 +120,8 @@ class LinkedTransactionDetector(
         }
 
         var score = 0
-
-        // ---------- 4. Amount match ----------
         score += amountWeight
 
-        // ---------- 5. Date proximity ----------
         val dayDiff = ((a.timestamp - b.timestamp).absoluteValue / DAY_MS)
         score += when (dayDiff) {
             0L -> dateWeightSameDay
@@ -118,13 +129,10 @@ class LinkedTransactionDetector(
             else -> 0
         }
 
-        // ---------- 6. Opposite direction ----------
         if (isOpposite(a.type, b.type)) score += oppositeDirWeight
 
-        // ---------- 7. Merchant similarity ----------
         score += (merchantSim * nameSimWeight / 100)
 
-        // ---------- 8. Sender match (same bank) ----------
         if (!a.sender.isNullOrBlank() && a.sender == b.sender) {
             score += bankMatchWeight
         }
@@ -138,9 +146,9 @@ class LinkedTransactionDetector(
         return (x == "debit" && y == "credit") || (x == "credit" && y == "debit")
     }
 
-    // =========================================================================
-    // SIMILARITY FUNCTION
-    // =========================================================================
+    // ---------------------------------------------------------
+    // SIMILARITY
+    // ---------------------------------------------------------
     private fun similarity(a: String?, b: String?): Int {
         if (a.isNullOrBlank() || b.isNullOrBlank()) return 0
 
@@ -171,9 +179,69 @@ class LinkedTransactionDetector(
         ).toString()
     }
 
+    private fun generateMissingLinkId(tx: TransactionCoreModel): String {
+        return UUID.nameUUIDFromBytes(
+            "missing-${tx.amount}-${tx.timestamp}".toByteArray()
+        ).toString()
+    }
+
     private fun isDebitOrCredit(tx: TransactionCoreModel): Boolean {
         val t = tx.type?.lowercase() ?: return false
         return t == "debit" || t == "credit"
+    }
+
+    // ---------------------------------------------------------
+    //  MISSING CREDIT INFERENCE (NEW)
+    // ---------------------------------------------------------
+    private suspend fun inferMissingCredit(tx: TransactionCoreModel) {
+
+        if (!tx.type.equals("DEBIT", true)) return
+        if (tx.merchant.isNullOrBlank()) return
+
+        val patterns = repo.getAllLinkedPatterns() // you add this in repository
+        if (patterns.isEmpty()) return
+
+        val key = buildPatternKey(tx)
+        Log.d(TAG, "Pattern key for inference = $key")
+
+        if (key != null && patterns.contains(key)) {
+
+            Log.w(TAG, "💥 INFERRED MISSING CREDIT TRANSFER — applying link")
+
+            repo.updateLink(
+                tx.id,
+                generateMissingLinkId(tx),
+                "INFERRED_TRANSFER",
+                95,
+                true
+            )
+        }
+    }
+
+    private fun buildPatternKey(tx: TransactionCoreModel): String? {
+        val norm = normalizeName(tx.merchant) ?: return null
+        val bank = extractBank(tx.sender)
+        val phrase = extractPhrase(tx.body ?: "") ?: return null
+
+        return "$bank|$norm|$phrase"
+    }
+
+    private fun normalizeName(n: String?): String? {
+        if (n.isNullOrBlank()) return null
+        return n.lowercase().replace("[^a-z]".toRegex(), "")
+    }
+
+    private fun extractBank(sender: String?): String =
+        sender?.substringBefore("-")?.uppercase() ?: "BANK"
+
+    private fun extractPhrase(body: String): String? {
+        val b = body.lowercase()
+        return when {
+            b.contains("transferred to") -> "transferred_to"
+            b.contains("deposit by transfer from") -> "deposit_from"
+            b.contains("credit by transfer") -> "credit_transfer"
+            else -> null
+        }
     }
 
     companion object {

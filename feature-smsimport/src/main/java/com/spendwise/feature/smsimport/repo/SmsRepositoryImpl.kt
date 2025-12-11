@@ -45,7 +45,7 @@ class SmsRepositoryImpl @Inject constructor(
             // READ ONLY CURRENT MONTH
             // -----------------------------
             val now = LocalDate.now()
-            val monthStart = now.minusMonths(1).withDayOfMonth(1)
+            val monthStart = now.minusMonths(2).withDayOfMonth(1)
             val monthStartMillis = monthStart
                 .atStartOfDay(ZoneId.systemDefault())
                 .toEpochSecond() * 1000

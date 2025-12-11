@@ -17,4 +17,6 @@ interface LinkedTransactionRepository {
         confidence: Int,
         isNetZero: Boolean
     )
+
+    suspend fun getAllLinkedPatterns(): Set<String>
 }
