@@ -50,7 +50,7 @@ class SmsRepositoryImpl @Inject constructor(
                 .atStartOfDay(ZoneId.systemDefault())
                 .toEpochSecond() * 1000
 
-            val lastTimestamp = monthStartMillis - 3600_000L
+            val lastTimestamp = monthStartMillis
 
             Log.w("expense", "Importing SMS since: $monthStart  ($lastTimestamp)")
 

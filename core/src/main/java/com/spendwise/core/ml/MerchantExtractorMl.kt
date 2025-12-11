@@ -67,10 +67,22 @@ object MerchantExtractorMl {
     // SBI, HDFC, ICICI internal transfers, UPI transfers
     // --------------------------------------------------------------------
     private val personPatterns = listOf(
-        Regex("to\\s+(mr\\.?|mrs\\.?|ms\\.?|shri)?\\s*([A-Za-z][A-Za-z ]{2,50})", RegexOption.IGNORE_CASE),
-        Regex("transfer(?:red)?\\s+to\\s+(mr\\.?|mrs\\.?|ms\\.?|shri)?\\s*([A-Za-z][A-Za-z ]{2,50})", RegexOption.IGNORE_CASE),
-        Regex("deposit by transfer from\\s+(mr\\.?|mrs\\.?|ms\\.?|shri)?\\s*([A-Za-z][A-Za-z ]{2,50})", RegexOption.IGNORE_CASE),
-        Regex("credited(?:.*)from\\s+(mr\\.?|mrs\\.?|ms\\.?|shri)?\\s*([A-Za-z][A-Za-z ]{2,50})", RegexOption.IGNORE_CASE)
+        Regex(
+            "to\\s+(mr\\.?|mrs\\.?|ms\\.?|shri)?\\s*([A-Za-z][A-Za-z ]{2,50})",
+            RegexOption.IGNORE_CASE
+        ),
+        Regex(
+            "transfer(?:red)?\\s+to\\s+(mr\\.?|mrs\\.?|ms\\.?|shri)?\\s*([A-Za-z][A-Za-z ]{2,50})",
+            RegexOption.IGNORE_CASE
+        ),
+        Regex(
+            "deposit by transfer from\\s+(mr\\.?|mrs\\.?|ms\\.?|shri)?\\s*([A-Za-z][A-Za-z ]{2,50})",
+            RegexOption.IGNORE_CASE
+        ),
+        Regex(
+            "credited(?:.*)from\\s+(mr\\.?|mrs\\.?|ms\\.?|shri)?\\s*([A-Za-z][A-Za-z ]{2,50})",
+            RegexOption.IGNORE_CASE
+        )
     )
 
     private fun extractPersonName(body: String): String? {
@@ -111,8 +123,8 @@ object MerchantExtractorMl {
         Regex("""\bat\s+([A-Za-z0-9&\-\.\s]{2,50})""", RegexOption.IGNORE_CASE)
 
     private val cityTokens = listOf(
-        "india","bangalore","bengaluru","mumbai","delhi",
-        "chennai","hyderabad","pune","kolkata","ncr","noida","gurgaon"
+        "india", "bangalore", "bengaluru", "mumbai", "delhi",
+        "chennai", "hyderabad", "pune", "kolkata", "ncr", "noida", "gurgaon"
     )
 
     // --------------------------------------------------------------------
@@ -191,9 +203,22 @@ object MerchantExtractorMl {
             .replace(Regex("\\s+"), " ")
 
     private fun cleanSenderName(sender: String): String {
-        val core = sender.split("-", " ").lastOrNull() ?: sender
-        return core.replace(Regex("[^A-Za-z0-9 ]"), "")
+        val parts = sender.split("-", " ", "_")
+            .filter { it.isNotBlank() }
+
+        // Example: JM-HDFCBK-S
+        // parts = ["JM", "HDFCBK", "S"]
+
+        // Prefer the middle segment when available
+        val merchantPart = when {
+            parts.size >= 2 -> parts[parts.size - 2]  // middle
+            else -> parts.last()
+        }
+
+        return merchantPart
+            .replace(Regex("[^A-Za-z0-9 ]"), "")
             .replace(Regex("\\s+"), " ")
             .uppercase()
     }
+
 }

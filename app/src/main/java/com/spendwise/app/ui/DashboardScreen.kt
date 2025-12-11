@@ -277,8 +277,37 @@ fun DashboardScreen(
                         Text(headerText, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
                         Spacer(Modifier.height(12.dp))
 
+                        // ---------------------------------------------------
+// APPLY SORT CONFIG (primary + secondary)
+// ---------------------------------------------------
+                        val sortedList = finalList.sortedWith(
+                            compareBy<SmsEntity> { tx ->
+                                when (sortConfig.primary) {
+                                    SortField.DATE -> tx.timestamp
+                                    SortField.AMOUNT -> tx.amount
+                                }
+                            }.let { comp ->
+                                if (sortConfig.primaryOrder == SortOrder.ASC) comp else comp.reversed()
+                            }
+                                .thenComparator { a, b ->
+                                    val secA: Comparable<*> = when (sortConfig.secondary) {
+                                        SortField.DATE -> a.timestamp
+                                        SortField.AMOUNT -> a.amount
+                                    }
+                                    val secB: Comparable<*> = when (sortConfig.secondary) {
+                                        SortField.DATE -> b.timestamp
+                                        SortField.AMOUNT -> b.amount
+                                    }
+
+                                    val result = compareValues(secA, secB)
+                                    if (sortConfig.secondaryOrder == SortOrder.ASC) result else -result
+                                }
+                        )
+
+
+
                         // ------------------- LIST -------------------
-                        finalList.sortedByDescending { it.timestamp }.forEach { tx ->
+                        sortedList.forEach { tx ->
                             SmsListItem(
                                 sms = tx,
                                 onClick = { viewModel.onMessageClicked(it) },
