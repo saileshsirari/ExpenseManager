@@ -1,4 +1,4 @@
-package com.spendwise.core.extensions
+package com.spendwise.domain.com.spendwise.feature.smsimport.data
 
 
 import com.spendwise.feature.smsimport.data.SmsEntity

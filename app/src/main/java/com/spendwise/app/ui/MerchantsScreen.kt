@@ -25,8 +25,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.spendwise.app.ui.dashboard.MonthSelector
-import com.spendwise.core.extensions.active
-import com.spendwise.core.extensions.inMonth
+import com.spendwise.domain.com.spendwise.feature.smsimport.data.active
+import com.spendwise.domain.com.spendwise.feature.smsimport.data.inMonth
 import com.spendwise.feature.smsimport.ui.SmsImportViewModel
 import java.time.YearMonth
 

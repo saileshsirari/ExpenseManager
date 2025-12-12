@@ -23,8 +23,8 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import com.spendwise.app.ui.dashboard.CategoryPieChart
 import com.spendwise.app.ui.dashboard.DailyBarChart
 import com.spendwise.app.ui.dashboard.MonthSelector
-import com.spendwise.core.extensions.active
-import com.spendwise.core.extensions.inMonth
+import com.spendwise.domain.com.spendwise.feature.smsimport.data.active
+import com.spendwise.domain.com.spendwise.feature.smsimport.data.inMonth
 import com.spendwise.feature.smsimport.ui.SmsImportViewModel
 import java.time.Instant
 import java.time.YearMonth

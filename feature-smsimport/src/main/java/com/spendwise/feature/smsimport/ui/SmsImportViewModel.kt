@@ -8,12 +8,27 @@ import androidx.lifecycle.viewModelScope
 import com.spendwise.core.ml.CategoryType
 import com.spendwise.core.ml.MerchantExtractorMl
 import com.spendwise.core.ml.MlReasonBundle
+import com.spendwise.domain.com.spendwise.feature.smsimport.data.DashboardMode
+import com.spendwise.domain.com.spendwise.feature.smsimport.data.DashboardUiState
+import com.spendwise.domain.com.spendwise.feature.smsimport.data.SortConfig
+import com.spendwise.domain.com.spendwise.feature.smsimport.data.SortField
+import com.spendwise.domain.com.spendwise.feature.smsimport.data.SortOrder
+import com.spendwise.domain.com.spendwise.feature.smsimport.data.active
+import com.spendwise.domain.com.spendwise.feature.smsimport.data.inMonth
+import com.spendwise.domain.com.spendwise.feature.smsimport.data.inQuarter
+import com.spendwise.domain.com.spendwise.feature.smsimport.data.inYear
+import com.spendwise.domain.com.spendwise.feature.smsimport.data.localDate
+import com.spendwise.domain.com.spendwise.feature.smsimport.data.ofType
 import com.spendwise.feature.smsimport.data.SmsEntity
 import com.spendwise.feature.smsimport.repo.SmsRepositoryImpl
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.onEach
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import java.time.Instant
 import java.time.LocalDate
@@ -29,6 +44,144 @@ class SmsImportViewModel @Inject constructor(private val repo: SmsRepositoryImpl
     val items: StateFlow<List<SmsEntity>> = _items
     private val _selectedExplanation = MutableStateFlow<MlReasonBundle?>(null)
     val selectedExplanation = _selectedExplanation
+    private val _uiInputs = MutableStateFlow(UiInputs())
+    private val uiInputs = _uiInputs.asStateFlow()
+
+    data class UiInputs(
+        val sortConfig: SortConfig = SortConfig(),
+        val showInternalTransfers: Boolean = false,
+        val mode: DashboardMode = DashboardMode.MONTH,
+        val period: YearMonth = YearMonth.now(),
+        val selectedType: String? = null,
+        val selectedDay: Int? = null,
+        val selectedMonth: Int? = null,
+    )
+    // FINAL UI STATE (all expensive computation happens here)
+    val uiState: StateFlow<DashboardUiState> =
+        combine (items, uiInputs) { list, input ->
+
+            val base = list.active()
+
+            // PERIOD filter
+            val periodTx = when (input.mode) {
+                DashboardMode.MONTH -> base.inMonth(input.period)
+                DashboardMode.QUARTER -> base.inQuarter(input.period)
+                DashboardMode.YEAR -> base.inYear(input.period.year)
+            }
+
+            // Totals filtering
+            val totalsList = periodTx.filter {
+                !it.isNetZero &&
+                        it.linkType != "INTERNAL_TRANSFER" &&
+                        it.linkType != "POSSIBLE_TRANSFER"
+            }
+
+            val totalDebit = totalsList
+                .filter { it.type.equals("DEBIT", true) }
+                .sumOf { it.amount }
+
+            val totalCredit = totalsList
+                .filter { it.type.equals("CREDIT", true) }
+                .sumOf { it.amount }
+
+            val debitCreditTotals = mapOf(
+                "DEBIT" to totalDebit,
+                "CREDIT" to totalCredit
+            ).filter { it.value > 0 }
+
+            // Bar chart
+            val barData = when (input.mode) {
+                DashboardMode.MONTH ->
+                    periodTx.groupBy { it.localDate().dayOfMonth }
+                        .mapValues { it.value.sumOf { tx -> tx.amount } }
+
+                DashboardMode.QUARTER, DashboardMode.YEAR ->
+                    periodTx.groupBy { it.localDate().monthValue }
+                        .mapValues { it.value.sumOf { tx -> tx.amount } }
+            }
+
+            // Date filter
+            val dateFiltered = when {
+                input.mode == DashboardMode.MONTH && input.selectedDay != null ->
+                    periodTx.filter { it.localDate().dayOfMonth == input.selectedDay }
+                input.mode != DashboardMode.MONTH && input.selectedMonth != null ->
+                    periodTx.filter { it.localDate().monthValue == input.selectedMonth }
+                else -> periodTx
+            }
+
+            // Type filter
+            val typeFiltered = dateFiltered.ofType(input.selectedType)
+
+            val finalList =
+                if (input.showInternalTransfers)
+                    typeFiltered
+                else
+                    typeFiltered.filter {
+                        it.linkType != "INTERNAL_TRANSFER" &&
+                                it.linkType != "POSSIBLE_TRANSFER"
+                    }
+
+            // Sorting
+            val sortedList = finalList.sortedWith(
+                compareBy<SmsEntity> {
+                    when (input.sortConfig.primary) {
+                        SortField.DATE -> it.timestamp
+                        SortField.AMOUNT -> it.amount
+                    }
+                }.let { cmp ->
+                    if (input.sortConfig.primaryOrder == SortOrder.ASC) cmp else cmp.reversed()
+                }.thenComparator { a, b ->
+                    val secA = when (input.sortConfig.secondary) {
+                        SortField.DATE -> a.timestamp
+                        SortField.AMOUNT -> a.amount
+                    }
+                    val secB = when (input.sortConfig.secondary) {
+                        SortField.DATE -> b.timestamp
+                        SortField.AMOUNT -> b.amount
+                    }
+                    val r = compareValues(secA, secB)
+                    if (input.sortConfig.secondaryOrder == SortOrder.ASC) r else -r
+                }
+            )
+
+            DashboardUiState(
+                // mirror inputs so UI reads authoritative mode/period/filter values
+                mode = input.mode,
+                period = input.period,
+                selectedType = input.selectedType,
+                selectedDay = input.selectedDay,
+                selectedMonth = input.selectedMonth,
+                showInternalTransfers = input.showInternalTransfers,
+                sortConfig = input.sortConfig,
+
+                // computed results
+                finalList = finalList,
+                sortedList = sortedList,
+
+                totalsDebit = totalDebit,
+                totalsCredit = totalCredit,
+                debitCreditTotals = debitCreditTotals,
+
+                barData = barData,
+                isLoading = false
+            )
+
+        }
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(3000), DashboardUiState())
+
+    // ---- Expose input update functions ----
+
+    fun updateSort(sort: SortConfig) = update { it.copy(sortConfig = sort) }
+    fun toggleInternalTransfers() = update { it.copy(showInternalTransfers = !it.showInternalTransfers) }
+    fun setMode(m: DashboardMode) = update { it.copy(mode = m) }
+    fun setPeriod(p: YearMonth) = update { it.copy(period = p) }
+    fun setSelectedType(t: String?) = update { it.copy(selectedType = t) }
+    fun setSelectedDay(d: Int?) = update { it.copy(selectedDay = d) }
+    fun setSelectedMonth(m: Int?) = update { it.copy(selectedMonth = m) }
+
+    private fun update(block: (UiInputs) -> UiInputs) {
+        _uiInputs.value = block(_uiInputs.value)
+    }
 
     fun importAll(resolverProvider: () -> ContentResolver) {
         viewModelScope.launch {
