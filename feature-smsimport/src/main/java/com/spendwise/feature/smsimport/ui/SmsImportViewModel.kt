@@ -1,7 +1,7 @@
 package com.spendwise.feature.smsimport.ui
 
+import android.content.ContentResolver
 import android.os.Build
-import com.spendwise.core.Logger as Log
 import androidx.annotation.RequiresApi
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
@@ -13,6 +13,7 @@ import com.spendwise.feature.smsimport.repo.SmsRepositoryImpl
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.launch
 import java.time.Instant
 import java.time.LocalDate
@@ -20,6 +21,7 @@ import java.time.LocalTime
 import java.time.YearMonth
 import java.time.ZoneId
 import javax.inject.Inject
+import com.spendwise.core.Logger as Log
 
 @HiltViewModel
 class SmsImportViewModel @Inject constructor(private val repo: SmsRepositoryImpl) : ViewModel() {
@@ -28,11 +30,16 @@ class SmsImportViewModel @Inject constructor(private val repo: SmsRepositoryImpl
     private val _selectedExplanation = MutableStateFlow<MlReasonBundle?>(null)
     val selectedExplanation = _selectedExplanation
 
-    fun importAll(resolverProvider: () -> android.content.ContentResolver) {
+    fun importAll(resolverProvider: () -> ContentResolver) {
         viewModelScope.launch {
-            repo.importAll(resolverProvider).collect { list ->
-                _items.value = list
-            }
+            repo.importAll(resolverProvider)
+                .onEach { list ->
+                    Log.d("IMPORT", "importAll emitted list size=${list.size}")
+                }
+                .collect { list: List<SmsEntity> ->
+                    Log.d("IMPORT", "Setting _items, size=${list.size}")
+                    _items.value = list
+                }
         }
     }
 

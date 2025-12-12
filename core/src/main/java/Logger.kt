@@ -4,7 +4,7 @@ import android.util.Log
 
 object Logger {
 
-    var enabled = false  // global switch
+    var enabled = true  // global switch
 
     fun d(tag: String, msg: String) {
         if (enabled) Log.d(tag, msg)
