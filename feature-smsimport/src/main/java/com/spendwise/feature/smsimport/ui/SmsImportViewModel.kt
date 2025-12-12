@@ -32,6 +32,7 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import java.time.Instant
@@ -43,9 +44,11 @@ import javax.inject.Inject
 import com.spendwise.core.Logger as Log
 
 @HiltViewModel
-class SmsImportViewModel @Inject constructor(private val repo: SmsRepositoryImpl,
-                                             private val prefs: SmsImportPrefs,
-                                             @ApplicationContext private val context: Context) : ViewModel() {
+class SmsImportViewModel @Inject constructor(
+    private val repo: SmsRepositoryImpl,
+    private val prefs: SmsImportPrefs,
+    @ApplicationContext private val context: Context
+) : ViewModel() {
     private val _items = MutableStateFlow<List<SmsEntity>>(emptyList())
     val items: StateFlow<List<SmsEntity>> = _items
     private val _selectedExplanation = MutableStateFlow<MlReasonBundle?>(null)
@@ -186,7 +189,7 @@ class SmsImportViewModel @Inject constructor(private val repo: SmsRepositoryImpl
                 isLoading = input.isLoading
             )
 
-        }
+        }.flowOn(Dispatchers.Default)
             .stateIn(viewModelScope, SharingStarted.WhileSubscribed(3000), DashboardUiState())
 
     // ---- Expose input update functions ----
