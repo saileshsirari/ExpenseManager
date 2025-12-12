@@ -23,4 +23,5 @@ sealed class Screen(
 
     // ---- FULL-SCREEN NAVIGATION (NO TAB ICONS) ----
     data object AddExpense : Screen("add_expense", "Add Expense")
+    data object Permission : Screen("permission","Permission")
 }

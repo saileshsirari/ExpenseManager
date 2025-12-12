@@ -1,8 +1,5 @@
 package com.spendwise.app.ui
 
-import android.os.Build
-import androidx.annotation.RequiresApi
-import androidx.compose.animation.Crossfade
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -13,8 +10,10 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -26,6 +25,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -35,41 +35,56 @@ import com.spendwise.app.navigation.Screen
 import com.spendwise.app.ui.dashboard.CategoryPieChart
 import com.spendwise.app.ui.dashboard.DailyBarChart
 import com.spendwise.app.ui.dashboard.FixMerchantDialog
-import com.spendwise.core.extensions.active
-import com.spendwise.core.extensions.inMonth
-import com.spendwise.core.extensions.inQuarter
-import com.spendwise.core.extensions.inYear
-import com.spendwise.core.extensions.localDate
 import com.spendwise.core.extensions.nextQuarter
 import com.spendwise.core.extensions.nextYear
-import com.spendwise.core.extensions.ofType
 import com.spendwise.core.extensions.previousQuarter
 import com.spendwise.core.extensions.previousYear
 import com.spendwise.core.extensions.toQuarterTitle
+import com.spendwise.domain.com.spendwise.feature.smsimport.data.DashboardMode
+import com.spendwise.domain.com.spendwise.feature.smsimport.data.FullScreenLoader
+import com.spendwise.domain.com.spendwise.feature.smsimport.data.SortConfig
+import com.spendwise.domain.com.spendwise.feature.smsimport.data.SortField
+import com.spendwise.domain.com.spendwise.feature.smsimport.data.SortOrder
 import com.spendwise.feature.smsimport.data.SmsEntity
 import com.spendwise.feature.smsimport.ui.SmsImportViewModel
 import java.time.YearMonth
+import com.spendwise.core.Logger as Log
 
-enum class DashboardMode { MONTH, QUARTER, YEAR }
-
-@RequiresApi(Build.VERSION_CODES.O)
 @Composable
 fun DashboardScreen(
     navController: NavController,
     viewModel: SmsImportViewModel = hiltViewModel()
 ) {
-    val allTransactions by viewModel.items.collectAsState()
-    var sortConfig by remember { mutableStateOf(SortConfig()) }
+    val uiState by viewModel.uiState.collectAsState()
+    val progress by viewModel.importProgress.collectAsState()
+
+    // Collect in a LaunchedEffect so it runs only once
+    // ✔ Capture context in composable scope
+    Log.e("UISTATE", "isLoading = ${uiState.isLoading}, progress.done = ${progress.done}")
+
+    // ******************************
+    //  IMPORT PROGRESS (1st priority)
+    // ******************************
+    if (!progress.done) {
+        ImportProgressScreen(progress)
+        return
+    }
+
+    // ***********************************
+    //  LOADING STATE AFTER IMPORT FINISHES
+    // ***********************************
+    if (uiState.isLoading) {
+        FullScreenLoader("Preparing your dashboard…")
+        return
+    }
+
+    // ******************************
+    //  MAIN DASHBOARD UI (ready)
+    // ******************************
 
     var showFixDialog by remember { mutableStateOf<SmsEntity?>(null) }
-    var mode by remember { mutableStateOf(DashboardMode.MONTH) }
-    var period by remember { mutableStateOf(YearMonth.now()) }
+    Log.d("RECOMPOSE", "DashboardScreen composed (sorted=${uiState.sortedList.size})")
 
-    var selectedType by remember { mutableStateOf<String?>(null) }
-    var selectedDay by remember { mutableStateOf<Int?>(null) }
-    var selectedMonthFilter by remember { mutableStateOf<Int?>(null) }
-
-    // Fix Merchant Dialog
     showFixDialog?.let { tx ->
         FixMerchantDialog(
             tx = tx,
@@ -83,9 +98,7 @@ fun DashboardScreen(
 
     Scaffold(
         floatingActionButton = {
-            FloatingActionButton(
-                onClick = { navController.navigate(Screen.AddExpense.route) }
-            ) {
+            FloatingActionButton(onClick = { navController.navigate(Screen.AddExpense.route) }) {
                 Icon(Icons.Default.Add, contentDescription = "Add Expense")
             }
         }
@@ -93,292 +106,153 @@ fun DashboardScreen(
 
         LazyColumn(
             modifier = Modifier
-                .fillMaxSize()
                 .padding(padding)
                 .padding(16.dp)
+                .fillMaxSize()
         ) {
 
-            // ------------------- MODE TABS -------------------
+            // MODE SELECTOR
             item {
                 Row {
-                    ModeTab("Month", mode == DashboardMode.MONTH) {
-                        mode = DashboardMode.MONTH
-                        selectedDay = null
-                        selectedMonthFilter = null
-                        selectedType = null
+                    ModeTab(
+                        label = "Month",
+                        selected = uiState.mode == DashboardMode.MONTH
+                    ) {
+                        viewModel.setMode(DashboardMode.MONTH)
+                        viewModel.setSelectedDay(null)
+                        viewModel.setSelectedMonth(null)
+                        viewModel.setSelectedType(null)
                     }
-                    ModeTab("Quarter", mode == DashboardMode.QUARTER) {
-                        mode = DashboardMode.QUARTER
-                        selectedDay = null
-                        selectedMonthFilter = null
-                        selectedType = null
+
+                    ModeTab(
+                        label = "Quarter",
+                        selected = uiState.mode == DashboardMode.QUARTER
+                    ) {
+                        viewModel.setMode(DashboardMode.QUARTER)
+                        viewModel.setSelectedDay(null)
+                        viewModel.setSelectedMonth(null)
+                        viewModel.setSelectedType(null)
                     }
-                    ModeTab("Year", mode == DashboardMode.YEAR) {
-                        mode = DashboardMode.YEAR
-                        selectedDay = null
-                        selectedMonthFilter = null
-                        selectedType = null
+
+                    ModeTab(
+                        label = "Year",
+                        selected = uiState.mode == DashboardMode.YEAR
+                    ) {
+                        viewModel.setMode(DashboardMode.YEAR)
+                        viewModel.setSelectedDay(null)
+                        viewModel.setSelectedMonth(null)
+                        viewModel.setSelectedType(null)
                     }
                 }
                 Spacer(Modifier.height(12.dp))
             }
 
-            // ------------------- PERIOD HEADER -------------------
+            // PERIOD HEADER
             item {
                 PeriodHeader(
-                    mode = mode,
-                    period = period,
+                    mode = uiState.mode,
+                    period = uiState.period,
                     onPeriodChange = { newPeriod ->
-                        period = newPeriod
-                        selectedDay = null
-                        selectedMonthFilter = null
-                        selectedType = null
+                        viewModel.setPeriod(newPeriod)
+                        viewModel.setSelectedDay(null)
+                        viewModel.setSelectedMonth(null)
+                        viewModel.setSelectedType(null)
                     }
                 )
                 Spacer(Modifier.height(16.dp))
             }
 
-            // ------------------- MODE CONTENT -------------------
+            // HEADER SUMMARY + CHARTS + SORT + FILTERS
             item {
-                Crossfade(
-                    targetState = Triple(mode, period, allTransactions),
-                    label = "dashboard-mode-crossfade"
-                ) { (currentMode, currentPeriod, txList) ->
+                Column(modifier = Modifier.fillMaxWidth()) {
 
-                    val base = txList.active()
+                    // Totals
+                    Text("Total Debit: ₹${uiState.totalsDebit.toInt()}", style = MaterialTheme.typography.bodyLarge)
+                    Text("Total Credit: ₹${uiState.totalsCredit.toInt()}", style = MaterialTheme.typography.bodyLarge)
+                    Spacer(Modifier.height(12.dp))
 
-                    // ------------------- RANGE FILTER -------------------
-                    val periodTx = when (currentMode) {
-                        DashboardMode.MONTH -> base.inMonth(currentPeriod)
-                        DashboardMode.QUARTER -> base.inQuarter(currentPeriod)
-                        DashboardMode.YEAR -> base.inYear(currentPeriod.year)
-                    }
+                    // Pie
+                    Text("Debit vs Credit", style = MaterialTheme.typography.titleMedium)
+                    Spacer(Modifier.height(6.dp))
+                    CategoryPieChart(
+                        data = uiState.debitCreditTotals,
+                        onSliceClick = { clicked -> viewModel.setSelectedType(clicked) }
+                    )
+                    Spacer(Modifier.height(16.dp))
 
-                    // ------------------- TOTALS -------------------
-                    val totalDebit = periodTx.filter { it.type.equals("DEBIT", true) }.sumOf { it.amount }
-                    val totalCredit = periodTx.filter { it.type.equals("CREDIT", true) }.sumOf { it.amount }
+                    // Bar chart
+                    Text("Spending", style = MaterialTheme.typography.titleMedium)
+                    Spacer(Modifier.height(6.dp))
+                    DailyBarChart(
+                        data = uiState.barData,
+                        onBarClick = { idx -> viewModel.setSelectedDay(idx) }
+                    )
+                    Spacer(Modifier.height(16.dp))
 
-                    val debitCreditTotals = mapOf(
-                        "DEBIT" to totalDebit,
-                        "CREDIT" to totalCredit
-                    ).filter { it.value > 0.0 }
-
-                    // ------------------- BAR DATA -------------------
-                    val barData: Map<Int, Double> = when (currentMode) {
-                        DashboardMode.MONTH ->
-                            periodTx.groupBy { it.localDate().dayOfMonth }
-                                .mapValues { it.value.sumOf { tx -> tx.amount } }
-
-                        DashboardMode.QUARTER, DashboardMode.YEAR ->
-                            periodTx.groupBy { it.localDate().monthValue }
-                                .mapValues { it.value.sumOf { tx -> tx.amount } }
-                    }
-
-                    // ------------------- FILTERING LOGIC -------------------
-                    val filteredByDate = when {
-                        currentMode == DashboardMode.MONTH && selectedDay != null ->
-                            periodTx.filter { it.localDate().dayOfMonth == selectedDay }
-
-                        currentMode != DashboardMode.MONTH && selectedMonthFilter != null ->
-                            periodTx.filter { it.localDate().monthValue == selectedMonthFilter }
-
-                        else -> periodTx
-                    }
-
-                    val finalList = filteredByDate
-                        .ofType(selectedType)
-                        .sortedWith(
-                            compareBy<SmsEntity> {
-
-                                when (sortConfig.primary) {
-                                    SortField.DATE -> it.timestamp
-                                    SortField.AMOUNT -> it.amount
-                                }
-
-                            }.let {
-                                if (sortConfig.primaryOrder == SortOrder.ASC) it else it.reversed()
-                            }.thenBy {
-
-                                when (sortConfig.secondary) {
-                                    SortField.DATE -> it.timestamp
-                                    SortField.AMOUNT -> it.amount
-                                }
-
-                            }.let {
-                                if (sortConfig.secondaryOrder == SortOrder.ASC) it else it.reversed()
-                            }
+                    // Sorting
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        SortHeader(
+                            sortConfig = uiState.sortConfig,
+                            onSortChange = { viewModel.updateSort(it) }
                         )
-
-
-
-                    // ALWAYS show all results — not recent
-                    val listToShow = finalList
-
-                    Column {
-
-                        // ------------------- TOTALS UI -------------------
-                        Text("Total Debit: ₹${totalDebit.toInt()}", style = MaterialTheme.typography.bodyLarge)
-                        Text("Total Credit: ₹${totalCredit.toInt()}", style = MaterialTheme.typography.bodyLarge)
-                        Spacer(Modifier.height(20.dp))
-
-                        // ------------------- PIE CHART -------------------
-                        Text("Debit vs Credit", style = MaterialTheme.typography.titleMedium)
-                        Spacer(Modifier.height(8.dp))
-
-                        CategoryPieChart(
-                            data = debitCreditTotals,
-                            onSliceClick = { clicked ->
-                                selectedType =
-                                    if (selectedType == clicked) null else clicked
-                                selectedDay = null
-                                selectedMonthFilter = null
-                            }
-                        )
-
-                        Spacer(Modifier.height(20.dp))
-
-                        // ------------------- BAR CHART -------------------
-                        val barTitle = when (currentMode) {
-                            DashboardMode.MONTH -> "Daily Spending"
-                            else -> "Spending by Month"
-                        }
-
-                        Text(barTitle, style = MaterialTheme.typography.titleMedium)
-                        Spacer(Modifier.height(8.dp))
-
-                        DailyBarChart(
-                            data = barData,
-                            onBarClick = { index ->
-                                when (currentMode) {
-                                    DashboardMode.MONTH ->
-                                        selectedDay = if (selectedDay == index) null else index
-
-                                    DashboardMode.QUARTER, DashboardMode.YEAR ->
-                                        selectedMonthFilter = if (selectedMonthFilter == index) null else index
-                                }
-                                selectedType = null
-                            }
-                        )
-
-                        Spacer(Modifier.height(20.dp))
-
-                        // ------------------- HEADER TEXT -------------------
-                        val headerText = when {
-                            currentMode == DashboardMode.MONTH && selectedDay != null ->
-                                "Transactions on $selectedDay"
-
-                            currentMode != DashboardMode.MONTH && selectedMonthFilter != null -> {
-                                val m = java.time.Month.of(selectedMonthFilter!!)
-                                "Transactions in ${m.name.lowercase().replaceFirstChar { it.uppercase() }}"
-                            }
-
-                            selectedType != null ->
-                                "$selectedType Transactions"
-
-                            currentMode == DashboardMode.MONTH ->
-                                "All Transactions This Month"
-
-                            currentMode == DashboardMode.QUARTER ->
-                                "All Transactions This Quarter"
-
-                            currentMode == DashboardMode.YEAR ->
-                                "All Transactions This Year"
-
-                            else -> "Transactions"
-                        }
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(vertical = 6.dp),
-                            horizontalArrangement = Arrangement.SpaceBetween
-                        ) {
-
-                            val dateArrow = if (sortConfig.primary == SortField.DATE)
-                                if (sortConfig.primaryOrder == SortOrder.ASC) "▲" else "▼"
-                            else ""
-
-                            val amountArrow = if (sortConfig.primary == SortField.AMOUNT)
-                                if (sortConfig.primaryOrder == SortOrder.ASC) "▲" else "▼"
-                            else ""
-
-                            // ---- Date Sort Button ----
-                            Column(
-                                modifier = Modifier.clickable {
-                                    sortConfig =
-                                        if (sortConfig.primary == SortField.DATE) {
-                                            // Toggle order
-                                            sortConfig.copy(
-                                                primaryOrder = if (sortConfig.primaryOrder == SortOrder.ASC)
-                                                    SortOrder.DESC else SortOrder.ASC
-                                            )
-                                        } else {
-                                            // Promote DATE → primary
-                                            sortConfig.copy(
-                                                primary = SortField.DATE,
-                                                primaryOrder = SortOrder.DESC,     // default
-                                                secondary = SortField.AMOUNT,
-                                                secondaryOrder = sortConfig.secondaryOrder
-                                            )
-                                        }
-                                }
-                            ) {
-                                Text("Sort: Date $dateArrow", style = MaterialTheme.typography.labelLarge)
-                            }
-
-                            // ---- Amount Sort Button ----
-                            Column(
-                                modifier = Modifier.clickable {
-                                    sortConfig =
-                                        if (sortConfig.primary == SortField.AMOUNT) {
-                                            // Toggle order
-                                            sortConfig.copy(
-                                                primaryOrder = if (sortConfig.primaryOrder == SortOrder.ASC)
-                                                    SortOrder.DESC else SortOrder.ASC
-                                            )
-                                        } else {
-                                            // Promote AMOUNT → primary
-                                            sortConfig.copy(
-                                                primary = SortField.AMOUNT,
-                                                primaryOrder = SortOrder.DESC,
-                                                secondary = SortField.DATE,
-                                                secondaryOrder = sortConfig.secondaryOrder
-                                            )
-                                        }
-                                }
-                            ) {
-                                Text("Sort: Amount $amountArrow", style = MaterialTheme.typography.labelLarge)
-                            }
-                        }
-
-
-                        Text(headerText, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-                        Spacer(Modifier.height(12.dp))
-
-                        // ------------------- LIST -------------------
-                        listToShow.forEach { tx ->
-                            SmsListItem(
-                                sms = tx,
-                                onClick = { viewModel.onMessageClicked(it) },
-                                onRequestMerchantFix = { showFixDialog = it },
-                                onMarkNotExpense = { sms, checked ->
-                                    viewModel.setIgnoredState(sms, checked)
-                                }
-                            )
-                            Spacer(Modifier.height(8.dp))
-                        }
                     }
+
+                    Spacer(Modifier.height(12.dp))
+
+                    // Internal transfers toggle
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { viewModel.toggleInternalTransfers() }
+                    ) {
+                        Checkbox(
+                            checked = uiState.showInternalTransfers,
+                            onCheckedChange = { viewModel.toggleInternalTransfers() }
+                        )
+                        Text("Show internal transfers", style = MaterialTheme.typography.bodyMedium)
+                    }
+
+                    Spacer(Modifier.height(12.dp))
                 }
             }
+
+            item { Spacer(Modifier.height(12.dp)) }
+
+            // Transactions list
+            items(
+                items = uiState.sortedList,
+                key = { it.id }
+            ) { tx ->
+                SmsListItem(
+                    sms = tx,
+                    onClick = { viewModel.onMessageClicked(it) },
+                    onRequestMerchantFix = { showFixDialog = it },
+                    onMarkNotExpense = { item, checked ->
+                        viewModel.setIgnoredState(item, checked)
+                    }
+                )
+                Spacer(Modifier.height(8.dp))
+            }
+
+            item { Spacer(Modifier.height(24.dp)) }
         }
     }
 }
+
+
+// ------------------------------------------------------
+// PERIOD HEADER
+// ------------------------------------------------------
 @Composable
 fun PeriodHeader(
     mode: DashboardMode,
     period: YearMonth,
     onPeriodChange: (YearMonth) -> Unit
 ) {
-
     val title = when (mode) {
         DashboardMode.MONTH -> period.format(
             java.time.format.DateTimeFormatter.ofPattern("MMMM yyyy")
@@ -393,54 +267,94 @@ fun PeriodHeader(
             .padding(vertical = 8.dp),
         horizontalArrangement = Arrangement.SpaceBetween
     ) {
+        Text(title, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
 
-        // ---- Title ----
-        Text(
-            text = title,
-            style = MaterialTheme.typography.titleLarge,
-            fontWeight = FontWeight.Bold
-        )
-
-        // ---- Prev / Next Controls ----
         Row(horizontalArrangement = Arrangement.spacedBy(20.dp)) {
-
-            // PREVIOUS
-            Text(
-                "<",
-                style = MaterialTheme.typography.titleLarge,
-                modifier = Modifier.clickable {
-                    val newPeriod = when (mode) {
-                        DashboardMode.MONTH -> period.minusMonths(1)
-                        DashboardMode.QUARTER -> period.previousQuarter()
-                        DashboardMode.YEAR -> period.previousYear()
-                    }
-                    onPeriodChange(newPeriod)
+            Text("<", modifier = Modifier.clickable {
+                val newPeriod = when (mode) {
+                    DashboardMode.MONTH -> period.minusMonths(1)
+                    DashboardMode.QUARTER -> period.previousQuarter()
+                    DashboardMode.YEAR -> period.previousYear()
                 }
-            )
+                onPeriodChange(newPeriod)
+            })
 
-            // NEXT
-            Text(
-                ">",
-                style = MaterialTheme.typography.titleLarge,
-                modifier = Modifier.clickable {
-                    val newPeriod = when (mode) {
-                        DashboardMode.MONTH -> period.plusMonths(1)
-                        DashboardMode.QUARTER -> period.nextQuarter()
-                        DashboardMode.YEAR -> period.nextYear()
-                    }
-                    onPeriodChange(newPeriod)
+            Text(">", modifier = Modifier.clickable {
+                val newPeriod = when (mode) {
+                    DashboardMode.MONTH -> period.plusMonths(1)
+                    DashboardMode.QUARTER -> period.nextQuarter()
+                    DashboardMode.YEAR -> period.nextYear()
                 }
-            )
+                onPeriodChange(newPeriod)
+            })
         }
     }
 }
-enum class SortField { DATE, AMOUNT }
-enum class SortOrder { ASC, DESC }
 
-data class SortConfig(
-    val primary: SortField = SortField.DATE,
-    val primaryOrder: SortOrder = SortOrder.DESC,
-    val secondary: SortField = SortField.AMOUNT,
-    val secondaryOrder: SortOrder = SortOrder.ASC
-)
 
+// ------------------------------------------------------
+// SORT HEADER
+// ------------------------------------------------------
+@Composable
+fun SortHeader(
+    sortConfig: SortConfig,
+    onSortChange: (SortConfig) -> Unit
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween
+    ) {
+
+        val dateArrow =
+            if (sortConfig.primary == SortField.DATE)
+                if (sortConfig.primaryOrder == SortOrder.ASC) "▲" else "▼"
+            else ""
+
+        Text(
+            text = "Sort: Date $dateArrow",
+            modifier = Modifier.clickable {
+                onSortChange(
+                    if (sortConfig.primary == SortField.DATE) {
+                        sortConfig.copy(
+                            primaryOrder = if (sortConfig.primaryOrder == SortOrder.ASC)
+                                SortOrder.DESC else SortOrder.ASC
+                        )
+                    } else {
+                        sortConfig.copy(
+                            primary = SortField.DATE,
+                            primaryOrder = SortOrder.DESC,
+                            secondary = SortField.AMOUNT
+                        )
+                    }
+                )
+            },
+            style = MaterialTheme.typography.labelLarge
+        )
+
+        val amountArrow =
+            if (sortConfig.primary == SortField.AMOUNT)
+                if (sortConfig.primaryOrder == SortOrder.ASC) "▲" else "▼"
+            else ""
+
+        Text(
+            text = "Sort: Amount $amountArrow",
+            modifier = Modifier.clickable {
+                onSortChange(
+                    if (sortConfig.primary == SortField.AMOUNT) {
+                        sortConfig.copy(
+                            primaryOrder = if (sortConfig.primaryOrder == SortOrder.ASC)
+                                SortOrder.DESC else SortOrder.ASC
+                        )
+                    } else {
+                        sortConfig.copy(
+                            primary = SortField.AMOUNT,
+                            primaryOrder = SortOrder.DESC,
+                            secondary = SortField.DATE
+                        )
+                    }
+                )
+            },
+            style = MaterialTheme.typography.labelLarge
+        )
+    }
+}

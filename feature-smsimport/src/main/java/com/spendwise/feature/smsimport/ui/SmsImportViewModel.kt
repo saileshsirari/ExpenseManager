@@ -1,19 +1,39 @@
-
 package com.spendwise.feature.smsimport.ui
 
+import android.content.ContentResolver
+import android.content.Context
 import android.os.Build
-import android.util.Log
 import androidx.annotation.RequiresApi
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.spendwise.core.ml.CategoryType
 import com.spendwise.core.ml.MerchantExtractorMl
 import com.spendwise.core.ml.MlReasonBundle
+import com.spendwise.domain.com.spendwise.feature.smsimport.data.DashboardMode
+import com.spendwise.domain.com.spendwise.feature.smsimport.data.DashboardUiState
+import com.spendwise.domain.com.spendwise.feature.smsimport.data.SortConfig
+import com.spendwise.domain.com.spendwise.feature.smsimport.data.SortField
+import com.spendwise.domain.com.spendwise.feature.smsimport.data.SortOrder
+import com.spendwise.domain.com.spendwise.feature.smsimport.data.active
+import com.spendwise.domain.com.spendwise.feature.smsimport.data.inMonth
+import com.spendwise.domain.com.spendwise.feature.smsimport.data.inQuarter
+import com.spendwise.domain.com.spendwise.feature.smsimport.data.inYear
+import com.spendwise.domain.com.spendwise.feature.smsimport.data.localDate
+import com.spendwise.domain.com.spendwise.feature.smsimport.data.ofType
+import com.spendwise.feature.smsimport.data.ImportEvent
 import com.spendwise.feature.smsimport.data.SmsEntity
+import com.spendwise.feature.smsimport.prefs.SmsImportPrefs
 import com.spendwise.feature.smsimport.repo.SmsRepositoryImpl
 import dagger.hilt.android.lifecycle.HiltViewModel
+import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import java.time.Instant
 import java.time.LocalDate
@@ -21,29 +41,241 @@ import java.time.LocalTime
 import java.time.YearMonth
 import java.time.ZoneId
 import javax.inject.Inject
+import com.spendwise.core.Logger as Log
 
 @HiltViewModel
-class SmsImportViewModel @Inject constructor(private val repo: SmsRepositoryImpl): ViewModel() {
+class SmsImportViewModel @Inject constructor(
+    private val repo: SmsRepositoryImpl,
+    private val prefs: SmsImportPrefs,
+    @ApplicationContext private val context: Context
+) : ViewModel() {
     private val _items = MutableStateFlow<List<SmsEntity>>(emptyList())
     val items: StateFlow<List<SmsEntity>> = _items
     private val _selectedExplanation = MutableStateFlow<MlReasonBundle?>(null)
     val selectedExplanation = _selectedExplanation
+    private val _uiInputs = MutableStateFlow(UiInputs())
+    private val uiInputs = _uiInputs.asStateFlow()
+    private val _importProgress = MutableStateFlow(ImportProgress())
+    val importProgress = _importProgress.asStateFlow()
 
-    fun importAll(resolverProvider: () -> android.content.ContentResolver) {
-        viewModelScope.launch {
-            repo.importAll(resolverProvider).collect {
-                list -> _items.value = list
+    data class ImportProgress(
+        val total: Int = 0,
+        val processed: Int = 0,
+        val message: String = "",
+        val done: Boolean = false
+    )
+
+    data class UiInputs(
+        val sortConfig: SortConfig = SortConfig(),
+        val showInternalTransfers: Boolean = false,
+        val mode: DashboardMode = DashboardMode.MONTH,
+        val period: YearMonth = YearMonth.now(),
+        val selectedType: String? = null,
+        val selectedDay: Int? = null,
+        val selectedMonth: Int? = null,
+        val isLoading: Boolean = true,
+
+        )
+
+    // FINAL UI STATE (all expensive computation happens here)
+    val uiState: StateFlow<DashboardUiState> =
+        combine(items, uiInputs) { list, input ->
+
+            val base = list.active()
+
+            // PERIOD filter
+            val periodTx = when (input.mode) {
+                DashboardMode.MONTH -> base.inMonth(input.period)
+                DashboardMode.QUARTER -> base.inQuarter(input.period)
+                DashboardMode.YEAR -> base.inYear(input.period.year)
+            }
+
+            // Totals filtering
+            val totalsList = periodTx.filter {
+                !it.isNetZero &&
+                        it.linkType != "INTERNAL_TRANSFER" &&
+                        it.linkType != "POSSIBLE_TRANSFER"
+            }
+
+            val totalDebit = totalsList
+                .filter { it.type.equals("DEBIT", true) }
+                .sumOf { it.amount }
+
+            val totalCredit = totalsList
+                .filter { it.type.equals("CREDIT", true) }
+                .sumOf { it.amount }
+
+            val debitCreditTotals = mapOf(
+                "DEBIT" to totalDebit,
+                "CREDIT" to totalCredit
+            ).filter { it.value > 0 }
+
+            // Bar chart
+            val barData = when (input.mode) {
+                DashboardMode.MONTH ->
+                    periodTx.groupBy { it.localDate().dayOfMonth }
+                        .mapValues { it.value.sumOf { tx -> tx.amount } }
+
+                DashboardMode.QUARTER, DashboardMode.YEAR ->
+                    periodTx.groupBy { it.localDate().monthValue }
+                        .mapValues { it.value.sumOf { tx -> tx.amount } }
+            }
+
+            // Date filter
+            val dateFiltered = when {
+                input.mode == DashboardMode.MONTH && input.selectedDay != null ->
+                    periodTx.filter { it.localDate().dayOfMonth == input.selectedDay }
+
+                input.mode != DashboardMode.MONTH && input.selectedMonth != null ->
+                    periodTx.filter { it.localDate().monthValue == input.selectedMonth }
+
+                else -> periodTx
+            }
+
+            // Type filter
+            val typeFiltered = dateFiltered.ofType(input.selectedType)
+
+            val finalList =
+                if (input.showInternalTransfers)
+                    typeFiltered
+                else
+                    typeFiltered.filter {
+                        it.linkType != "INTERNAL_TRANSFER" &&
+                                it.linkType != "POSSIBLE_TRANSFER"
+                    }
+
+            // Sorting
+            val sortedList = finalList.sortedWith(
+                compareBy<SmsEntity> {
+                    when (input.sortConfig.primary) {
+                        SortField.DATE -> it.timestamp
+                        SortField.AMOUNT -> it.amount
+                    }
+                }.let { cmp ->
+                    if (input.sortConfig.primaryOrder == SortOrder.ASC) cmp else cmp.reversed()
+                }.thenComparator { a, b ->
+                    val secA = when (input.sortConfig.secondary) {
+                        SortField.DATE -> a.timestamp
+                        SortField.AMOUNT -> a.amount
+                    }
+                    val secB = when (input.sortConfig.secondary) {
+                        SortField.DATE -> b.timestamp
+                        SortField.AMOUNT -> b.amount
+                    }
+                    val r = compareValues(secA, secB)
+                    if (input.sortConfig.secondaryOrder == SortOrder.ASC) r else -r
+                }
+            )
+
+            DashboardUiState(
+                // mirror inputs so UI reads authoritative mode/period/filter values
+                mode = input.mode,
+                period = input.period,
+                selectedType = input.selectedType,
+                selectedDay = input.selectedDay,
+                selectedMonth = input.selectedMonth,
+                showInternalTransfers = input.showInternalTransfers,
+                sortConfig = input.sortConfig,
+
+                // computed results
+                finalList = finalList,
+                sortedList = sortedList,
+
+                totalsDebit = totalDebit,
+                totalsCredit = totalCredit,
+                debitCreditTotals = debitCreditTotals,
+
+                barData = barData,
+                isLoading = input.isLoading
+            )
+
+        }.flowOn(Dispatchers.Default)
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(3000), DashboardUiState())
+
+    // ---- Expose input update functions ----
+
+    fun updateSort(sort: SortConfig) = update { it.copy(sortConfig = sort) }
+    fun toggleInternalTransfers() =
+        update { it.copy(showInternalTransfers = !it.showInternalTransfers) }
+
+    fun setMode(m: DashboardMode) = update { it.copy(mode = m) }
+    fun setPeriod(p: YearMonth) = update { it.copy(period = p) }
+    fun setSelectedType(t: String?) = update { it.copy(selectedType = t) }
+    fun setSelectedDay(d: Int?) = update { it.copy(selectedDay = d) }
+    fun setSelectedMonth(m: Int?) = update { it.copy(selectedMonth = m) }
+
+    private fun update(block: (UiInputs) -> UiInputs) {
+        _uiInputs.value = block(_uiInputs.value)
+    }
+
+    fun importAll(resolverProvider: () -> ContentResolver) {
+        viewModelScope.launch(Dispatchers.IO) {
+
+            repo.importAll(resolverProvider).collect { event ->
+
+                when (event) {
+
+                    is ImportEvent.Progress -> {
+                        _importProgress.value = ImportProgress(
+                            total = event.total,
+                            processed = event.processed,
+                            message = event.message,
+                            done = false
+                        )
+                    }
+
+                    is ImportEvent.Finished -> {
+                        _items.value = event.list
+                        prefs.importCompleted = true
+
+                        update { it.copy(isLoading = false) }
+
+                        // 🚀 THE CRITICAL FIX
+                        _importProgress.value = _importProgress.value.copy(done = true)
+                    }
+
+
+                }
             }
         }
     }
+
+
     fun onMessageClicked(tx: SmsEntity) {
         viewModelScope.launch {
+
+            // 1️⃣ Print the clicked SMS raw body
+            Log.d("expense", "\n------ CLICKED SMS ------")
+            Log.d("expense", tx.body)
+            Log.d(
+                "expense",
+                "raw-linkId" + tx.linkId + " tx.linkType " + tx.linkType + " tx.isNetZero " + tx.isNetZero
+            )
+
+            // 2️⃣ If linked, print the paired raw SMS too
+            if (tx.linkId != null) {
+                val all = repo.getAllOnce()  // safe, synchronous DB read
+                val linked = all.filter { it.linkId == tx.linkId && it.id != tx.id }
+
+                Log.d("expense", "\n------ LINKED PAIR (${linked.size}) ------")
+                linked.forEach { pair ->
+                    Log.d("expense", "ID=${pair.id}")
+                    Log.d("expense", pair.body)
+                    Log.d("expense", "---------------------" + pair.linkConfidence)
+                }
+            } else {
+                Log.d("expense", "\n(No linked SMS)")
+            }
+
+            Log.d("expense", "----------------------\n")
+
+            // 3️⃣ Show ML explanation (already existing)
             val log = repo.getMlExplanationFor(tx)
-            Log.d("expense",log.toString())
-            Log.d("expense",tx.body)
+            Log.d("expense", log.toString())
             _selectedExplanation.value = log
         }
     }
+
     fun fixMerchant(tx: SmsEntity, newMerchant: String) {
         viewModelScope.launch {
 
@@ -65,8 +297,7 @@ class SmsImportViewModel @Inject constructor(private val repo: SmsRepositoryImpl
             refresh()
         }
 
-}
-
+    }
 
 
     @RequiresApi(Build.VERSION_CODES.O)
@@ -93,9 +324,11 @@ class SmsImportViewModel @Inject constructor(private val repo: SmsRepositoryImpl
             .toInstant()
             .toEpochMilli()
         Log.d("expense", "Example SMS ts=${items.first().timestamp}")
-        Log.d("expense", "As date=" + Instant.ofEpochMilli(items.first().timestamp)
-            .atZone(ZoneId.systemDefault())
-            .toLocalDate())
+        Log.d(
+            "expense", "As date=" + Instant.ofEpochMilli(items.first().timestamp)
+                .atZone(ZoneId.systemDefault())
+                .toLocalDate()
+        )
         // Filter entries strictly within this month
         val monthly = items.filter { it.timestamp in startMillis..endMillis }
 
@@ -135,6 +368,7 @@ class SmsImportViewModel @Inject constructor(private val repo: SmsRepositoryImpl
         val categoryTotals: Map<String, Double> = emptyMap(),
         val dailyTotals: Map<Int, Double> = emptyMap()
     )
+
     fun refresh() {
         viewModelScope.launch {
             repo.getAll().collect { list ->
@@ -149,11 +383,6 @@ class SmsImportViewModel @Inject constructor(private val repo: SmsRepositoryImpl
             refresh()
         }
     }
-
-
-
-
-
 
 
     fun addManualExpense(
@@ -182,6 +411,7 @@ class SmsImportViewModel @Inject constructor(private val repo: SmsRepositoryImpl
             refresh()
         }
     }
+
     fun setIgnoredState(tx: SmsEntity, ignored: Boolean) {
         viewModelScope.launch {
             repo.setIgnored(tx.id, ignored)
@@ -189,5 +419,37 @@ class SmsImportViewModel @Inject constructor(private val repo: SmsRepositoryImpl
         }
     }
 
+    fun startImportIfNeeded(resolverProvider: () -> ContentResolver) {
+
+        if (!prefs.importCompleted) {
+            // 1) Start loading
+            update { it.copy(isLoading = true) }
+            _importProgress.value = ImportProgress(done = false)
+
+            // 2) Start import
+            importAll(resolverProvider)
+
+        } else {
+            // 1) No import → load DB instantly
+            update { it.copy(isLoading = true) }
+            _importProgress.value = ImportProgress(done = true)  // IMPORTANT
+
+            // 2) Load DB data
+            loadExistingData()
+        }
+    }
+
+
+    fun loadExistingData() {
+        viewModelScope.launch {
+            val list = repo.loadExisting()
+            _items.value = list
+
+            update { it.copy(isLoading = false) }
+
+            // Required for second+ launch (no import progress)
+            _importProgress.value = _importProgress.value.copy(done = true)
+        }
+    }
 
 }

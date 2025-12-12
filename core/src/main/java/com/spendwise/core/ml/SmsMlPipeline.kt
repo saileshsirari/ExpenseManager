@@ -1,4 +1,4 @@
-import android.util.Log
+
 import com.spendwise.core.ml.CategoryClassifierMl
 import com.spendwise.core.ml.ClassifiedTxn
 import com.spendwise.core.ml.IntentClassifierMl
@@ -7,9 +7,9 @@ import com.spendwise.core.ml.MerchantExtractorMl
 import com.spendwise.core.ml.MlReasonBundle
 import com.spendwise.core.ml.RawSms
 import com.spendwise.core.ml.SenderClassifierMl
+import com.spendwise.core.Logger as Log
 
 object SmsMlPipeline {
-
     suspend fun classify(
         raw: RawSms,
         parsedAmount: Double?,
@@ -76,6 +76,9 @@ object SmsMlPipeline {
         ).also { cat ->
             categoryReason.append("Category resolved as ${cat.name}.")
         }
+
+
+
 
         val isCredit = intentType == IntentType.CREDIT || intentType == IntentType.REFUND
 

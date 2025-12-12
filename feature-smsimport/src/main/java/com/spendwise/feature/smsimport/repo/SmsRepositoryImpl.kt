@@ -3,96 +3,109 @@ package com.spendwise.feature.smsimport.repo
 import SmsMlPipeline
 import android.content.ContentResolver
 import android.os.Build
-import android.util.Log
 import androidx.annotation.RequiresApi
+import com.spendwise.core.linked.LinkedTransactionDetector
 import com.spendwise.core.ml.CategoryType
 import com.spendwise.core.ml.IgnorePatternBuilder
 import com.spendwise.core.ml.MerchantExtractorMl
 import com.spendwise.core.ml.MlReasonBundle
 import com.spendwise.core.ml.RawSms
 import com.spendwise.domain.SmsRepository
+import com.spendwise.domain.com.spendwise.feature.smsimport.data.mapper.toDomain
 import com.spendwise.feature.smsimport.SmsParser
 import com.spendwise.feature.smsimport.SmsReaderImpl
 import com.spendwise.feature.smsimport.data.AppDatabase
+import com.spendwise.feature.smsimport.data.ImportEvent
 import com.spendwise.feature.smsimport.data.SmsEntity
 import com.spendwise.feature.smsimport.data.UserMlOverride
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.withContext
 import java.time.LocalDate
 import java.time.ZoneId
 import javax.inject.Inject
+import com.spendwise.core.Logger as Log
 
 class SmsRepositoryImpl @Inject constructor(
-    private val db: AppDatabase
+    private val db: AppDatabase,
+    private val linkedDetector: LinkedTransactionDetector
 ) : SmsRepository {
 
 
     // ------------------------------------------------------------
     // IMPORT ALL
     // ------------------------------------------------------------
-    override suspend fun importAll(resolverProvider: () -> ContentResolver): Flow<List<SmsEntity>> =
+    override suspend fun importAll(resolverProvider: () -> ContentResolver): Flow<ImportEvent> =
         flow {
+
             val resolver = resolverProvider()
 
             // -----------------------------
-            // READ ONLY CURRENT MONTH
+            // READ ONLY LAST FEW MONTHS
             // -----------------------------
             val now = LocalDate.now()
-            val monthStart = now.minusMonths(1).withDayOfMonth(1)
+            val monthStart = now.minusMonths(7).withDayOfMonth(1)
             val monthStartMillis = monthStart
                 .atStartOfDay(ZoneId.systemDefault())
                 .toEpochSecond() * 1000
 
-            // Override lastTimestamp to month-start
-            val lastTimestamp = monthStartMillis - 3600_000L
+            Log.w("expense", "Importing SMS since: $monthStart  ($monthStartMillis)")
 
-            Log.w("expense", "Importing SMS since: $monthStart  ($lastTimestamp)")
 
             // -----------------------------
-            // READ SMS FROM CURRENT MONTH
+            // READ RAW SMS
             // -----------------------------
             val rawList = withContext(Dispatchers.IO) {
-                SmsReaderImpl(resolver).readSince(lastTimestamp)
+                SmsReaderImpl(resolver).readSince(monthStartMillis)
             }
 
-            val ignorePatterns = db.userMlOverrideDao().getIgnorePatterns()
+            val ignorePatterns = db.userMlOverrideDao()
+                .getIgnorePatterns()
                 .map { Regex(it) }
 
-            val classified = rawList.mapNotNull { sms ->
+            val total = rawList.size
+            var processed = 0
 
+            Log.w("expense", "Total SMS read: $total")
+
+
+            // ============================================================
+            // CLASSIFY & SAVE EACH SMS WITH PROGRESS UPDATES
+            // ============================================================
+            val classifiedEntities = mutableListOf<SmsEntity>()
+
+            for (sms in rawList) {
+
+                processed++
+
+                // ---- Progress update event ----
+                emit(
+                    ImportEvent.Progress(
+                        total = total,
+                        processed = processed,
+                        message = "Processing $processed of $total messages"
+                    )
+                )
+
+                // ---- ignore patterns ----
                 val bodyLower = sms.body.lowercase()
-                if(sms.body.startsWith("ICICI Bank Acct XX674 debited for Rs 554.00 ")){
-                    Log.w("expense", sms.body)
-
-                }
-
                 if (ignorePatterns.any { it.containsMatchIn(bodyLower) }) {
-                    Log.w("expense", "IGNORED BY RULE — ${sms.body}")
-                    return@mapNotNull null
+                    continue
                 }
 
                 val amount = SmsParser.parseAmount(sms.body)
-                if (amount == null || amount <= 0) return@mapNotNull null
+                if (amount == null || amount <= 0) continue
 
                 val result = SmsMlPipeline.classify(
                     raw = RawSms(sms.sender, sms.body, sms.timestamp),
                     parsedAmount = amount,
                     overrideProvider = { key ->
-                        val v = db.userMlOverrideDao().getValue(key)
-                        if (v != null) {
-                            Log.d("expense", "import key=$key => $v")
-                        }
-
-                        v
+                        db.userMlOverrideDao().getValue(key)
                     }
-                ) ?: return@mapNotNull null
-                if(sms.body.startsWith("ICICI Bank Acct XX674 debited for Rs 554.00 ")){
-                    Log.w("expense", "reason ${result.explanation}")
-                }
-                SmsEntity(
+                ) ?: continue
+
+                val entity = SmsEntity(
                     sender = result.rawSms.sender,
                     body = result.rawSms.body,
                     timestamp = result.rawSms.timestamp,
@@ -101,16 +114,36 @@ class SmsRepositoryImpl @Inject constructor(
                     type = if (result.isCredit) "CREDIT" else "DEBIT",
                     category = result.category.name
                 )
+                classifiedEntities.add(entity)
             }
 
-            if (classified.isNotEmpty()) {
-                withContext(Dispatchers.IO) {
-                    classified.chunked(300).forEach { db.smsDao().insertAll(it) }
+
+            // ============================================================
+            // WRITE CLASSIFIED ENTITIES TO DB AND RUN LINKED DETECTOR
+            // ============================================================
+            withContext(Dispatchers.IO) {
+                for (entity in classifiedEntities) {
+
+                    // 1) Insert raw classified entity
+                    val id = db.smsDao().insert(entity)
+
+                    // 2) read row
+                    val saved = db.smsDao().getById(id) ?: continue
+                    val coreModel = saved.toDomain()
+
+                    // 3) linked transfer learning / detection
+                    linkedDetector.process(coreModel)
                 }
             }
 
-            emitAll(db.smsDao().getAll())
+
+            // ============================================================
+            // RETURN FINISHED EVENT WITH LIVE DATABASE CONTENT
+            // ============================================================
+            val finalList = db.smsDao().getAllOnce() // you can create this function
+            emit(ImportEvent.Finished(finalList))
         }
+
 
 
     // ------------------------------------------------------------
@@ -184,7 +217,7 @@ class SmsRepositoryImpl @Inject constructor(
             parsedAmount = amount,
             overrideProvider = { key ->
                 val v = db.userMlOverrideDao().getValue(key)
-                if(v!=null) {
+                if (v != null) {
                     Log.d("expense", "exp key=$key => $v")
                 }
                 v
@@ -274,11 +307,20 @@ class SmsRepositoryImpl @Inject constructor(
             )
         )
     }
-   override suspend fun markIgnored(tx: SmsEntity) {
+
+    override suspend fun markIgnored(tx: SmsEntity) {
         val updated = tx.copy(isIgnored = true)
         db.smsDao().update(updated)
     }
-   override suspend fun setIgnored(id: Long, ignored: Boolean) {
+
+    override suspend fun setIgnored(id: Long, ignored: Boolean) {
         db.smsDao().setIgnored(id, if (ignored) 1 else 0)
+    }
+
+    suspend fun getAllOnce(): List<SmsEntity> {
+        return db.smsDao().getAllOnce()
+    }
+    override suspend fun loadExisting(): List<SmsEntity> {
+        return db.smsDao().getAllOnce()
     }
 }

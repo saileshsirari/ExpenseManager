@@ -1,6 +1,6 @@
 package com.spendwise.core.ml.debug
 
-import android.util.Log
+import com.spendwise.core.Logger as Log
 import com.spendwise.core.ml.CategoryType
 import com.spendwise.core.ml.IntentType
 import com.spendwise.core.ml.MlReasonBundle

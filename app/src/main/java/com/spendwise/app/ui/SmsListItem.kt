@@ -1,7 +1,5 @@
 package com.spendwise.app.ui
 
-import android.os.Build
-import androidx.annotation.RequiresApi
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -10,119 +8,151 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.CompareArrows
+import androidx.compose.material.icons.filled.Link
+import androidx.compose.material.icons.filled.Warning
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.Checkbox
+import androidx.compose.material3.ElevatedCard
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.spendwise.feature.smsimport.data.SmsEntity
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
-@RequiresApi(Build.VERSION_CODES.O)
 @Composable
 fun SmsListItem(
     sms: SmsEntity,
-    onClick: (SmsEntity) -> Unit = {},
-    onRequestMerchantFix: (SmsEntity) -> Unit = {},
-    onMarkNotExpense: (SmsEntity, Boolean) -> Unit = { _, _ -> }
+    onClick: (SmsEntity) -> Unit,
+    onRequestMerchantFix: (SmsEntity) -> Unit,
+    onMarkNotExpense: (SmsEntity, Boolean) -> Unit
 ) {
-    var expanded by remember { mutableStateOf(false) }
+    val isLinked = sms.linkId != null && sms.linkType == "INTERNAL_TRANSFER"
+    val isPossible = sms.linkId != null && sms.linkType == "POSSIBLE_TRANSFER"
 
-    androidx.compose.material3.Card(
+    val cardColor = when {
+        isLinked -> Color(0xFFDFF7DF)
+        isPossible -> Color(0xFFFFF3CD)
+        else -> MaterialTheme.colorScheme.surface
+    }
+
+    val dateText = rememberFormattedDate(sms.timestamp)
+
+    ElevatedCard(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(vertical = 6.dp)
-            .clickable {
-                expanded = !expanded
-                onClick(sms)
-            },
-        shape = MaterialTheme.shapes.medium
+            .clickable { onClick(sms) },
+        colors = CardDefaults.elevatedCardColors(containerColor = cardColor),
+        shape = RoundedCornerShape(14.dp),
+        elevation = CardDefaults.cardElevation(defaultElevation = 3.dp)
     ) {
-        Column(modifier = Modifier.padding(12.dp)) {
 
-            // ROW: Merchant + amount
+        Column(Modifier.padding(14.dp)) {
+
+            // ---------- TRANSFER TAG ----------
+            if (isLinked || isPossible) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.padding(bottom = 6.dp)
+                ) {
+                    Icon(
+                        imageVector = if (isLinked) Icons.Default.CompareArrows else Icons.Default.Warning,
+                        contentDescription = null,
+                        tint = if (isLinked) Color(0xFF2E7D32) else Color(0xFFB76E00)
+                    )
+                    Text(
+                        text = if (isLinked) "Internal Transfer" else "Possible Transfer",
+                        color = if (isLinked) Color(0xFF2E7D32) else Color(0xFFB76E00),
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.padding(start = 6.dp)
+                    )
+                }
+            }
+
+            // ---------- MAIN CONTENT ----------
             Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween,
+                modifier = Modifier.fillMaxWidth()
             ) {
-                Text(
-                    sms.merchant ?: sms.sender,
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.SemiBold
-                )
+
+                Column(Modifier.weight(1f)) {
+
+                    Text(
+                        sms.merchant ?: sms.sender,
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 1
+                    )
+
+                    // ⭐ DATE LINE (NEW)
+                    Text(
+                        text = dateText,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = Color.Gray,
+                        modifier = Modifier.padding(top = 2.dp)
+                    )
+
+                    // SMS preview
+                    Text(
+                        sms.body.take(80),
+                        style = MaterialTheme.typography.bodySmall,
+                        maxLines = 2,
+                        modifier = Modifier.padding(top = 4.dp)
+                    )
+                }
 
                 Text(
-                    "₹${sms.amount.toInt()}",
+                    text = "₹${sms.amount.toInt()}",
+                    color = if (sms.type.equals("DEBIT", true)) Color(0xFFD32F2F) else Color(0xFF1B5E20),
                     style = MaterialTheme.typography.titleMedium,
-                    color = if (sms.type.equals("credit", true))
-                        Color(0xFF4CAF50)
-                    else
-                        Color(0xFFE57373)
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.padding(start = 8.dp)
                 )
             }
 
-            // Sub row: category + type
-            Spacer(Modifier.height(4.dp))
-            Text(
-                "${sms.category} • ${sms.type?.uppercase()}",
-                style = MaterialTheme.typography.labelMedium
-            )
+            Spacer(Modifier.height(10.dp))
 
-            // ———————————————
-            // EXPANDED CONTENT
-            // ———————————————
-            if (expanded) {
-                Spacer(Modifier.height(8.dp))
+            // ---------- FOOTER ----------
+            Row(
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.fillMaxWidth()
+            ) {
 
-                Text(
-                    text = sms.body,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = Color.DarkGray
-                )
-
-                Spacer(Modifier.height(8.dp))
-
-                Row(
-                    horizontalArrangement = Arrangement.spacedBy(12.dp),
-                    verticalAlignment = androidx.compose.ui.Alignment.CenterVertically
-                ) {
-                    Text(
-                        "Fix Merchant",
-                        color = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.clickable {
-                            onRequestMerchantFix(sms)
-                        }
-                    )
-
-                    Row(
-                        verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
-                        modifier = Modifier.clickable {
-                            onMarkNotExpense(sms, !sms.isIgnored)  // toggle on label tap
-                        }
-                    ) {
-                        Text(
-                            text = "Not Expense",
-                            style = MaterialTheme.typography.bodyMedium,
-                            modifier = Modifier.padding(end = 6.dp)
-                        )
-
-                        Switch(
-                            checked = sms.isIgnored,
-                            onCheckedChange = { isChecked ->
-                                onMarkNotExpense(sms, isChecked)
-                            }
-                        )
-                    }
+                TextButton(onClick = { onRequestMerchantFix(sms) }) {
+                    Icon(Icons.Default.Link, contentDescription = null)
+                    Text("Fix Merchant", modifier = Modifier.padding(start = 4.dp))
                 }
 
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Checkbox(
+                        checked = sms.isIgnored,
+                        onCheckedChange = { onMarkNotExpense(sms, it) }
+                    )
+                    Text("Not Expense")
+                }
             }
         }
     }
 }
 
+// ------------------------------------------------------
+// Helper: Format timestamp to readable UI date
+// ------------------------------------------------------
+@Composable
+private fun rememberFormattedDate(timestamp: Long): String {
+    val sdf = SimpleDateFormat("dd MMM yyyy • hh:mm a", Locale.getDefault())
+    return sdf.format(Date(timestamp))
+}

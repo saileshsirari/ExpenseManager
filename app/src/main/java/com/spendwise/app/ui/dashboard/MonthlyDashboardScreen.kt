@@ -3,7 +3,7 @@ package com.spendwise.app.ui.dashboard
 import android.Manifest
 import android.content.pm.PackageManager
 import android.os.Build
-import android.util.Log
+import com.spendwise.core.Logger as Log
 import androidx.annotation.RequiresApi
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
