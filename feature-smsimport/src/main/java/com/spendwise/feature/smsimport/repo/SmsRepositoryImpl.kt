@@ -3,7 +3,7 @@ package com.spendwise.feature.smsimport.repo
 import SmsMlPipeline
 import android.content.ContentResolver
 import android.os.Build
-import android.util.Log
+import com.spendwise.core.Logger as Log
 import androidx.annotation.RequiresApi
 import com.spendwise.core.linked.LinkedTransactionDetector
 import com.spendwise.core.ml.CategoryType

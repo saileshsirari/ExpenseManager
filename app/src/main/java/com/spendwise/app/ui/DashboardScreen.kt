@@ -1,7 +1,7 @@
 package com.spendwise.app.ui
 
 import android.os.Build
-import android.util.Log
+import com.spendwise.core.Logger as Log
 import androidx.annotation.RequiresApi
 import androidx.compose.animation.Crossfade
 import androidx.compose.foundation.clickable

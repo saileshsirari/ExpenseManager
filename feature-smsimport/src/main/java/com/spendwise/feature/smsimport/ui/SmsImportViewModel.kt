@@ -1,7 +1,7 @@
 package com.spendwise.feature.smsimport.ui
 
 import android.os.Build
-import android.util.Log
+import com.spendwise.core.Logger as Log
 import androidx.annotation.RequiresApi
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope

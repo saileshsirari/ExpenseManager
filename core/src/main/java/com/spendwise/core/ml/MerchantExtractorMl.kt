@@ -1,6 +1,6 @@
 package com.spendwise.core.ml
 
-import android.util.Log
+import com.spendwise.core.Logger as Log
 
 object MerchantExtractorMl {
 

@@ -1,6 +1,6 @@
 package com.spendwise.core.linked
 
-import android.util.Log
+import com.spendwise.core.Logger as Log
 import com.spendwise.core.model.TransactionCoreModel
 import java.util.UUID
 import kotlin.math.absoluteValue
