@@ -3,7 +3,6 @@ package com.spendwise.feature.smsimport.repo
 import SmsMlPipeline
 import android.content.ContentResolver
 import android.os.Build
-import com.spendwise.core.Logger as Log
 import androidx.annotation.RequiresApi
 import com.spendwise.core.linked.LinkedTransactionDetector
 import com.spendwise.core.ml.CategoryType
@@ -16,16 +15,17 @@ import com.spendwise.domain.com.spendwise.feature.smsimport.data.mapper.toDomain
 import com.spendwise.feature.smsimport.SmsParser
 import com.spendwise.feature.smsimport.SmsReaderImpl
 import com.spendwise.feature.smsimport.data.AppDatabase
+import com.spendwise.feature.smsimport.data.ImportEvent
 import com.spendwise.feature.smsimport.data.SmsEntity
 import com.spendwise.feature.smsimport.data.UserMlOverride
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.withContext
 import java.time.LocalDate
 import java.time.ZoneId
 import javax.inject.Inject
+import com.spendwise.core.Logger as Log
 
 class SmsRepositoryImpl @Inject constructor(
     private val db: AppDatabase,
@@ -36,13 +36,13 @@ class SmsRepositoryImpl @Inject constructor(
     // ------------------------------------------------------------
     // IMPORT ALL
     // ------------------------------------------------------------
-    override suspend fun importAll(resolverProvider: () -> ContentResolver): Flow<List<SmsEntity>> =
+    override suspend fun importAll(resolverProvider: () -> ContentResolver): Flow<ImportEvent> =
         flow {
 
             val resolver = resolverProvider()
 
             // -----------------------------
-            // READ ONLY CURRENT MONTH
+            // READ ONLY LAST FEW MONTHS
             // -----------------------------
             val now = LocalDate.now()
             val monthStart = now.minusMonths(7).withDayOfMonth(1)
@@ -50,36 +50,52 @@ class SmsRepositoryImpl @Inject constructor(
                 .atStartOfDay(ZoneId.systemDefault())
                 .toEpochSecond() * 1000
 
-            val lastTimestamp = monthStartMillis
-
-            Log.w("expense", "Importing SMS since: $monthStart  ($lastTimestamp)")
+            Log.w("expense", "Importing SMS since: $monthStart  ($monthStartMillis)")
 
 
             // -----------------------------
-            // READ SMS SINCE TIMESTAMP
+            // READ RAW SMS
             // -----------------------------
             val rawList = withContext(Dispatchers.IO) {
-                SmsReaderImpl(resolver).readSince(lastTimestamp)
+                SmsReaderImpl(resolver).readSince(monthStartMillis)
             }
 
-            val ignorePatterns = db.userMlOverrideDao().getIgnorePatterns()
+            val ignorePatterns = db.userMlOverrideDao()
+                .getIgnorePatterns()
                 .map { Regex(it) }
 
+            val total = rawList.size
+            var processed = 0
+
+            Log.w("expense", "Total SMS read: $total")
+
 
             // ============================================================
-            // CLASSIFY ALL RAW SMS (no DB write yet)
+            // CLASSIFY & SAVE EACH SMS WITH PROGRESS UPDATES
             // ============================================================
-            val classified = rawList.mapNotNull { sms ->
+            val classifiedEntities = mutableListOf<SmsEntity>()
 
+            for (sms in rawList) {
+
+                processed++
+
+                // ---- Progress update event ----
+                emit(
+                    ImportEvent.Progress(
+                        total = total,
+                        processed = processed,
+                        message = "Processing $processed of $total messages"
+                    )
+                )
+
+                // ---- ignore patterns ----
                 val bodyLower = sms.body.lowercase()
-
                 if (ignorePatterns.any { it.containsMatchIn(bodyLower) }) {
-                    Log.w("expense", "IGNORED BY RULE — ${sms.body}")
-                    return@mapNotNull null
+                    continue
                 }
 
                 val amount = SmsParser.parseAmount(sms.body)
-                if (amount == null || amount <= 0) return@mapNotNull null
+                if (amount == null || amount <= 0) continue
 
                 val result = SmsMlPipeline.classify(
                     raw = RawSms(sms.sender, sms.body, sms.timestamp),
@@ -87,9 +103,9 @@ class SmsRepositoryImpl @Inject constructor(
                     overrideProvider = { key ->
                         db.userMlOverrideDao().getValue(key)
                     }
-                ) ?: return@mapNotNull null
+                ) ?: continue
 
-                SmsEntity(
+                val entity = SmsEntity(
                     sender = result.rawSms.sender,
                     body = result.rawSms.body,
                     timestamp = result.rawSms.timestamp,
@@ -98,34 +114,34 @@ class SmsRepositoryImpl @Inject constructor(
                     type = if (result.isCredit) "CREDIT" else "DEBIT",
                     category = result.category.name
                 )
+                classifiedEntities.add(entity)
             }
 
 
             // ============================================================
-            // SAVE EACH SMS TO DB AND CALL LINKED-DETECTOR
+            // WRITE CLASSIFIED ENTITIES TO DB AND RUN LINKED DETECTOR
             // ============================================================
             withContext(Dispatchers.IO) {
+                for (entity in classifiedEntities) {
 
-                for (entity in classified) {
-
-                    // 1) insert row
+                    // 1) Insert raw classified entity
                     val id = db.smsDao().insert(entity)
 
-                    // 2) read back saved row with all defaults (id, link fields etc.)
+                    // 2) read row
                     val saved = db.smsDao().getById(id) ?: continue
-
-                    // 3) convert entity -> domain model
                     val coreModel = saved.toDomain()
 
-                    // 4) run linked-transaction detector (clean architecture)
+                    // 3) linked transfer learning / detection
                     linkedDetector.process(coreModel)
                 }
             }
 
+
             // ============================================================
-            // RETURN LIVE FLOW OF ALL SMS
+            // RETURN FINISHED EVENT WITH LIVE DATABASE CONTENT
             // ============================================================
-            emitAll(db.smsDao().getAll())
+            val finalList = db.smsDao().getAllOnce() // you can create this function
+            emit(ImportEvent.Finished(finalList))
         }
 
 
@@ -304,5 +320,7 @@ class SmsRepositoryImpl @Inject constructor(
     suspend fun getAllOnce(): List<SmsEntity> {
         return db.smsDao().getAllOnce()
     }
-
+    override suspend fun loadExisting(): List<SmsEntity> {
+        return db.smsDao().getAllOnce()
+    }
 }

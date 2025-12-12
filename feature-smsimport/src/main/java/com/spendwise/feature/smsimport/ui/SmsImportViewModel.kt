@@ -1,6 +1,7 @@
 package com.spendwise.feature.smsimport.ui
 
 import android.content.ContentResolver
+import android.content.Context
 import android.os.Build
 import androidx.annotation.RequiresApi
 import androidx.lifecycle.ViewModel
@@ -19,15 +20,18 @@ import com.spendwise.domain.com.spendwise.feature.smsimport.data.inQuarter
 import com.spendwise.domain.com.spendwise.feature.smsimport.data.inYear
 import com.spendwise.domain.com.spendwise.feature.smsimport.data.localDate
 import com.spendwise.domain.com.spendwise.feature.smsimport.data.ofType
+import com.spendwise.feature.smsimport.data.ImportEvent
 import com.spendwise.feature.smsimport.data.SmsEntity
+import com.spendwise.feature.smsimport.prefs.SmsImportPrefs
 import com.spendwise.feature.smsimport.repo.SmsRepositoryImpl
 import dagger.hilt.android.lifecycle.HiltViewModel
+import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
-import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import java.time.Instant
@@ -39,13 +43,24 @@ import javax.inject.Inject
 import com.spendwise.core.Logger as Log
 
 @HiltViewModel
-class SmsImportViewModel @Inject constructor(private val repo: SmsRepositoryImpl) : ViewModel() {
+class SmsImportViewModel @Inject constructor(private val repo: SmsRepositoryImpl,
+                                             private val prefs: SmsImportPrefs,
+                                             @ApplicationContext private val context: Context) : ViewModel() {
     private val _items = MutableStateFlow<List<SmsEntity>>(emptyList())
     val items: StateFlow<List<SmsEntity>> = _items
     private val _selectedExplanation = MutableStateFlow<MlReasonBundle?>(null)
     val selectedExplanation = _selectedExplanation
     private val _uiInputs = MutableStateFlow(UiInputs())
     private val uiInputs = _uiInputs.asStateFlow()
+    private val _importProgress = MutableStateFlow(ImportProgress())
+    val importProgress = _importProgress.asStateFlow()
+
+    data class ImportProgress(
+        val total: Int = 0,
+        val processed: Int = 0,
+        val message: String = "",
+        val done: Boolean = false
+    )
 
     data class UiInputs(
         val sortConfig: SortConfig = SortConfig(),
@@ -55,10 +70,13 @@ class SmsImportViewModel @Inject constructor(private val repo: SmsRepositoryImpl
         val selectedType: String? = null,
         val selectedDay: Int? = null,
         val selectedMonth: Int? = null,
-    )
+        val isLoading: Boolean = true,
+
+        )
+
     // FINAL UI STATE (all expensive computation happens here)
     val uiState: StateFlow<DashboardUiState> =
-        combine (items, uiInputs) { list, input ->
+        combine(items, uiInputs) { list, input ->
 
             val base = list.active()
 
@@ -104,8 +122,10 @@ class SmsImportViewModel @Inject constructor(private val repo: SmsRepositoryImpl
             val dateFiltered = when {
                 input.mode == DashboardMode.MONTH && input.selectedDay != null ->
                     periodTx.filter { it.localDate().dayOfMonth == input.selectedDay }
+
                 input.mode != DashboardMode.MONTH && input.selectedMonth != null ->
                     periodTx.filter { it.localDate().monthValue == input.selectedMonth }
+
                 else -> periodTx
             }
 
@@ -163,7 +183,7 @@ class SmsImportViewModel @Inject constructor(private val repo: SmsRepositoryImpl
                 debitCreditTotals = debitCreditTotals,
 
                 barData = barData,
-                isLoading = false
+                isLoading = input.isLoading
             )
 
         }
@@ -172,7 +192,9 @@ class SmsImportViewModel @Inject constructor(private val repo: SmsRepositoryImpl
     // ---- Expose input update functions ----
 
     fun updateSort(sort: SortConfig) = update { it.copy(sortConfig = sort) }
-    fun toggleInternalTransfers() = update { it.copy(showInternalTransfers = !it.showInternalTransfers) }
+    fun toggleInternalTransfers() =
+        update { it.copy(showInternalTransfers = !it.showInternalTransfers) }
+
     fun setMode(m: DashboardMode) = update { it.copy(mode = m) }
     fun setPeriod(p: YearMonth) = update { it.copy(period = p) }
     fun setSelectedType(t: String?) = update { it.copy(selectedType = t) }
@@ -184,17 +206,37 @@ class SmsImportViewModel @Inject constructor(private val repo: SmsRepositoryImpl
     }
 
     fun importAll(resolverProvider: () -> ContentResolver) {
-        viewModelScope.launch {
-            repo.importAll(resolverProvider)
-                .onEach { list ->
-                    Log.d("IMPORT", "importAll emitted list size=${list.size}")
+        viewModelScope.launch(Dispatchers.IO) {
+
+            repo.importAll(resolverProvider).collect { event ->
+
+                when (event) {
+
+                    is ImportEvent.Progress -> {
+                        _importProgress.value = ImportProgress(
+                            total = event.total,
+                            processed = event.processed,
+                            message = event.message,
+                            done = false
+                        )
+                    }
+
+                    is ImportEvent.Finished -> {
+                        _items.value = event.list
+                        prefs.importCompleted = true
+
+                        update { it.copy(isLoading = false) }
+
+                        // 🚀 THE CRITICAL FIX
+                        _importProgress.value = _importProgress.value.copy(done = true)
+                    }
+
+
                 }
-                .collect { list: List<SmsEntity> ->
-                    Log.d("IMPORT", "Setting _items, size=${list.size}")
-                    _items.value = list
-                }
+            }
         }
     }
+
 
     fun onMessageClicked(tx: SmsEntity) {
         viewModelScope.launch {
@@ -374,5 +416,37 @@ class SmsImportViewModel @Inject constructor(private val repo: SmsRepositoryImpl
         }
     }
 
+    fun startImportIfNeeded(resolverProvider: () -> ContentResolver) {
+
+        if (!prefs.importCompleted) {
+            // 1) Start loading
+            update { it.copy(isLoading = true) }
+            _importProgress.value = ImportProgress(done = false)
+
+            // 2) Start import
+            importAll(resolverProvider)
+
+        } else {
+            // 1) No import → load DB instantly
+            update { it.copy(isLoading = true) }
+            _importProgress.value = ImportProgress(done = true)  // IMPORTANT
+
+            // 2) Load DB data
+            loadExistingData()
+        }
+    }
+
+
+    fun loadExistingData() {
+        viewModelScope.launch {
+            val list = repo.loadExisting()
+            _items.value = list
+
+            update { it.copy(isLoading = false) }
+
+            // Required for second+ launch (no import progress)
+            _importProgress.value = _importProgress.value.copy(done = true)
+        }
+    }
 
 }

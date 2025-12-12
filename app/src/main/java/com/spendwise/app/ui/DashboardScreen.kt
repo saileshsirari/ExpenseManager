@@ -1,8 +1,5 @@
 package com.spendwise.app.ui
 
-
-import android.os.Build
-import androidx.annotation.RequiresApi
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -44,6 +41,7 @@ import com.spendwise.core.extensions.previousQuarter
 import com.spendwise.core.extensions.previousYear
 import com.spendwise.core.extensions.toQuarterTitle
 import com.spendwise.domain.com.spendwise.feature.smsimport.data.DashboardMode
+import com.spendwise.domain.com.spendwise.feature.smsimport.data.FullScreenLoader
 import com.spendwise.domain.com.spendwise.feature.smsimport.data.SortConfig
 import com.spendwise.domain.com.spendwise.feature.smsimport.data.SortField
 import com.spendwise.domain.com.spendwise.feature.smsimport.data.SortOrder
@@ -52,23 +50,41 @@ import com.spendwise.feature.smsimport.ui.SmsImportViewModel
 import java.time.YearMonth
 import com.spendwise.core.Logger as Log
 
-@RequiresApi(Build.VERSION_CODES.O)
 @Composable
 fun DashboardScreen(
     navController: NavController,
     viewModel: SmsImportViewModel = hiltViewModel()
 ) {
-    // Read the single uiState from ViewModel
     val uiState by viewModel.uiState.collectAsState()
+    val progress by viewModel.importProgress.collectAsState()
 
-    // Local UI state for ephemeral UI controls
+    // Collect in a LaunchedEffect so it runs only once
+    // ✔ Capture context in composable scope
+    Log.e("UISTATE", "isLoading = ${uiState.isLoading}, progress.done = ${progress.done}")
+
+    // ******************************
+    //  IMPORT PROGRESS (1st priority)
+    // ******************************
+    if (!progress.done) {
+        ImportProgressScreen(progress)
+        return
+    }
+
+    // ***********************************
+    //  LOADING STATE AFTER IMPORT FINISHES
+    // ***********************************
+    if (uiState.isLoading) {
+        FullScreenLoader("Preparing your dashboard…")
+        return
+    }
+
+    // ******************************
+    //  MAIN DASHBOARD UI (ready)
+    // ******************************
+
     var showFixDialog by remember { mutableStateOf<SmsEntity?>(null) }
-    var showTransfersOnly by remember { mutableStateOf(false) }
-
-    // Light debug to verify composition frequency (not spammy)
     Log.d("RECOMPOSE", "DashboardScreen composed (sorted=${uiState.sortedList.size})")
 
-    // Fix Merchant Dialog
     showFixDialog?.let { tx ->
         FixMerchantDialog(
             tx = tx,
@@ -79,14 +95,6 @@ fun DashboardScreen(
             onDismiss = { showFixDialog = null }
         )
     }
-
-    // Derive a few local values from uiState for readability
-    val totalDebit = uiState.totalsDebit
-    val totalCredit = uiState.totalsCredit
-    val debitCreditTotals = uiState.debitCreditTotals
-    val barData = uiState.barData
-    val sortedList = uiState.sortedList
-    val finalList = uiState.finalList
 
     Scaffold(
         floatingActionButton = {
@@ -103,8 +111,7 @@ fun DashboardScreen(
                 .fillMaxSize()
         ) {
 
-            // ------------------- MODE SELECTOR -------------------
-            // ------------------- MODE SELECTOR -------------------
+            // MODE SELECTOR
             item {
                 Row {
                     ModeTab(
@@ -140,12 +147,8 @@ fun DashboardScreen(
                 Spacer(Modifier.height(12.dp))
             }
 
-
-            // ------------------- PERIOD HEADER -------------------
+            // PERIOD HEADER
             item {
-                // We need to read current period from ViewModel UiInputs; UiState doesn't expose the inputs object,
-                // so we call viewModel.setPeriod when user clicks prev/next. For display, we'll keep a local representation.
-                // Safer approach is to expose inputs from ViewModel; if not available, we'll show YearMonth.now()
                 PeriodHeader(
                     mode = uiState.mode,
                     period = uiState.period,
@@ -159,105 +162,69 @@ fun DashboardScreen(
                 Spacer(Modifier.height(16.dp))
             }
 
-            // ------------------- TOTALS / CHARTS / FILTERS (header section) -------------------
+            // HEADER SUMMARY + CHARTS + SORT + FILTERS
             item {
-                Column {
+                Column(modifier = Modifier.fillMaxWidth()) {
+
                     // Totals
-                    Text(
-                        "Total Debit: ₹${totalDebit.toInt()}",
-                        style = MaterialTheme.typography.bodyLarge
-                    )
-                    Text(
-                        "Total Credit: ₹${totalCredit.toInt()}",
-                        style = MaterialTheme.typography.bodyLarge
-                    )
-                    Spacer(Modifier.height(20.dp))
+                    Text("Total Debit: ₹${uiState.totalsDebit.toInt()}", style = MaterialTheme.typography.bodyLarge)
+                    Text("Total Credit: ₹${uiState.totalsCredit.toInt()}", style = MaterialTheme.typography.bodyLarge)
+                    Spacer(Modifier.height(12.dp))
 
-                    // PIE
+                    // Pie
                     Text("Debit vs Credit", style = MaterialTheme.typography.titleMedium)
-                    Spacer(Modifier.height(8.dp))
+                    Spacer(Modifier.height(6.dp))
                     CategoryPieChart(
-                        data = debitCreditTotals,
-                        onSliceClick = { clicked ->
-                            // trigger ViewModel to set selected type
-                            viewModel.setSelectedType(if (uiState.finalList.any { it.type == clicked }) clicked else null)
-                        }
+                        data = uiState.debitCreditTotals,
+                        onSliceClick = { clicked -> viewModel.setSelectedType(clicked) }
                     )
-                    Spacer(Modifier.height(20.dp))
+                    Spacer(Modifier.height(16.dp))
 
-                    // BAR CHART
-                    Text(
-                        text = if (uiState.finalList.isNotEmpty()) "Spending" else "Spending",
-                        style = MaterialTheme.typography.titleMedium
-                    )
-                    Spacer(Modifier.height(8.dp))
-
+                    // Bar chart
+                    Text("Spending", style = MaterialTheme.typography.titleMedium)
+                    Spacer(Modifier.height(6.dp))
                     DailyBarChart(
-                        data = barData,
-                        onBarClick = { idx ->
-                            // set day/month in view model
-                            viewModel.setSelectedDay(if (uiState.finalList.any()) idx else null)
-                        }
+                        data = uiState.barData,
+                        onBarClick = { idx -> viewModel.setSelectedDay(idx) }
                     )
+                    Spacer(Modifier.height(16.dp))
 
-                    Spacer(Modifier.height(20.dp))
-
-                    // SORT + TRANSFER TOGGLE
+                    // Sorting
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
                         SortHeader(
                             sortConfig = uiState.sortConfig,
-                            onSortChange = { newSort -> viewModel.updateSort(newSort) }
-                        )
-
-                        Text(
-                            text = if (showTransfersOnly) "Transfers ✓" else "Transfers",
-                            modifier = Modifier
-                                .padding(start = 12.dp)
-                                .clickable {
-                                    showTransfersOnly = !showTransfersOnly
-                                    // no-op: showTransfersOnly is local; you can also push state to viewModel if desired
-                                },
-                            style = MaterialTheme.typography.labelLarge,
-                            fontWeight = if (showTransfersOnly) FontWeight.Bold else FontWeight.Normal
+                            onSortChange = { viewModel.updateSort(it) }
                         )
                     }
 
                     Spacer(Modifier.height(12.dp))
 
-                    // Show internal toggle
-                    // Show internal toggle
+                    // Internal transfers toggle
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(bottom = 8.dp)
                             .clickable { viewModel.toggleInternalTransfers() }
                     ) {
                         Checkbox(
                             checked = uiState.showInternalTransfers,
                             onCheckedChange = { viewModel.toggleInternalTransfers() }
                         )
-                        Text(
-                            text = "Show internal transfers",
-                            style = MaterialTheme.typography.bodyMedium,
-                            fontWeight = FontWeight.Medium
-                        )
+                        Text("Show internal transfers", style = MaterialTheme.typography.bodyMedium)
                     }
 
-                    Spacer(Modifier.height(8.dp))
+                    Spacer(Modifier.height(12.dp))
                 }
-
             }
 
-            // Separator
             item { Spacer(Modifier.height(12.dp)) }
 
-            // ------------------- TRANSACTION LIST -------------------
+            // Transactions list
             items(
-                items = sortedList,
+                items = uiState.sortedList,
                 key = { it.id }
             ) { tx ->
                 SmsListItem(
@@ -271,21 +238,15 @@ fun DashboardScreen(
                 Spacer(Modifier.height(8.dp))
             }
 
-            // bottom padding
             item { Spacer(Modifier.height(24.dp)) }
         }
     }
 }
 
-/* ---------- Rest of file unchanged (PeriodHeader, SortHeader, enums, data classes) ---------- */
 
-// Note: The code above assumes ModeTab and other small helpers are available as in your repo.
-// If ModeTab signature expects (label: String, selected: Boolean, onClick: () -> Unit) the placeholder
-// ModeTab usages earlier should be reconciled to your real ModeTab implementation.
-
-
-/* ---------- Rest of file unchanged (PeriodHeader, SortHeader, enums, data classes) ---------- */
-
+// ------------------------------------------------------
+// PERIOD HEADER
+// ------------------------------------------------------
 @Composable
 fun PeriodHeader(
     mode: DashboardMode,
@@ -306,49 +267,34 @@ fun PeriodHeader(
             .padding(vertical = 8.dp),
         horizontalArrangement = Arrangement.SpaceBetween
     ) {
+        Text(title, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
 
-        // ---- Title ----
-        Text(
-            text = title,
-            style = MaterialTheme.typography.titleLarge,
-            fontWeight = FontWeight.Bold
-        )
-
-        // ---- Prev / Next Controls ----
         Row(horizontalArrangement = Arrangement.spacedBy(20.dp)) {
-
-            // PREVIOUS
-            Text(
-                "<",
-                style = MaterialTheme.typography.titleLarge,
-                modifier = Modifier.clickable {
-                    val newPeriod = when (mode) {
-                        DashboardMode.MONTH -> period.minusMonths(1)
-                        DashboardMode.QUARTER -> period.previousQuarter()
-                        DashboardMode.YEAR -> period.previousYear()
-                    }
-                    onPeriodChange(newPeriod)
+            Text("<", modifier = Modifier.clickable {
+                val newPeriod = when (mode) {
+                    DashboardMode.MONTH -> period.minusMonths(1)
+                    DashboardMode.QUARTER -> period.previousQuarter()
+                    DashboardMode.YEAR -> period.previousYear()
                 }
-            )
+                onPeriodChange(newPeriod)
+            })
 
-            // NEXT
-            Text(
-                ">",
-                style = MaterialTheme.typography.titleLarge,
-                modifier = Modifier.clickable {
-                    val newPeriod = when (mode) {
-                        DashboardMode.MONTH -> period.plusMonths(1)
-                        DashboardMode.QUARTER -> period.nextQuarter()
-                        DashboardMode.YEAR -> period.nextYear()
-                    }
-                    onPeriodChange(newPeriod)
+            Text(">", modifier = Modifier.clickable {
+                val newPeriod = when (mode) {
+                    DashboardMode.MONTH -> period.plusMonths(1)
+                    DashboardMode.QUARTER -> period.nextQuarter()
+                    DashboardMode.YEAR -> period.nextYear()
                 }
-            )
+                onPeriodChange(newPeriod)
+            })
         }
     }
 }
 
 
+// ------------------------------------------------------
+// SORT HEADER
+// ------------------------------------------------------
 @Composable
 fun SortHeader(
     sortConfig: SortConfig,
@@ -359,7 +305,6 @@ fun SortHeader(
         horizontalArrangement = Arrangement.SpaceBetween
     ) {
 
-        // ---- DATE SORT BUTTON ----
         val dateArrow =
             if (sortConfig.primary == SortField.DATE)
                 if (sortConfig.primaryOrder == SortOrder.ASC) "▲" else "▼"
@@ -368,21 +313,17 @@ fun SortHeader(
         Text(
             text = "Sort: Date $dateArrow",
             modifier = Modifier.clickable {
-
                 onSortChange(
                     if (sortConfig.primary == SortField.DATE) {
-                        // Toggle ASC <-> DESC
                         sortConfig.copy(
                             primaryOrder = if (sortConfig.primaryOrder == SortOrder.ASC)
                                 SortOrder.DESC else SortOrder.ASC
                         )
                     } else {
-                        // Promote DATE to primary
                         sortConfig.copy(
                             primary = SortField.DATE,
                             primaryOrder = SortOrder.DESC,
-                            secondary = SortField.AMOUNT,
-                            secondaryOrder = sortConfig.secondaryOrder
+                            secondary = SortField.AMOUNT
                         )
                     }
                 )
@@ -390,7 +331,6 @@ fun SortHeader(
             style = MaterialTheme.typography.labelLarge
         )
 
-        // ---- AMOUNT SORT BUTTON ----
         val amountArrow =
             if (sortConfig.primary == SortField.AMOUNT)
                 if (sortConfig.primaryOrder == SortOrder.ASC) "▲" else "▼"
@@ -399,21 +339,17 @@ fun SortHeader(
         Text(
             text = "Sort: Amount $amountArrow",
             modifier = Modifier.clickable {
-
                 onSortChange(
                     if (sortConfig.primary == SortField.AMOUNT) {
-                        // Toggle ASC <-> DESC
                         sortConfig.copy(
                             primaryOrder = if (sortConfig.primaryOrder == SortOrder.ASC)
                                 SortOrder.DESC else SortOrder.ASC
                         )
                     } else {
-                        // Promote AMOUNT to primary
                         sortConfig.copy(
                             primary = SortField.AMOUNT,
                             primaryOrder = SortOrder.DESC,
-                            secondary = SortField.DATE,
-                            secondaryOrder = sortConfig.secondaryOrder
+                            secondary = SortField.DATE
                         )
                     }
                 )
@@ -422,5 +358,3 @@ fun SortHeader(
         )
     }
 }
-
-
