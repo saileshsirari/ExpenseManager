@@ -228,6 +228,7 @@ fun DashboardScreen(
                     Spacer(Modifier.height(12.dp))
 
                     // Show internal toggle
+                    // Show internal toggle
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
                         modifier = Modifier
@@ -236,12 +237,13 @@ fun DashboardScreen(
                             .clickable { viewModel.toggleInternalTransfers() }
                     ) {
                         Checkbox(
-                            checked = uiState.finalList !== uiState.finalList, // placeholder to avoid compile-time issue; main state toggles in ViewModel
+                            checked = uiState.showInternalTransfers,
                             onCheckedChange = { viewModel.toggleInternalTransfers() }
                         )
                         Text(
                             text = "Show internal transfers",
-                            style = MaterialTheme.typography.bodyMedium
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.Medium
                         )
                     }
 
