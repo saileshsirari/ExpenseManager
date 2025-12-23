@@ -81,6 +81,7 @@ fun DashboardScreen(
     // ******************************
     //  MAIN DASHBOARD UI (ready)
     // ******************************
+    val categories by viewModel.categoryTotals.collectAsState()
 
     var showFixDialog by remember { mutableStateOf<SmsEntity?>(null) }
     Log.d("RECOMPOSE", "DashboardScreen composed (sorted=${uiState.sortedList.size})")
@@ -175,8 +176,13 @@ fun DashboardScreen(
                     Text("Debit vs Credit", style = MaterialTheme.typography.titleMedium)
                     Spacer(Modifier.height(6.dp))
                     CategoryPieChart(
-                        data = uiState.debitCreditTotals,
-                        onSliceClick = { clicked -> viewModel.setSelectedType(clicked) }
+                        data = categories.map { it.total },      // List<Double>
+                        labels = categories.map { it.name },     // List<String>
+                        colors = categories.map { it.color },    // List<Color>
+                        selectedLabel = "",
+                        onSliceClick = { clicked ->
+                           // selectedCategory = if (selectedCategory == clicked) null else clicked
+                        }
                     )
                     Spacer(Modifier.height(16.dp))
 

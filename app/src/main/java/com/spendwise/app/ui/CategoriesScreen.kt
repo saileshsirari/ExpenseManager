@@ -38,6 +38,7 @@ fun CategoriesScreen(
     val allTransactions by viewModel.items.collectAsState()
     var month by remember { mutableStateOf(YearMonth.now()) }
     var selectedCategory by remember { mutableStateOf<String?>(null) }
+    val categories by viewModel.categoryTotals.collectAsState()
 
     val monthTx = allTransactions
         .active()
@@ -96,16 +97,23 @@ fun CategoriesScreen(
             Text("Category Breakdown", style = MaterialTheme.typography.titleMedium)
             Spacer(Modifier.height(8.dp))
 
+
+
             CategoryPieChart(
-                data = categoryTotals,
+                data = categories.map { it.total },      // List<Double>
+                labels = categories.map { it.name },     // List<String>
+                colors = categories.map { it.color },    // List<Color>
+                selectedLabel = selectedCategory,
                 onSliceClick = { clicked ->
                     selectedCategory = if (selectedCategory == clicked) null else clicked
                 }
             )
-            Spacer(Modifier.height(20.dp))
-        }
 
-        item {
+            Spacer(Modifier.height(20.dp))
+            }
+
+
+            item {
             Text(
                 text = if (selectedCategory == null)
                     "Daily Spending (All Categories)"

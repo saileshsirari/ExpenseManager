@@ -34,27 +34,26 @@ fun SpendWiseApp() {
     ) { granted ->
         if (granted) {
             viewModel.startImportIfNeeded { context.contentResolver }
-            navController.navigate(Screen.Dashboard.route) {
+            navController.navigate(Screen.DashboardNew.route) {
                 popUpTo(Screen.Permission.route) { inclusive = true }
             }
         }
     }
 
-    // ALWAYS render NavHost
     Scaffold(
-        bottomBar = {
-            if (hasPermission) {
-                SpendWiseBottomBar(navController)
-            }
-        }
+
     ) { padding ->
 
         NavHost(
             navController = navController,
-            startDestination = if (hasPermission) Screen.Dashboard.route else Screen.Permission.route,
+            startDestination = if (hasPermission)
+                Screen.DashboardNew.route
+            else
+                Screen.Permission.route,
             modifier = Modifier.padding(padding)
         ) {
 
+            /* PERMISSION SCREEN */
             composable(Screen.Permission.route) {
                 PermissionScreen(
                     onPermissionRequest = {
@@ -63,27 +62,42 @@ fun SpendWiseApp() {
                 )
             }
 
-            composable(Screen.Dashboard.route) {
-                DashboardScreen(navController, viewModel)
+            /* REDESIGNED DASHBOARD */
+            composable(Screen.DashboardNew.route) {
+                RedesignedDashboardScreen(
+                    navController = navController,
+                    viewModel = viewModel
+                )
             }
 
+            /* INSIGHTS SCREEN */
+            composable(Screen.Insights.route) {
+                InsightsScreen(
+                    navController = navController,
+                    viewModel = viewModel
+                )
+            }
+
+            /* EXISTING SCREENS */
             composable(Screen.Categories.route) { CategoriesScreen(viewModel) }
             composable(Screen.Merchants.route) { MerchantsScreen(viewModel) }
             composable(Screen.Calendar.route) { CalendarScreen(viewModel) }
             composable(Screen.Transactions.route) { AllTransactionsScreen(viewModel) }
+
             composable(Screen.AddExpense.route) {
                 AddExpenseScreen(onDone = { navController.popBackStack() })
             }
         }
     }
 
-    // If permission already granted, start import automatically once
+    /* If permission already granted → start import automatically */
     LaunchedEffect(hasPermission) {
         if (hasPermission) {
             viewModel.startImportIfNeeded { context.contentResolver }
         }
     }
 }
+
 
 
 
