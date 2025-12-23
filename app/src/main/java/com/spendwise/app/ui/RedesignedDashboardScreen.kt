@@ -3,6 +3,7 @@
 
 package com.spendwise.app.ui
 
+import android.R
 import android.os.Build
 import android.util.Log
 import androidx.annotation.RequiresApi
@@ -54,9 +55,13 @@ import com.spendwise.app.ui.dashboard.DailyBarChart
 import com.spendwise.core.extensions.nextQuarter
 import com.spendwise.core.extensions.previousQuarter
 import com.spendwise.domain.com.spendwise.feature.smsimport.data.DashboardMode
+import com.spendwise.domain.com.spendwise.feature.smsimport.data.DashboardUiState
 import com.spendwise.feature.smsimport.data.SmsEntity
 import com.spendwise.feature.smsimport.ui.SmsImportViewModel
+import java.time.Instant
 import java.time.YearMonth
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
 import kotlin.math.roundToInt
 
 /* -----------------------------------------------------------
@@ -107,7 +112,7 @@ fun RedesignedDashboardScreen(
                     Text(
                         text = when (uiState.mode) {
                             DashboardMode.MONTH -> YearMonth.now()
-                                .format(java.time.format.DateTimeFormatter.ofPattern("MMMM yyyy"))
+                                .format(DateTimeFormatter.ofPattern("MMMM yyyy"))
 
                             DashboardMode.QUARTER -> "Quarter"
                             DashboardMode.YEAR -> "${YearMonth.now().year}"
@@ -118,7 +123,7 @@ fun RedesignedDashboardScreen(
                 actions = {
                     IconButton(onClick = { navController.navigate(Screen.Insights.route) }) {
                         Icon(
-                            painter = painterResource(id = android.R.drawable.ic_dialog_info),
+                            painter = painterResource(id = R.drawable.ic_dialog_info),
                             contentDescription = "Insights"
                         )
                     }
@@ -233,6 +238,22 @@ fun RedesignedDashboardScreen(
         }
     }
 }
+@Composable
+fun TransactionList(uiState: DashboardUiState,viewModel: SmsImportViewModel) {
+        // Transaction list: lightweight items (no heavy recompute here)
+
+}
+
+@Composable
+fun CategoryHeader(selectedType: String?) {
+    if (selectedType == null) return
+
+    Text(
+        text = "Transactions for ${selectedType}",
+        style = MaterialTheme.typography.titleMedium,
+        modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
+    )
+}
 
 /* -----------------------------------------------------------
    2) Insights screen: full-size pie chart + category breakdown
@@ -267,7 +288,7 @@ fun InsightsScreen(
                 navigationIcon = {
                     IconButton(onClick = { navController.popBackStack() }) {
                         Icon(
-                            painter = painterResource(id = android.R.drawable.ic_menu_close_clear_cancel),
+                            painter = painterResource(id = R.drawable.ic_menu_close_clear_cancel),
                             contentDescription = "Back"
                         )
                     }
@@ -317,9 +338,14 @@ fun InsightsScreen(
                                 selectedLabel = uiState.selectedType,
                                 onSliceClick = { clicked ->
                                     viewModel.setSelectedTypeSafe(clicked)
-
                                 }
+
                             )
+                            Spacer(Modifier.height(12.dp))
+
+                            CategoryHeader(uiState.selectedType)
+
+
                         } else {
                             Text("No category data found", style = MaterialTheme.typography.bodyMedium)
                         }
@@ -327,6 +353,8 @@ fun InsightsScreen(
                 }
                 Spacer(Modifier.height(16.dp))
             }
+
+
 
             /* -------------------------------------------------------------
                 TIMEFRAME SWITCH
@@ -379,6 +407,15 @@ fun InsightsScreen(
                 }
 
                 Divider()
+            }
+
+            items(items = uiState.sortedList, key = { it.id }) { tx ->
+                TransactionRow(
+                    sms = tx,
+                    onClick = { viewModel.onMessageClicked(it) },
+                    onMarkNotExpense = { item, checked -> viewModel.setIgnoredState(item, checked) }
+                )
+                Spacer(Modifier.height(8.dp))
             }
         }
     }
@@ -527,9 +564,9 @@ fun TransactionRow(
 
                 Spacer(Modifier.height(4.dp))
 
-                val date = java.time.Instant
+                val date = Instant
                     .ofEpochMilli(sms.timestamp)
-                    .atZone(java.time.ZoneId.systemDefault())
+                    .atZone(ZoneId.systemDefault())
                     .toLocalDate()
 
                 Text(
