@@ -17,3 +17,7 @@ data class TransactionCoreModel(
     val isNetZero: Boolean
 )
 
+data class LinkScoreResult(
+    val score: Int,
+    val isNetZero: Boolean
+)

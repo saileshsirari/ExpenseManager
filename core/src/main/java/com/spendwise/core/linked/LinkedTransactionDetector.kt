@@ -1,9 +1,9 @@
 package com.spendwise.core.linked
 
-import com.spendwise.core.Logger as Log
 import com.spendwise.core.model.TransactionCoreModel
 import java.util.UUID
 import kotlin.math.absoluteValue
+import com.spendwise.core.Logger as Log
 
 class LinkedTransactionDetector(
     private val repo: LinkedTransactionRepository,
@@ -90,21 +90,19 @@ class LinkedTransactionDetector(
             Log.d(TAG, " → score vs TX ${cand.id} = $score (merchant=${cand.merchant}, sender=${cand.sender})")
 
             when {
-                score >= autoLinkThreshold -> {
-                    Log.d(TAG, " ⭐ AUTO-LINKED (Internal Transfer)")
+                score >= possibleLinkThreshold -> {
+                    // possibleLinkThreshold now means: "good enough to be internal"
+                    Log.d(TAG, " ⭐ INTERNAL_TRANSFER (from possible-or-better)")
+
                     applyLink(tx, cand, score, "INTERNAL_TRANSFER", true)
+
                     autoLinked = true
                     break
                 }
 
-                score >= possibleLinkThreshold -> {
-                    Log.d(TAG, " ⚠️ POSSIBLE-LINK")
-                    applyLink(tx, cand, score, "POSSIBLE_TRANSFER", false)
-                    maybeLinked = true
-                    // continue — we may find a better auto link
+                else -> {
+                    Log.d(TAG, " ❌ Not linked (score=$score)")
                 }
-
-                else -> Log.d(TAG, " ❌ Not linked (score=$score)")
             }
         }
 
@@ -156,44 +154,25 @@ class LinkedTransactionDetector(
 
         Log.d(TAG, "---- SCORE CHECK: A=${a.id} B=${b.id} ----")
 
-        // Opposite direction required
-        if (!isOpposite(a.type, b.type)) {
-            Log.d(TAG, "   block: same direction")
-            return 0
-        }
+        if (!isOpposite(a.type, b.type)) return 0
+        if (a.amount != b.amount) return 0
 
-        // Amount must match exactly
-        if (a.amount != b.amount) {
-            Log.d(TAG, "   block: amount mismatch ${a.amount} != ${b.amount}")
-            return 0
-        }
-
-        val bodyA = a.body ?: ""
-        val bodyB = b.body ?: ""
-
-        val skipMerchantCheck =
-            isTransferLike(bodyA) || isTransferLike(bodyB) ||
-                    isCardPayment(bodyA) || isCardPayment(bodyB)
+        val bodyA = a.body.orEmpty()
+        val bodyB = b.body.orEmpty()
 
         val merchantSim = similarity(a.merchant, b.merchant)
-        Log.d(TAG, "MerchantSim=$merchantSim skipMerchantCheck=$skipMerchantCheck")
 
-        // Only block on merchant mismatch when not transfer-like
-        if (!skipMerchantCheck && merchantSim < 10) {
-            Log.d(TAG, "   block: merchant mismatch (sim=$merchantSim) and not transfer-like")
-            return 0
-        }
+        val transferLike =
+            isTransferLike(bodyA) && isTransferLike(bodyB)
+
+        val skipMerchantCheck =
+            transferLike ||
+                    isCardPayment(bodyA) || isCardPayment(bodyB)
+
+        if (!skipMerchantCheck && merchantSim < 10) return 0
 
         var score = 0
         score += amountWeight
-
-        val dayDiff = ((a.timestamp - b.timestamp).absoluteValue / DAY_MS)
-        score += when (dayDiff) {
-            0L -> dateWeightSameDay
-            1L -> dateWeightOneDay
-            else -> 0
-        }
-
         score += oppositeDirWeight
         score += (merchantSim * nameSimWeight / 100)
 
@@ -201,8 +180,29 @@ class LinkedTransactionDetector(
             score += bankMatchWeight
         }
 
+        val dayDiff =
+            ((a.timestamp - b.timestamp).absoluteValue / DAY_MS)
+
+        val strongDelayedTransfer =
+            dayDiff in 2..35 &&
+                    a.amount >= 1000 &&
+                    transferLike &&
+                    merchantSim >= 60
+
+        score += when {
+            dayDiff == 0L -> dateWeightSameDay
+            dayDiff == 1L -> dateWeightOneDay
+            strongDelayedTransfer -> {
+                Log.d(TAG, "delayed-transfer boost (dayDiff=$dayDiff)")
+                dateWeightSameDay
+            }
+            else -> 0
+        }
+
         return score.coerceIn(0, 100)
     }
+
+
 
     private fun isOpposite(a: String?, b: String?): Boolean {
         val x = a?.lowercase()
@@ -216,6 +216,12 @@ class LinkedTransactionDetector(
     private suspend fun inferMissingCredit(tx: TransactionCoreModel) {
         Log.d(TAG, "---- Missing Credit Inference for TX=${tx.id} ----")
         Log.d(TAG, "merchant=${tx.merchant}, amount=${tx.amount}, sender=${tx.sender}")
+
+        // Do not touch already-internal transactions
+        if (tx.linkType == "INTERNAL_TRANSFER") {
+            Log.d(TAG, "Skip inference — already INTERNAL_TRANSFER")
+            return
+        }
 
         // 1) Build normalized key for current tx
         val normMerchant = normalize(tx.merchant ?: tx.sender ?: "")
@@ -232,36 +238,34 @@ class LinkedTransactionDetector(
         }
 
         Log.d(TAG, "Expected pattern count = ${expectedPatterns.size}")
-        expectedPatterns.forEach { pat ->
-            Log.d(TAG, " → ExpectedPattern = '$pat'")
-        }
 
         if (!expectedPatterns.contains(currentKey)) {
             Log.d(TAG, "❌ No matching opposite-pattern → skip inference.")
-            Log.d(TAG, "Current key was '$currentKey', but expected patterns were:")
-            expectedPatterns.forEach { Log.d(TAG, "   - '$it'") }
             return
         }
 
         Log.d(TAG, "✅ Opposite-pattern FOUND → searching wider window...")
 
-        // 3) wide window ± inferenceWindowDays
+        // 3) Wide window ± inferenceWindowDays
         val window = inferenceWindowDays * DAY_MS
         val from = tx.timestamp - window
         val to = tx.timestamp + window
 
-        val candidates = repo.findCandidates(tx.amount, from, to, tx.id)
+        val candidates = repo.findCandidates(
+            amount = tx.amount,
+            from = from,
+            to = to,
+            excludeId = tx.id
+        )
 
         Log.d(TAG, "Found ${candidates.size} wide-window candidates")
 
-        val filtered = candidates.filter { isOpposite(tx.type, it.type) }
+        val best = candidates
+            .asSequence()
+            .filter { isOpposite(tx.type, it.type) }
             .filter { similarity(tx.merchant, it.merchant) >= 20 }
-
-        Log.d(TAG, "Filtered to ${filtered.size} opposite-direction + merchant-sim candidates")
-
-        val best = filtered
             .map { it to scorePair(tx, it) }
-            .filter { it.second >= possibleLinkThreshold }
+            .filter { it.second >= autoLinkThreshold }   // 🔑 ONLY internal-worthy
             .maxByOrNull { it.second }
 
         if (best == null) {
@@ -271,9 +275,17 @@ class LinkedTransactionDetector(
 
         val (match, score) = best
 
-        Log.d(TAG, "✅ INFERRED MATCH → TX=${match.id}, score=$score")
-        applyLink(tx, match, score, "POSSIBLE_TRANSFER", false)
+        Log.d(TAG, "⭐ INFERRED INTERNAL_TRANSFER → TX=${match.id}, score=$score")
+
+        applyLink(
+            a = tx,
+            b = match,
+            score = score,
+            type = "INTERNAL_TRANSFER",
+            isNetZero = true
+        )
     }
+
 
     // ------------------------------------------------------------
     // HELPERS
