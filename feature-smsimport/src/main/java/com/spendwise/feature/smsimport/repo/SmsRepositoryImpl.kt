@@ -90,9 +90,24 @@ class SmsRepositoryImpl @Inject constructor(
 
                 // ---- ignore patterns ----
                 val bodyLower = sms.body.lowercase()
+
+// 🔥 HARD IGNORE — wallet deductions
+                if (isWalletDeduction(bodyLower)) {
+                    Log.d("expense", "IMPORT SKIP — Wallet deduction")
+                    continue
+                }
+
+// 🔥 HARD IGNORE — credit card spends
+                if (isCreditCardSpend(bodyLower)) {
+                    Log.d("expense", "IMPORT SKIP — Credit card spend")
+                    continue
+                }
+
+// User-defined ignore patterns
                 if (ignorePatterns.any { it.containsMatchIn(bodyLower) }) {
                     continue
                 }
+
 
                 val amount = SmsParser.parseAmount(sms.body)
                 if (amount == null || amount <= 0) continue
@@ -145,6 +160,43 @@ class SmsRepositoryImpl @Inject constructor(
         }
 
 
+    private fun isWalletDeduction(body: String): Boolean {
+        val b = body.lowercase()
+        return (
+                ("wallet" in b || "payzapp" in b || "paytm" in b || "phonepe" in b) &&
+                        ("deducted" in b || "spent" in b || "paid" in b)
+                )
+    }
+
+    private fun isCreditCardSpend(body: String): Boolean {
+        val b = body.lowercase()
+        val cardIndicators = listOf(
+            " bank card",
+            " credit card",
+            " debit card",
+            " card x",
+            " card xx",
+            " card ending"
+        )
+        val spendIndicators = listOf(
+            "spent",
+            "purchase",
+            "txn",
+            "transaction",
+            " at "
+        )
+        val billIndicators = listOf(
+            "card bill",
+            "credit card bill",
+            "payment received",
+            "statement",
+            "autopay"
+        )
+
+        return cardIndicators.any { it in b } &&
+                spendIndicators.any { it in b } &&
+                billIndicators.none { it in b }
+    }
 
     // ------------------------------------------------------------
     // MANUAL SAVE
@@ -320,6 +372,7 @@ class SmsRepositoryImpl @Inject constructor(
     suspend fun getAllOnce(): List<SmsEntity> {
         return db.smsDao().getAllOnce()
     }
+
     override suspend fun loadExisting(): List<SmsEntity> {
         return db.smsDao().getAllOnce()
     }

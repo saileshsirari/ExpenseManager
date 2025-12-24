@@ -94,7 +94,7 @@ class SmsImportViewModel @Inject constructor(
             // -----------------------------
             // 1) Base filter — ACTIVE only
             // -----------------------------
-            val activeList = list.filter { !it.isNetZero && !it.isIgnored }
+            val activeList = list.filter { !it.isIgnored }
 
             // -----------------------------
             // 2) Period filtering (MONTH / QUARTER / YEAR)

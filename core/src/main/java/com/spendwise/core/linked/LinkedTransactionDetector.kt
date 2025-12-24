@@ -32,11 +32,20 @@ class LinkedTransactionDetector(
         Log.d(TAG, "type=${tx.type}, merchant=${tx.merchant}, sender=${tx.sender}")
         Log.d(TAG, "amount=${tx.amount}, ts=${tx.timestamp} (${tsReadable(tx.timestamp)})")
 
+
+        if (isCreditCardSpend(tx.body)) {
+            Log.d(TAG, "SKIP — Credit card spend (count bill payment only)")
+            return
+        }
+        if (isWalletDeduction(tx.body)) {
+            Log.d(TAG, "SKIP — Wallet deduction (internal spend)")
+            return
+        }
+
         if (!isDebitOrCredit(tx)) {
             Log.d(TAG, "SKIP — Not debit/credit\n")
             return
         }
-
         // ---------- QUICK SINGLE-SIDED INTERNAL TRANSFER RULE (Option A) ----------
         // If it's a DEBIT and body contains internal marker -> mark as internal transfer immediately.
         val bodyLower = tx.body?.lowercase() ?: ""
@@ -329,12 +338,48 @@ class LinkedTransactionDetector(
                 "credited by" in b ||
                 internalMarkers.any { b.contains(it) })
     }
+    private fun isWalletDeduction(text: String?): Boolean {
+        if (text == null) return false
+        val b = text.lowercase()
+
+        val walletKeywords = listOf(
+            "payzapp",
+            "paytm",
+            "phonepe",
+            "amazon pay",
+            "amazonpay",
+            "mobikwik",
+            "freecharge",
+            "airtel money",
+            "jio money",
+            "wallet"
+        )
+
+        val deductionKeywords = listOf(
+            "deducted",
+            "spent",
+            "paid",
+            "used",
+            "txn",
+            "transaction"
+        )
+
+        return walletKeywords.any { it in b } &&
+                deductionKeywords.any { it in b }
+    }
 
     private fun isCardPayment(text: String?): Boolean {
         if (text == null) return false
         val b = text.lowercase()
-        return ("credit card" in b || "card payment" in b || "bill payment" in b)
+        return (
+                "credit card" in b ||
+                        "debit card" in b ||
+                        "card payment" in b ||
+                        "cc payment" in b ||
+                        "bill payment" in b
+                )
     }
+
 
     private fun similarity(a: String?, b: String?): Int {
         if (a.isNullOrBlank() || b.isNullOrBlank()) return 0
@@ -357,6 +402,49 @@ class LinkedTransactionDetector(
         val t = tx.type?.lowercase() ?: return false
         return (t == "debit" || t == "credit")
     }
+    private fun isCreditCardSpend(text: String?): Boolean {
+        if (text == null) return false
+        val b = text.lowercase()
+
+        // Generic card identifiers (bank-agnostic)
+        val cardIndicators = listOf(
+            " bank card",
+            " credit card",
+            " debit card",
+            " card x",
+            " card xx",
+            " card ending",
+            " card *",
+            " card ****"
+        )
+
+        // Spend indicators
+        val spendIndicators = listOf(
+            "spent",
+            "purchase",
+            "txn",
+            "transaction",
+            "used at",
+            " at "
+        )
+
+        // Explicit exclusions (bill payments must stay)
+        val billIndicators = listOf(
+            "card bill",
+            "credit card bill",
+            "cc bill",
+            "statement",
+            "payment received",
+            "autopay"
+        )
+
+        return cardIndicators.any { it in b } &&
+                spendIndicators.any { it in b } &&
+                billIndicators.none { it in b }
+    }
+
+
+
 
     companion object {
         private const val DAY_MS = 24L * 60L * 60L * 1000L

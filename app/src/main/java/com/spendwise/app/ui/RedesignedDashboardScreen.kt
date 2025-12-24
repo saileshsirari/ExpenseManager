@@ -84,6 +84,7 @@ fun RedesignedDashboardScreen(
     val progress by viewModel.importProgress.collectAsState()
     val categories by viewModel.categoryTotals.collectAsState()
     var showFixDialog by remember { mutableStateOf<SmsEntity?>(null) }
+    var expandedItemId by remember { mutableStateOf<Long?>(null) }
 
     // top-level loading / import handling (assumes app-level permission + import triggers)
     if (!progress.done) {
@@ -251,7 +252,12 @@ fun RedesignedDashboardScreen(
             ) { tx ->
                 SmsListItem(
                     sms = tx,
-                    onClick = { viewModel.onMessageClicked(it) },
+                    isExpanded = expandedItemId == tx.id,
+                    onClick = {
+                        expandedItemId =
+                            if (expandedItemId == tx.id) null else tx.id
+                        viewModel.onMessageClicked(it)
+                    },
                     onRequestMerchantFix = { showFixDialog = it },
                     onMarkNotExpense = { item, checked ->
                         viewModel.setIgnoredState(item, checked)
@@ -278,9 +284,10 @@ fun RedesignedDashboardScreen(
         }
     }
 }
+
 @Composable
-fun TransactionList(uiState: DashboardUiState,viewModel: SmsImportViewModel) {
-        // Transaction list: lightweight items (no heavy recompute here)
+fun TransactionList(uiState: DashboardUiState, viewModel: SmsImportViewModel) {
+    // Transaction list: lightweight items (no heavy recompute here)
 
 }
 
@@ -314,7 +321,7 @@ fun InsightsScreen(
     val totalSpend by viewModel.totalSpend.collectAsState()
 
     val uiState by viewModel.uiState.collectAsState()
-
+    var expandedItemId by remember { mutableStateOf<Long?>(null) }
 
 
     // Full categories for pie chart
@@ -397,13 +404,15 @@ fun InsightsScreen(
 
 
                         } else {
-                            Text("No category data found", style = MaterialTheme.typography.bodyMedium)
+                            Text(
+                                "No category data found",
+                                style = MaterialTheme.typography.bodyMedium
+                            )
                         }
                     }
                 }
                 Spacer(Modifier.height(16.dp))
             }
-
 
 
             /* -------------------------------------------------------------
@@ -428,7 +437,6 @@ fun InsightsScreen(
                 Text("Categories", style = MaterialTheme.typography.titleMedium)
                 Spacer(Modifier.height(8.dp))
             }
-
 
 
             // If filtered list is empty, fallback to showing all categories
@@ -461,7 +469,7 @@ fun InsightsScreen(
                 Divider()
             }
 
-            item{
+            item {
                 Spacer(Modifier.height(16.dp))
 
                 // Sorting
@@ -478,13 +486,19 @@ fun InsightsScreen(
                 Spacer(Modifier.height(12.dp))
             }
 
+
             items(
                 items = uiState.sortedList,
                 key = { it.id }
             ) { tx ->
                 SmsListItem(
                     sms = tx,
-                    onClick = { viewModel.onMessageClicked(it) },
+                    isExpanded = expandedItemId == tx.id,
+                    onClick = {
+                        expandedItemId =
+                            if (expandedItemId == tx.id) null else tx.id
+                        viewModel.onMessageClicked(it)
+                    },
                     onRequestMerchantFix = { showFixDialog = it },
                     onMarkNotExpense = { item, checked ->
                         viewModel.setIgnoredState(item, checked)
@@ -492,8 +506,6 @@ fun InsightsScreen(
                 )
                 Spacer(Modifier.height(8.dp))
             }
-
-
 
 
         }
@@ -538,9 +550,10 @@ fun SummaryHeader(totalDebit: Double, totalCredit: Double, onOpenInsights: () ->
 
 @Composable
 fun SmallDonutCard(onClick: () -> Unit) {
-    Card(modifier = Modifier
-        .size(92.dp)
-        .clickable { onClick() }) {
+    Card(
+        modifier = Modifier
+            .size(92.dp)
+            .clickable { onClick() }) {
         Column(
             modifier = Modifier.padding(8.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
