@@ -140,12 +140,22 @@ fun SmsListItem(
                 }
 
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Checkbox(
-                        checked = sms.isIgnored,
-                        onCheckedChange = { onMarkNotExpense(sms, it) }
-                    )
-                    Text("Not Expense")
+
+                    if (!sms.isNetZero) {
+                        Checkbox(
+                            checked = sms.isIgnored,
+                            onCheckedChange = { onMarkNotExpense(sms, it) }
+                        )
+                        Text("Not Expense")
+                    } else {
+                        Text(
+                            text = "Internal transfer",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = Color.Gray
+                        )
+                    }
                 }
+
             }
         }
     }

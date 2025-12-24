@@ -116,20 +116,30 @@ class SmsImportViewModel @Inject constructor(
             // 🚀 ONLY finalList filters by category
 
             // -----------------------------
+// 4.5) Expense-effective list
+// -----------------------------
+            // -----------------------------
+// 4.5) Expense list (canonical)
+// -----------------------------
+            val expenseList = finalList.filter { it.isExpense() }
+
+
+
+            // -----------------------------
             // 5) Recalculate category totals
             // -----------------------------
             recalcCategoryTotalsAll(baseList)   // PIE
-            recalcCategoryTotals(finalList)     // LIST
+            recalcCategoryTotals(expenseList)     // LIST
 
             // -----------------------------
             // 6) Compute totals (Debit / Credit)
             // -----------------------------
-            val totalDebit = finalList
-                .filter { it.type.equals("DEBIT", true) }
-                .sumOf { it.amount }
+            val totalDebit = expenseList.sumOf { it.amount }
 
+
+            // Optional: credits usually informational only
             val totalCredit = finalList
-                .filter { it.type.equals("CREDIT", true) }
+                .filter { it.type.equals("CREDIT", true) && !it.isNetZero }
                 .sumOf { it.amount }
 
             val debitCreditTotals = mapOf(
@@ -142,14 +152,15 @@ class SmsImportViewModel @Inject constructor(
             // -----------------------------
             val barData = when (input.mode) {
                 DashboardMode.MONTH ->
-                    finalList.groupBy { it.localDate().dayOfMonth }
+                    expenseList.groupBy { it.localDate().dayOfMonth }
                         .mapValues { it.value.sumOf { tx -> tx.amount } }
 
                 DashboardMode.QUARTER,
                 DashboardMode.YEAR ->
-                    finalList.groupBy { it.localDate().monthValue }
+                    expenseList.groupBy { it.localDate().monthValue }
                         .mapValues { it.value.sumOf { tx -> tx.amount } }
             }
+
 
             // -----------------------------
             // 8) Sorting
@@ -494,17 +505,26 @@ class SmsImportViewModel @Inject constructor(
         // The combine block should react to uiInputs.selectedType and recompute finalList / totals
     }
     private fun recalcCategoryTotalsAll(list: List<SmsEntity>) {
+
+        val expenseList = list.filter {
+            !it.isNetZero &&
+                    !it.isIgnored &&
+                    it.type.equals("DEBIT", true)
+        }
+
         _categoryTotalsAll.value =
-            list.groupBy { it.category ?: "Other" }
-                .map { (cat, items) ->
+            expenseList
+                .groupBy { it.category ?: "Uncategorized" }
+                .map { (cat, txs) ->
                     CategoryTotal(
                         name = cat,
-                        total = items.sumOf { it.amount },
+                        total = txs.sumOf { it.amount },
                         color = categoryColorProvider(cat)
                     )
                 }
                 .sortedByDescending { it.total }
     }
+
     private fun recalcCategoryTotals(list: List<SmsEntity>) {
         _categoryTotals.value =
             list.groupBy { it.category ?: "Other" }
@@ -519,6 +539,9 @@ class SmsImportViewModel @Inject constructor(
     }
     private fun List<SmsEntity>.filterActive(): List<SmsEntity> {
         return this.filter { !it.isNetZero }   // or any other "active" condition you prefer
+    }
+    private fun SmsEntity.isExpense(): Boolean {
+        return !isNetZero && type.equals("DEBIT", true)
     }
 
 }
@@ -572,5 +595,7 @@ private fun List<SmsEntity>.filterByPeriod(
             }
         }
     }
+
+
 }
 

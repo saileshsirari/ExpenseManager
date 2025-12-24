@@ -260,7 +260,9 @@ fun RedesignedDashboardScreen(
                     },
                     onRequestMerchantFix = { showFixDialog = it },
                     onMarkNotExpense = { item, checked ->
-                        viewModel.setIgnoredState(item, checked)
+                        if (!item.isNetZero) {
+                            viewModel.setIgnoredState(item, checked)
+                        }
                     }
                 )
                 Spacer(Modifier.height(8.dp))
@@ -639,6 +641,16 @@ fun TransactionRow(
                     maxLines = 2, // 🚀 prevents vertical explosion
                     overflow = TextOverflow.Ellipsis
                 )
+
+                if (sms.isNetZero) {
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        text = "Internal transfer",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = Color.Gray
+                    )
+                }
+
             }
 
             Spacer(Modifier.width(12.dp))
@@ -648,11 +660,25 @@ fun TransactionRow(
                 horizontalAlignment = Alignment.End,
                 verticalArrangement = Arrangement.Center
             ) {
+                val amountText = when {
+                    sms.isNetZero -> "₹${sms.amount.toInt()}"
+                    sms.type == "DEBIT" -> "-₹${sms.amount.toInt()}"
+                    else -> "₹${sms.amount.toInt()}"
+                }
+
+                val amountColor = when {
+                    sms.isNetZero -> Color.Gray
+                    sms.type == "DEBIT" -> Color.Red
+                    else -> Color(0xFF2E7D32) // green
+                }
+
                 Text(
-                    (if (sms.type == "DEBIT") "-₹" else "₹") + sms.amount.toInt(),
+                    amountText,
                     style = MaterialTheme.typography.bodyLarge,
+                    color = amountColor,
                     maxLines = 1
                 )
+
 
                 Spacer(Modifier.height(4.dp))
 
