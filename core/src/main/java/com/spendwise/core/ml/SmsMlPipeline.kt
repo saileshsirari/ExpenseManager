@@ -26,6 +26,7 @@ object SmsMlPipeline {
         // 🔁 0. Overrides to ignore completely
         //    (saved when user taps "Not expense")
         val bodyHashKey = "ignore:${raw.body.hashCode()}"
+        Log.w("expense", "here body "+ raw.body)
         if (overrideProvider(bodyHashKey) == "true") {
             intentReason.append("Ignored by user override for this SMS pattern.")
             Log.w("expense", raw.body)
@@ -34,6 +35,7 @@ object SmsMlPipeline {
 
         // 1. Sender
         val senderType = SenderClassifierMl.classify(raw.sender, raw.body).also {
+            Log.w("expense", raw.body)
             senderReason.append("Detected sender type as $it because sender=${raw.sender}")
         }
 
@@ -41,6 +43,8 @@ object SmsMlPipeline {
         val intentType = IntentClassifierMl.classify(senderType, raw.body).also {
             intentReason.append("Detected intent as $it based on keywords in message.")
         }
+            Log.d("expense", "here intentReason $intentReason ${raw.body}")
+      //  Log.w("expense","intentReason here $intentReason for ${raw.body}")
 
         if (intentType == IntentType.IGNORE) {
             intentReason.append(" → Not a real transaction (alert/due/auto-debit info).")

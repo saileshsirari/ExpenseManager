@@ -65,7 +65,13 @@ object IntentClassifierMl {
         }
 
         // Balance inquiry
-        if (b.contains("balance is") || b.contains("available balance")) {
+        if ((b.contains("balance is") || b.contains("available balance")) && !(
+                    b.contains("paid") ||
+                            b.contains("spent") ||
+                            b.contains("debited") ||
+                            b.contains("deducted")
+                    )
+        ) {
             return IntentType.BALANCE
         }
 

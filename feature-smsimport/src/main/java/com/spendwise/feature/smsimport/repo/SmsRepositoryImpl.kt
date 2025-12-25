@@ -100,6 +100,9 @@ class SmsRepositoryImpl @Inject constructor(
                 }*/
 
 // User-defined ignore patterns
+                if(bodyLower.contains("olamoney")) {
+                    Log.d("expense", "here import $bodyLower")
+                }
                 if (ignorePatterns.any { it.containsMatchIn(bodyLower) }) {
                     continue
                 }
