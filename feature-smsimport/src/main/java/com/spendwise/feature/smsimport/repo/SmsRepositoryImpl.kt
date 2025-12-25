@@ -38,6 +38,7 @@ class SmsRepositoryImpl @Inject constructor(
     // ------------------------------------------------------------
     override suspend fun importAll(resolverProvider: () -> ContentResolver): Flow<ImportEvent> =
         flow {
+            db.smsDao().deleteAll()
 
             val resolver = resolverProvider()
 

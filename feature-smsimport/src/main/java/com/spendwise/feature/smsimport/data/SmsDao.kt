@@ -35,6 +35,9 @@ interface SmsDao {
     @Update
     suspend fun update(item: SmsEntity)
 
+    @Query("DELETE FROM sms")
+    suspend fun deleteAll()
+
     @Query("UPDATE sms SET isIgnored = :ignored WHERE id = :id")
     suspend fun setIgnored(id: Long, ignored: Int)
 

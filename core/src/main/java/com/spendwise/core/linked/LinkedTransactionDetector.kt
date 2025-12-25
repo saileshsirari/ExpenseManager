@@ -2,6 +2,8 @@ package com.spendwise.core.linked
 
 import com.spendwise.core.com.spendwise.core.isCardBillPayment
 import com.spendwise.core.com.spendwise.core.isCreditCardSpend
+import com.spendwise.core.com.spendwise.core.isPayZappWalletTopup
+import com.spendwise.core.com.spendwise.core.isWalletCredit
 import com.spendwise.core.com.spendwise.core.isWalletDeduction
 import com.spendwise.core.model.TransactionCoreModel
 import java.util.UUID
@@ -61,19 +63,27 @@ class LinkedTransactionDetector(
             Log.d(TAG, "Wallet spend detected → EXPENSE")
             return   // DO NOT mark internal
         }
-        // 2️⃣ 🔒 HARD STOP — Card SPEND (real expense)
-        // Card → Wallet top-up is INTERNAL, not expense
-        if (isCreditCardSpend(tx.body) && isWalletTransaction(tx.body)) {
-            Log.d(TAG, "Card → Wallet top-up detected → INTERNAL_TRANSFER")
-            markAsInternalTransfer(tx, confidence = 90)
+        // Card → Wallet TOP-UP (only if wallet is credited)
+        // Card → Wallet TOP-UP (wallet credit OR PayZapp system merchant)
+        if (
+            isCreditCardSpend(tx.body) && (isWalletCredit(tx.body) ||
+                            isPayZappWalletTopup(tx.body)
+                    )
+        ) {
+            Log.d(TAG, "Card → Wallet TOP-UP detected → INTERNAL_TRANSFER")
+            markAsInternalTransfer(tx, confidence = 95)
             return
         }
 
-        // Card spend to real merchant → EXPENSE (terminal)
+
+// Card spend to merchant / gateway → EXPENSE
         if (isCreditCardSpend(tx.body)) {
             Log.d(TAG, "Card spend detected → EXPENSE")
             return
         }
+
+
+
 
         if (!isDebitOrCredit(tx)) {
             Log.d(TAG, "SKIP — Not debit/credit\n")
@@ -81,16 +91,16 @@ class LinkedTransactionDetector(
         }
 
 
-
         // --------------------------------------------------
         // 5️⃣ PURE WALLET MOVEMENT (bank → wallet)
         // --------------------------------------------------
-        if (isWalletTransaction(tx.body)) {
-            Log.d(TAG, "INTERNAL — Wallet load / movement")
-            Log.d(TAG, "SKIP isWalletTransaction — ${tx.body}")
+        // Wallet CREDIT (top-up / load) → INTERNAL
+        if (isWalletCredit(tx.body) ) {
+            Log.d(TAG, "INTERNAL — Wallet CREDIT")
             markAsInternalTransfer(tx, confidence = 85)
             return
         }
+
         // ---------- QUICK SINGLE-SIDED INTERNAL TRANSFER RULE (Option A) ----------
         // If it's a DEBIT and body contains internal marker -> mark as internal transfer immediately.
         val bodyLower = tx.body.lowercase()
@@ -407,6 +417,7 @@ class LinkedTransactionDetector(
                 "credited by" in b ||
                 internalMarkers.any { b.contains(it) })
     }
+
     private fun isWalletTransaction(body: String?): Boolean {
         if (body == null) return false
         val b = body.lowercase()
@@ -421,7 +432,12 @@ class LinkedTransactionDetector(
             "mobikwik",
             "freecharge",
             "google pay balance",
-            "gpay balance"
+            "gpay balance",
+
+            //OLA
+            "ola money",
+            "ola financial",
+            "ola financial s"
         )
 
         return walletKeywords.any { it in b }
@@ -468,9 +484,6 @@ class LinkedTransactionDetector(
     }
 
 
-
-
-
     private fun similarity(a: String?, b: String?): Int {
         if (a.isNullOrBlank() || b.isNullOrBlank()) return 0
         val na = normalize(a)
@@ -492,7 +505,6 @@ class LinkedTransactionDetector(
         val t = tx.type?.lowercase() ?: return false
         return (t == "debit" || t == "credit")
     }
-
 
 
     companion object {

@@ -468,12 +468,19 @@ class SmsImportViewModel @Inject constructor(
             importAll(resolverProvider)
 
         } else {
-            // 1) No import → load DB instantly
+          /*  // 1) No import → load DB instantly
             update { it.copy(isLoading = true) }
             _importProgress.value = ImportProgress(done = true)  // IMPORTANT
 
             // 2) Load DB data
-            loadExistingData()
+            loadExistingData()*/
+
+            // 1) Start loading
+            update { it.copy(isLoading = true) }
+            _importProgress.value = ImportProgress(done = false)
+
+            // 2) Start import
+            importAll(resolverProvider)
         }
     }
 

@@ -11,6 +11,45 @@ fun isCardBillPayment(b: String): Boolean {
     ).any { it in b }
 }
 
+fun isPayZappWalletTopup(body: String?): Boolean {
+    if (body == null) return false
+    val b = body.lowercase()
+
+    return (
+            b.contains("payzappw") ||        // merchant code
+                    b.contains("payzapp wallet")
+            )
+}
+
+ fun isWalletCredit(body: String?): Boolean {
+    if (body == null) return false
+    val b = body.lowercase()
+
+    val walletKeywords = listOf(
+        "amazon pay",
+        "amazonpay",
+        "payzapp",
+        "paytm",
+        "phonepe",
+        "mobikwik",
+        "freecharge",
+        "ola financial",
+        "ola money"
+    )
+
+    val creditKeywords = listOf(
+        "credited",
+        "loaded",
+        "added",
+        "top up",
+        "top-up",
+        "balance"
+    )
+
+    return walletKeywords.any { it in b } &&
+            creditKeywords.any { it in b }
+}
+
 fun isCreditCardSpend(text: String?): Boolean {
     if (text == null) return false
     val b = text.lowercase()
