@@ -2,6 +2,7 @@ package com.spendwise.core.linked
 
 import com.spendwise.core.com.spendwise.core.isCardBillPayment
 import com.spendwise.core.com.spendwise.core.isCreditCardSpend
+import com.spendwise.core.com.spendwise.core.isWalletDeduction
 import com.spendwise.core.model.TransactionCoreModel
 import java.util.UUID
 import kotlin.math.absoluteValue
@@ -55,16 +56,10 @@ class LinkedTransactionDetector(
             return
         }
 
-        if (isWalletDeduction(tx.body) ) {
-            Log.d(TAG, "SKIP isWalletDeduction — ${tx.body}")
-            repo.updateLink(
-                id = tx.id,
-                linkId = null,
-                linkType = "INTERNAL_TRANSFER",
-                confidence = 80,
-                isNetZero = true
-            )
-            return
+        // Wallet spend = REAL EXPENSE
+        if (isWalletDeduction(tx.body)) {
+            Log.d(TAG, "Wallet spend detected → EXPENSE")
+            return   // DO NOT mark internal
         }
         // 2️⃣ 🔒 HARD STOP — Card SPEND (real expense)
         if (isCreditCardSpend(tx.body)) {
@@ -464,35 +459,7 @@ class LinkedTransactionDetector(
     }
 
 
-    private fun isWalletDeduction(text: String?): Boolean {
-        if (text == null) return false
-        val b = text.lowercase()
 
-        val walletKeywords = listOf(
-            "payzapp",
-            "paytm",
-            "phonepe",
-            "amazon pay",
-            "amazonpay",
-            "mobikwik",
-            "freecharge",
-            "airtel money",
-            "jio money",
-            "wallet"
-        )
-
-        val deductionKeywords = listOf(
-            "deducted",
-            "spent",
-            "paid",
-            "used",
-            "txn",
-            "transaction"
-        )
-        if (isCreditCardSpend(b)) return false   // 🔑 critical
-        return walletKeywords.any { it in b } &&
-                deductionKeywords.any { it in b }
-    }
 
 
     private fun similarity(a: String?, b: String?): Int {

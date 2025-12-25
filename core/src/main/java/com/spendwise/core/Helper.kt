@@ -84,3 +84,32 @@ package com.spendwise.core.com.spendwise.core
             spendIndicators.any { it in b } &&
             billIndicators.none { it in b }
 }
+
+fun isWalletDeduction(text: String?): Boolean {
+    if (text == null) return false
+    val b = text.lowercase()
+
+    if (isCreditCardSpend(b)) return false   // 🔒 must stay
+
+    val walletKeywords = listOf(
+        "payzapp",
+        "paytm",
+        "phonepe",
+        "amazon pay",
+        "amazonpay",
+        "mobikwik",
+        "freecharge",
+        "airtel money",
+        "jio money"
+    )
+
+    val strongSpendKeywords = listOf(
+        "spent",
+        "paid",
+        "used",
+        "deducted"
+    )
+
+    return walletKeywords.any { it in b } &&
+            strongSpendKeywords.any { it in b }
+}

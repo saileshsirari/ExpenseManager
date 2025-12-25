@@ -91,11 +91,6 @@ class SmsRepositoryImpl @Inject constructor(
                 // ---- ignore patterns ----
                 val bodyLower = sms.body.lowercase()
 
-// 🔥 HARD IGNORE — wallet deductions
-                if (isWalletDeduction(bodyLower)) {
-                    Log.d("expense", "IMPORT SKIP — Wallet deduction")
-                    continue
-                }
 
 // 🔥 HARD IGNORE — credit card spends
               /*  if (isCreditCardSpend(bodyLower)) {
@@ -160,13 +155,7 @@ class SmsRepositoryImpl @Inject constructor(
         }
 
 
-    private fun isWalletDeduction(body: String): Boolean {
-        val b = body.lowercase()
-        return (
-                ("wallet" in b || "payzapp" in b || "paytm" in b || "phonepe" in b) &&
-                        ("deducted" in b || "spent" in b || "paid" in b)
-                )
-    }
+
 
     private fun isCreditCardSpend(body: String): Boolean {
         val b = body.lowercase()
