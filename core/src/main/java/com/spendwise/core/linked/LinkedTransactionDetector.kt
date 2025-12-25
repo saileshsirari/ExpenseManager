@@ -1,8 +1,10 @@
 package com.spendwise.core.linked
 
+import com.spendwise.core.com.spendwise.core.isBillPayment
 import com.spendwise.core.com.spendwise.core.isCardBillPayment
 import com.spendwise.core.com.spendwise.core.isCreditCardSpend
 import com.spendwise.core.com.spendwise.core.isPayZappWalletTopup
+import com.spendwise.core.com.spendwise.core.isWalletAutoload
 import com.spendwise.core.com.spendwise.core.isWalletCredit
 import com.spendwise.core.com.spendwise.core.isWalletDeduction
 import com.spendwise.core.model.TransactionCoreModel
@@ -40,13 +42,22 @@ class LinkedTransactionDetector(
             Log.d(TAG, "Already net-zero → skipping further processing")
             return
         }
+// Bill payment (credit card / utility / etc.) → INTERNAL
 
-
-        if (isCardBillPayment(tx.body) && !tx.isNetZero) {
+        if (isCardBillPayment(tx.body) ) {
             Log.d(TAG, "SKIP isCardBillPayment — ${tx.body}")
             markAsInternalTransfer(tx, confidence = 95)
             return
         }
+
+        if (isBillPayment(tx.body) && !tx.isNetZero) {
+            Log.d(TAG, "INTERNAL — Bill payment settlement")
+            markAsInternalTransfer(tx, confidence = 95)
+            return
+        }
+
+
+
 
         if (
             isAssetDestination(tx.body) &&
@@ -100,6 +111,14 @@ class LinkedTransactionDetector(
             markAsInternalTransfer(tx, confidence = 85)
             return
         }
+
+        // UPI Mandate → Wallet AUTOLOAD → INTERNAL
+        if (isWalletAutoload(tx.body) ) {
+            Log.d(TAG, "INTERNAL — Wallet AUTOLOAD (UPI mandate)")
+            markAsInternalTransfer(tx, confidence = 95)
+            return
+        }
+
 
         // ---------- QUICK SINGLE-SIDED INTERNAL TRANSFER RULE (Option A) ----------
         // If it's a DEBIT and body contains internal marker -> mark as internal transfer immediately.

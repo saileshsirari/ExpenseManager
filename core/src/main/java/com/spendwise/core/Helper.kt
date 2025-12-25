@@ -50,6 +50,45 @@ fun isPayZappWalletTopup(body: String?): Boolean {
             creditKeywords.any { it in b }
 }
 
+ fun isBillPayment(body: String?): Boolean {
+    if (body == null) return false
+    val b = body.lowercase()
+
+    val billKeywords = listOf(
+        "bill paid",
+        "billpay",
+        "bill payment",
+        "paid towards bill",
+        "bill of rs",
+        "bill ref",
+        "bill no",
+        "biller"
+    )
+
+    return billKeywords.any { it in b }
+}
+
+ fun isWalletAutoload(body: String?): Boolean {
+    if (body == null) return false
+    val b = body.lowercase()
+
+    val mandateKeywords = listOf(
+        "upi mandate",
+        "mandate"
+    )
+
+    val autoloadKeywords = listOf(
+        "wallet autoload",
+        "wallet auto load",
+        "autoload",
+        "auto-load",
+        "auto load"
+    )
+
+    return mandateKeywords.any { it in b } &&
+            autoloadKeywords.any { it in b }
+}
+
 fun isCreditCardSpend(text: String?): Boolean {
     if (text == null) return false
     val b = text.lowercase()
