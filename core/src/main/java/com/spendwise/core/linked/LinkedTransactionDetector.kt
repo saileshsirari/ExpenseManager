@@ -37,17 +37,26 @@ class LinkedTransactionDetector(
             Log.d(TAG, "Already net-zero → skipping further processing")
             return
         }
+
+
         if (isCardBillPayment(tx.body) && !tx.isNetZero) {
-            repo.updateLink(
-                id = tx.id,
-                linkId = null,
-                linkType = "INTERNAL_TRANSFER",
-                confidence = 95,
-                isNetZero = true
-            )
+            Log.d(TAG, "SKIP isCardBillPayment — ${tx.body}")
+            markAsInternalTransfer(tx, confidence = 95)
+            return
         }
 
-        if (isWalletDeduction(tx.body) && !tx.isNetZero) {
+        if (
+            isAssetDestination(tx.body) &&
+            !tx.body.lowercase().contains("interest")
+
+        ) {
+            Log.d(TAG, "SKIP isAssetDestination — ${tx.body}")
+            markAsInternalTransfer(tx)
+            return
+        }
+
+        if (isWalletDeduction(tx.body) ) {
+            Log.d(TAG, "SKIP isWalletDeduction — ${tx.body}")
             repo.updateLink(
                 id = tx.id,
                 linkId = null,
@@ -57,7 +66,11 @@ class LinkedTransactionDetector(
             )
             return
         }
-
+        // 2️⃣ 🔒 HARD STOP — Card SPEND (real expense)
+        if (isCreditCardSpend(tx.body)) {
+            Log.d(TAG, "Card spend detected → skipping wallet/asset/internal logic")
+            return
+        }
         if (!isDebitOrCredit(tx)) {
             Log.d(TAG, "SKIP — Not debit/credit\n")
             return
@@ -65,32 +78,18 @@ class LinkedTransactionDetector(
 
 
 
-
-        if (
-            isAssetDestination(tx.body) &&
-            !tx.body.lowercase().contains("interest") &&
-            !tx.isNetZero
-        ) {
-            markAsInternalTransfer(tx)
+        // --------------------------------------------------
+        // 5️⃣ PURE WALLET MOVEMENT (bank → wallet)
+        // --------------------------------------------------
+        if (isWalletTransaction(tx.body)) {
+            Log.d(TAG, "INTERNAL — Wallet load / movement")
+            Log.d(TAG, "SKIP isWalletTransaction — ${tx.body}")
+            markAsInternalTransfer(tx, confidence = 85)
             return
         }
-
-        if (
-            isWalletTransaction(tx.body) &&
-            !tx.isNetZero
-        ) {
-            repo.updateLink(
-                id = tx.id,
-                linkId = null,
-                linkType = "INTERNAL_TRANSFER",
-                confidence = 85,
-                isNetZero = true
-            )
-        }
-
         // ---------- QUICK SINGLE-SIDED INTERNAL TRANSFER RULE (Option A) ----------
         // If it's a DEBIT and body contains internal marker -> mark as internal transfer immediately.
-        val bodyLower = tx.body?.lowercase() ?: ""
+        val bodyLower = tx.body.lowercase()
         if (tx.type?.equals("DEBIT", ignoreCase = true) == true &&
             internalMarkers.any { bodyLower.contains(it) } &&
             tx.linkId.isNullOrBlank()
@@ -101,7 +100,7 @@ class LinkedTransactionDetector(
             )
             val singleLinkId = "SINGLE-${UUID.randomUUID()}"
             // Mark transaction single-sided as internal transfer (net-zero) so UI and totals will exclude it
-            repo.updateLink(tx.id, singleLinkId, "INTERNAL_TRANSFER", 100, true)
+            markAsInternalTransfer(tx, confidence = 100)
 
             // Learn pattern immediately for future inference
             try {
@@ -424,34 +423,46 @@ class LinkedTransactionDetector(
         return walletKeywords.any { it in b }
     }
 
+    private val assetRegexes = listOf(
+        // Mutual Funds
+        "\\bmutual fund(s)?\\b",
+        "\\bmf\\b",
+        "\\bsip(s)?\\b",
+        "\\bfolio(s)?\\b",
+        "\\bcams\\b",
+        "\\bkfintech\\b",
+        "\\bgroww\\b",
+        "\\bzerodha\\b",
+        "\\bcoin\\b",
+
+        // EPF / PF / VPF
+        "\\bepf\\b",
+        "\\bpf\\b",
+        "\\bvpf\\b",
+        "\\bepfo\\b",
+        "\\buan\\b",
+
+        // NPS
+        "\\bnps\\b",
+        "\\bpran(s)?\\b",
+
+        // RD / FD / TD
+        "\\brd(s)?\\b",
+        "\\bfd(s)?\\b",
+        "\\btd(s)?\\b",
+
+        // Implicit asset signals
+        "passbook balance",
+        "contribution of"
+    ).map { Regex(it) }
+
+
     private fun isAssetDestination(body: String?): Boolean {
         if (body == null) return false
         val b = body.lowercase()
-
-        val assetKeywords = listOf(
-            // Mutual Funds
-            "mutual fund", "mf ", "sip", "folio", "nav",
-            "cams", "kfintech", "groww", "zerodha", "coin",
-
-            // EPF / PF / VPF
-            "epf", "pf ", "vpf", "provident fund", "epfo", "uan",
-
-            // NPS
-            "nps", "pran", "cra", "pension system",
-
-            // RD
-            "rd ", "recurring deposit", "installment",
-
-            // FD
-            "fd ", "fixed deposit", "term deposit", "td ",
-
-            // EPF implicit patterns (VERY IMPORTANT)
-            "passbook balance",
-            "contribution of"
-            )
-
-        return assetKeywords.any { it in b }
+        return assetRegexes.any { it.containsMatchIn(b) }
     }
+
 
     private fun isWalletDeduction(text: String?): Boolean {
         if (text == null) return false
@@ -478,7 +489,7 @@ class LinkedTransactionDetector(
             "txn",
             "transaction"
         )
-
+        if (isCreditCardSpend(b)) return false   // 🔑 critical
         return walletKeywords.any { it in b } &&
                 deductionKeywords.any { it in b }
     }
