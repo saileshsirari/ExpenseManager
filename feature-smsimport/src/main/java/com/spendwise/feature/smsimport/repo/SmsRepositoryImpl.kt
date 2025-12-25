@@ -98,10 +98,10 @@ class SmsRepositoryImpl @Inject constructor(
                 }
 
 // 🔥 HARD IGNORE — credit card spends
-                if (isCreditCardSpend(bodyLower)) {
+              /*  if (isCreditCardSpend(bodyLower)) {
                     Log.d("expense", "IMPORT SKIP — Credit card spend")
                     continue
-                }
+                }*/
 
 // User-defined ignore patterns
                 if (ignorePatterns.any { it.containsMatchIn(bodyLower) }) {

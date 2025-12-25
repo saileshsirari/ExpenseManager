@@ -1,5 +1,7 @@
 package com.spendwise.core.linked
 
+import com.spendwise.core.com.spendwise.core.isCardBillPayment
+import com.spendwise.core.com.spendwise.core.isCreditCardSpend
 import com.spendwise.core.model.TransactionCoreModel
 import java.util.UUID
 import kotlin.math.absoluteValue
@@ -31,14 +33,28 @@ class LinkedTransactionDetector(
         Log.d(TAG, "\n\n========== PROCESS TX ${tx.id} ==========")
         Log.d(TAG, "type=${tx.type}, merchant=${tx.merchant}, sender=${tx.sender}")
         Log.d(TAG, "amount=${tx.amount}, ts=${tx.timestamp} (${tsReadable(tx.timestamp)})")
-
-
-        if (isCreditCardSpend(tx.body)) {
-            Log.d(TAG, "SKIP — Credit card spend (count bill payment only)")
+        if (tx.isNetZero) {
+            Log.d(TAG, "Already net-zero → skipping further processing")
             return
         }
-        if (isWalletDeduction(tx.body)) {
-            Log.d(TAG, "SKIP — Wallet deduction (internal spend)")
+        if (isCardBillPayment(tx.body) && !tx.isNetZero) {
+            repo.updateLink(
+                id = tx.id,
+                linkId = null,
+                linkType = "INTERNAL_TRANSFER",
+                confidence = 95,
+                isNetZero = true
+            )
+        }
+
+        if (isWalletDeduction(tx.body) && !tx.isNetZero) {
+            repo.updateLink(
+                id = tx.id,
+                linkId = null,
+                linkType = "INTERNAL_TRANSFER",
+                confidence = 80,
+                isNetZero = true
+            )
             return
         }
 
@@ -46,6 +62,9 @@ class LinkedTransactionDetector(
             Log.d(TAG, "SKIP — Not debit/credit\n")
             return
         }
+
+
+
 
         if (
             isAssetDestination(tx.body) &&
@@ -151,15 +170,16 @@ class LinkedTransactionDetector(
         inferMissingCredit(tx)
     }
 
-    private suspend fun markAsInternalTransfer(tx: TransactionCoreModel) {
-        tx.copy(
+    private suspend fun markAsInternalTransfer(tx: TransactionCoreModel, confidence: Int = 90) {
+        repo.updateLink(
+            id = tx.id,
+            linkId = null,
             linkType = "INTERNAL_TRANSFER",
+            confidence = confidence,
             isNetZero = true
-        ).also {
-            repo.updateLink(tx.id, null, "INTERNAL_TRANSFER", 90, true)
-
-        }
+        )
     }
+
 
     // ------------------------------------------------------------
     // APPLY LINK
@@ -215,10 +235,17 @@ class LinkedTransactionDetector(
 
         val skipMerchantCheck =
             transferLike ||
-                    isCardPayment(bodyA) || isCardPayment(bodyB)
+                    isCardBillPayment(bodyA) || isCardBillPayment(bodyB)
+
 
         if (!skipMerchantCheck && merchantSim < 10) return 0
 
+
+        // Inside scorePair or before linking
+        if (isCreditCardSpend(a.body) || isCreditCardSpend(b.body)) {
+            Log.d(TAG, "Skip linking — card spend detected")
+            return 0
+        }
         var score = 0
         score += amountWeight
         score += oppositeDirWeight
@@ -456,18 +483,6 @@ class LinkedTransactionDetector(
                 deductionKeywords.any { it in b }
     }
 
-    private fun isCardPayment(text: String?): Boolean {
-        if (text == null) return false
-        val b = text.lowercase()
-        return (
-                "credit card" in b ||
-                        "debit card" in b ||
-                        "card payment" in b ||
-                        "cc payment" in b ||
-                        "bill payment" in b
-                )
-    }
-
 
     private fun similarity(a: String?, b: String?): Int {
         if (a.isNullOrBlank() || b.isNullOrBlank()) return 0
@@ -491,46 +506,6 @@ class LinkedTransactionDetector(
         return (t == "debit" || t == "credit")
     }
 
-    private fun isCreditCardSpend(text: String?): Boolean {
-        if (text == null) return false
-        val b = text.lowercase()
-
-        // Generic card identifiers (bank-agnostic)
-        val cardIndicators = listOf(
-            " bank card",
-            " credit card",
-            " debit card",
-            " card x",
-            " card xx",
-            " card ending",
-            " card *",
-            " card ****"
-        )
-
-        // Spend indicators
-        val spendIndicators = listOf(
-            "spent",
-            "purchase",
-            "txn",
-            "transaction",
-            "used at",
-            " at "
-        )
-
-        // Explicit exclusions (bill payments must stay)
-        val billIndicators = listOf(
-            "card bill",
-            "credit card bill",
-            "cc bill",
-            "statement",
-            "payment received",
-            "autopay"
-        )
-
-        return cardIndicators.any { it in b } &&
-                spendIndicators.any { it in b } &&
-                billIndicators.none { it in b }
-    }
 
 
     companion object {
