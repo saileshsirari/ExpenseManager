@@ -62,10 +62,19 @@ class LinkedTransactionDetector(
             return   // DO NOT mark internal
         }
         // 2️⃣ 🔒 HARD STOP — Card SPEND (real expense)
-        if (isCreditCardSpend(tx.body)) {
-            Log.d(TAG, "Card spend detected → skipping wallet/asset/internal logic")
+        // Card → Wallet top-up is INTERNAL, not expense
+        if (isCreditCardSpend(tx.body) && isWalletTransaction(tx.body)) {
+            Log.d(TAG, "Card → Wallet top-up detected → INTERNAL_TRANSFER")
+            markAsInternalTransfer(tx, confidence = 90)
             return
         }
+
+        // Card spend to real merchant → EXPENSE (terminal)
+        if (isCreditCardSpend(tx.body)) {
+            Log.d(TAG, "Card spend detected → EXPENSE")
+            return
+        }
+
         if (!isDebitOrCredit(tx)) {
             Log.d(TAG, "SKIP — Not debit/credit\n")
             return

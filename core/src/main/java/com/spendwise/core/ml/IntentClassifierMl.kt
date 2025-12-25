@@ -19,16 +19,35 @@ object IntentClassifierMl {
         "received towards your credit card",
         "payment posted",
         "bill paid successfully",
-        "payment updated against your" // common Airtel/utility phrasing
+        "payment updated against your"
     )
 
     fun classify(senderType: SenderType, body: String): IntentType {
         val b = body.lowercase()
 
+        // --------------------------------------------------
         // IGNORE patterns → non-transactional
+        // --------------------------------------------------
         if (ignoreKeywords.any { b.contains(it) }) {
             return IntentType.IGNORE
         }
+
+        // --------------------------------------------------
+// CREDIT CARD STATEMENT / DUE (NOT A TRANSACTION)
+// --------------------------------------------------
+        if (
+            b.contains("credit card") &&
+            (
+                    b.contains("statement") ||
+                            b.contains("is due") ||
+                            b.contains("due by") ||
+                            b.contains("minimum due") ||
+                            b.contains("total due")
+                    )
+        ) {
+            return IntentType.IGNORE
+        }
+
 
         // PAYMENT REMINDERS
         val reminderKeywords = listOf(
@@ -51,40 +70,41 @@ object IntentClassifierMl {
         }
 
         // Pending transaction states
-        if (b.contains("initiated") || b.contains("request received")
-            || b.contains("scheduled") || b.contains("processing")
+        if (
+            b.contains("initiated") ||
+            b.contains("request received") ||
+            b.contains("scheduled") ||
+            b.contains("processing")
         ) {
             return IntentType.PENDING
         }
 
-        // -------------------------------------------------------------------
-        //  CREDIT CARD PAYMENT RECEIVED  (Fix for CC receipts)
-        // -------------------------------------------------------------------
+        // --------------------------------------------------
+        // CREDIT CARD PAYMENT RECEIVED
+        // --------------------------------------------------
         if (creditCardReceiptKeywords.any { b.contains(it) }) {
             return IntentType.CREDIT
         }
 
-        // Sometimes banks say:
-        // “Payment received on your CC XXXX” or “Thank you! we received your payment”
-        if ((b.contains("payment") && b.contains("received"))
-            && (b.contains("credit card") || b.contains("card xx") || b.contains("cc"))
+        if (
+            (b.contains("payment") && b.contains("received")) &&
+            (b.contains("credit card") || b.contains("card xx") || b.contains("cc"))
         ) {
             return IntentType.CREDIT
         }
 
-        // ICICI/HDFC style:
-        // “Payment of Rs XXXX has been received on your ICICI Bank Credit Card”
         if (b.contains("has been received") && b.contains("credit card")) {
             return IntentType.CREDIT
         }
 
-        // -------------------------------------------------------------------
-        // NORMAL DEBIT & CREDIT CLASSIFICATION
-        // -------------------------------------------------------------------
+        // --------------------------------------------------
+        // NORMAL BANK DEBIT & CREDIT
+        // --------------------------------------------------
         val isDebit = listOf(
             "debited", "debit of", "deducted", "deduct", "deduction",
             "withdrawn", "spent", "payment of", "paid towards",
-            "pos transaction", "atm wdl", "atm withdrawal", "debited rs", "debited inr"
+            "pos transaction", "atm wdl", "atm withdrawal",
+            "debited rs", "debited inr"
         ).any { b.contains(it) }
 
         val isCredit = listOf(
@@ -92,14 +112,13 @@ object IntentClassifierMl {
             "salary credited", "refund of"
         ).any { b.contains(it) }
 
-        // Special guard: phrases that strongly indicate credit-card payment receipt
         if (b.contains("credit card") && b.contains("payment") && b.contains("received")) {
             return IntentType.CREDIT
         }
 
         val hasUpi = b.contains("upi") || b.contains("@upi")
 
-        if (isDebit || (hasUpi && senderType != SenderType.PROMOTIONAL)) {
+        if (isDebit) {
             return IntentType.DEBIT
         }
 
@@ -107,6 +126,41 @@ object IntentClassifierMl {
             return IntentType.CREDIT
         }
 
+        // --------------------------------------------------
+        // 🔑 WALLET / UPI / CONSUMER LANGUAGE DEBIT (PATCH)
+        // --------------------------------------------------
+        if (
+            (b.contains(" paid ") || b.startsWith("paid ")) &&
+            (b.contains("rs") || b.contains("inr"))
+        ) {
+            return IntentType.DEBIT
+        }
+
+        if (
+            b.contains("you've paid") &&
+            (b.contains("rs") || b.contains("inr"))
+        ) {
+            return IntentType.DEBIT
+        }
+
+        if (
+            b.contains("sent to") &&
+            (b.contains("rs") || b.contains("inr"))
+        ) {
+            return IntentType.DEBIT
+        }
+
+        if (
+            hasUpi &&
+            (b.contains("paid") || b.contains("sent")) &&
+            (b.contains("rs") || b.contains("inr"))
+        ) {
+            return IntentType.DEBIT
+        }
+
+        // --------------------------------------------------
+        // REFUND (late fallback)
+        // --------------------------------------------------
         if (b.contains("refund")) {
             return IntentType.REFUND
         }

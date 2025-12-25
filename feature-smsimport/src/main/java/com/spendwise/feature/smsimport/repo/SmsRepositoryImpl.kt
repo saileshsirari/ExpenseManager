@@ -155,41 +155,6 @@ class SmsRepositoryImpl @Inject constructor(
         }
 
 
-
-
-    private fun isCreditCardSpend(body: String): Boolean {
-        val b = body.lowercase()
-        val cardIndicators = listOf(
-            " bank card",
-            " credit card",
-            " debit card",
-            " card x",
-            " card xx",
-            " card ending"
-        )
-        val spendIndicators = listOf(
-            "spent",
-            "purchase",
-            "txn",
-            "transaction",
-            " at "
-        )
-        val billIndicators = listOf(
-            "card bill",
-            "credit card bill",
-            "payment received",
-            "statement",
-            "autopay"
-        )
-
-        return cardIndicators.any { it in b } &&
-                spendIndicators.any { it in b } &&
-                billIndicators.none { it in b }
-    }
-
-
-
-
     // ------------------------------------------------------------
     // MANUAL SAVE
     // ------------------------------------------------------------

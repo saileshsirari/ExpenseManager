@@ -1,6 +1,6 @@
 package com.spendwise.core.com.spendwise.core
 
- fun isCardBillPayment(b: String): Boolean {
+fun isCardBillPayment(b: String): Boolean {
     return listOf(
         "credit card bill",
         "card bill payment",
@@ -11,7 +11,7 @@ package com.spendwise.core.com.spendwise.core
     ).any { it in b }
 }
 
- fun isCreditCardSpend(text: String?): Boolean {
+fun isCreditCardSpend(text: String?): Boolean {
     if (text == null) return false
     val b = text.lowercase()
 
@@ -44,7 +44,7 @@ package com.spendwise.core.com.spendwise.core
             billIndicators.none { it in b }
 }
 
- fun isCreditCardSpend1(text: String?): Boolean {
+fun isCreditCardSpend1(text: String?): Boolean {
     if (text == null) return false
     val b = text.lowercase()
 
@@ -89,27 +89,43 @@ fun isWalletDeduction(text: String?): Boolean {
     if (text == null) return false
     val b = text.lowercase()
 
-    if (isCreditCardSpend(b)) return false   // 🔒 must stay
+    // 🔒 Never treat card spends as wallet spends
+    if (isCreditCardSpend(b)) return false
 
     val walletKeywords = listOf(
         "payzapp",
         "paytm",
-        "phonepe",
         "amazon pay",
         "amazonpay",
         "mobikwik",
         "freecharge",
         "airtel money",
-        "jio money"
+        "jio money",
+        "phonepe"          // PhonePe is special
     )
 
     val strongSpendKeywords = listOf(
         "spent",
         "paid",
-        "used",
-        "deducted"
+        "deducted",
+        "used"
     )
 
-    return walletKeywords.any { it in b } &&
-            strongSpendKeywords.any { it in b }
+    // ✅ Explicit wallet spend (Paytm / Amazon / etc.)
+    if (walletKeywords.any { it in b } &&
+        strongSpendKeywords.any { it in b }
+    ) return true
+
+    // ✅ PhonePe implicit wallet spend pattern
+    if (
+        "phonepe" in b &&
+        (
+                " paid " in b ||
+                        " paid to " in b ||
+                        " via phonepe" in b
+                )
+    ) return true
+
+    return false
 }
+
