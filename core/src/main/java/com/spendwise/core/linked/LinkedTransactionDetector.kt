@@ -46,6 +46,29 @@ class LinkedTransactionDetector(
             Log.d(TAG, "SKIP — Not debit/credit\n")
             return
         }
+
+        if (
+            isAssetDestination(tx.body) &&
+            !tx.body.lowercase().contains("interest") &&
+            !tx.isNetZero
+        ) {
+            markAsInternalTransfer(tx)
+            return
+        }
+
+        if (
+            isWalletTransaction(tx.body) &&
+            !tx.isNetZero
+        ) {
+            repo.updateLink(
+                id = tx.id,
+                linkId = null,
+                linkType = "INTERNAL_TRANSFER",
+                confidence = 85,
+                isNetZero = true
+            )
+        }
+
         // ---------- QUICK SINGLE-SIDED INTERNAL TRANSFER RULE (Option A) ----------
         // If it's a DEBIT and body contains internal marker -> mark as internal transfer immediately.
         val bodyLower = tx.body?.lowercase() ?: ""
@@ -53,7 +76,10 @@ class LinkedTransactionDetector(
             internalMarkers.any { bodyLower.contains(it) } &&
             tx.linkId.isNullOrBlank()
         ) {
-            Log.d(TAG, "Internal-marker detected (Option A). Will mark TX ${tx.id} as INTERNAL_TRANSFER (single-sided).")
+            Log.d(
+                TAG,
+                "Internal-marker detected (Option A). Will mark TX ${tx.id} as INTERNAL_TRANSFER (single-sided)."
+            )
             val singleLinkId = "SINGLE-${UUID.randomUUID()}"
             // Mark transaction single-sided as internal transfer (net-zero) so UI and totals will exclude it
             repo.updateLink(tx.id, singleLinkId, "INTERNAL_TRANSFER", 100, true)
@@ -96,7 +122,10 @@ class LinkedTransactionDetector(
 
             val score = scorePair(tx, cand)
 
-            Log.d(TAG, " → score vs TX ${cand.id} = $score (merchant=${cand.merchant}, sender=${cand.sender})")
+            Log.d(
+                TAG,
+                " → score vs TX ${cand.id} = $score (merchant=${cand.merchant}, sender=${cand.sender})"
+            )
 
             when {
                 score >= possibleLinkThreshold -> {
@@ -120,6 +149,16 @@ class LinkedTransactionDetector(
 
         // Even if maybeLinked, still attempt inference for stronger historical matches
         inferMissingCredit(tx)
+    }
+
+    private suspend fun markAsInternalTransfer(tx: TransactionCoreModel) {
+        tx.copy(
+            linkType = "INTERNAL_TRANSFER",
+            isNetZero = true
+        ).also {
+            repo.updateLink(tx.id, null, "INTERNAL_TRANSFER", 90, true)
+
+        }
     }
 
     // ------------------------------------------------------------
@@ -205,12 +244,12 @@ class LinkedTransactionDetector(
                 Log.d(TAG, "delayed-transfer boost (dayDiff=$dayDiff)")
                 dateWeightSameDay
             }
+
             else -> 0
         }
 
         return score.coerceIn(0, 100)
     }
-
 
 
     private fun isOpposite(a: String?, b: String?): Boolean {
@@ -338,6 +377,55 @@ class LinkedTransactionDetector(
                 "credited by" in b ||
                 internalMarkers.any { b.contains(it) })
     }
+    private fun isWalletTransaction(body: String?): Boolean {
+        if (body == null) return false
+        val b = body.lowercase()
+
+        val walletKeywords = listOf(
+            "wallet",
+            "payzapp",
+            "paytm",
+            "phonepe",
+            "amazon pay",
+            "amazonpay",
+            "mobikwik",
+            "freecharge",
+            "google pay balance",
+            "gpay balance"
+        )
+
+        return walletKeywords.any { it in b }
+    }
+
+    private fun isAssetDestination(body: String?): Boolean {
+        if (body == null) return false
+        val b = body.lowercase()
+
+        val assetKeywords = listOf(
+            // Mutual Funds
+            "mutual fund", "mf ", "sip", "folio", "nav",
+            "cams", "kfintech", "groww", "zerodha", "coin",
+
+            // EPF / PF / VPF
+            "epf", "pf ", "vpf", "provident fund", "epfo", "uan",
+
+            // NPS
+            "nps", "pran", "cra", "pension system",
+
+            // RD
+            "rd ", "recurring deposit", "installment",
+
+            // FD
+            "fd ", "fixed deposit", "term deposit", "td ",
+
+            // EPF implicit patterns (VERY IMPORTANT)
+            "passbook balance",
+            "contribution of"
+            )
+
+        return assetKeywords.any { it in b }
+    }
+
     private fun isWalletDeduction(text: String?): Boolean {
         if (text == null) return false
         val b = text.lowercase()
@@ -402,6 +490,7 @@ class LinkedTransactionDetector(
         val t = tx.type?.lowercase() ?: return false
         return (t == "debit" || t == "credit")
     }
+
     private fun isCreditCardSpend(text: String?): Boolean {
         if (text == null) return false
         val b = text.lowercase()
@@ -442,8 +531,6 @@ class LinkedTransactionDetector(
                 spendIndicators.any { it in b } &&
                 billIndicators.none { it in b }
     }
-
-
 
 
     companion object {
