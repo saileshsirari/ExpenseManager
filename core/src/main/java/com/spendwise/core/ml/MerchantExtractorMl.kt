@@ -222,6 +222,16 @@ object MerchantExtractorMl {
             }
         }
 
+        // ------------------------------------------------------------
+// UPI P2P — "<NAME> credited"
+// ------------------------------------------------------------
+        val creditedPerson = extractCreditedPerson(body)
+        if (creditedPerson != null) {
+            Log.d(TAG, "UPI credited person → $creditedPerson")
+            return creditedPerson
+        }
+
+
         // --------------------------------------------------------------------
         // FALLBACK BANK SENDER CLEANING
         // --------------------------------------------------------------------
@@ -269,6 +279,21 @@ object MerchantExtractorMl {
             .replace(Regex("[^A-Za-z0-9 &-]"), " ") // remove junk, KEEP CASE
             .replace(Regex("\\s+"), " ")             // collapse spaces
             .trim()
+    }
+     fun extractCreditedPerson(body: String): String? {
+        // Matches: "; SHAHEED CHAMAN  credited"
+        val regex = Regex(
+            ";\\s*([A-Z][A-Z ]{2,40})\\s+credited",
+            RegexOption.IGNORE_CASE
+        )
+
+        val match = regex.find(body) ?: return null
+
+        val raw = match.groupValues[1].trim()
+
+        return splitCamelCasePreserveAcronyms(
+            normalize(raw)
+        )
     }
 
 
