@@ -8,27 +8,35 @@ enum class WalletRail {
     PAYZAPP,
     UNKNOWN
 }
- fun extractWalletMerchant(body: String?): String? {
-    if (body == null) return null
+private fun extractWalletMerchant(body: String): String? {
     val lower = body.lowercase()
-
-    // Only wallet spends
     if (!lower.contains(" wallet")) return null
 
     val patterns = listOf(
-        Regex("for ([a-zA-Z0-9 &.-]{2,40})", RegexOption.IGNORE_CASE),
-        Regex("on ([a-zA-Z0-9 &.-]{2,40})", RegexOption.IGNORE_CASE)
+        // Prefer "on <Merchant>" first
+        Regex("on ([a-zA-Z][a-zA-Z &.-]{2,40})", RegexOption.IGNORE_CASE),
+        // Then "for <Merchant>" but NOT txn
+        Regex("for (?!txn)([a-zA-Z][a-zA-Z &.-]{2,40})", RegexOption.IGNORE_CASE)
     )
 
     for (p in patterns) {
         val m = p.find(body)
         if (m != null) {
-            return m.groupValues[1].trim()
-                .replaceFirstChar { it.uppercase() }
+            return normalize(m.groupValues[1])
         }
     }
     return null
 }
+private fun normalize(raw: String): String {
+    return raw
+        .replace(Regex("[^a-zA-Z0-9 &.-]"), " ") // remove weird chars
+        .replace(Regex("\\s+"), " ")             // collapse spaces
+        .trim()
+        .replaceFirstChar { c ->
+            if (c.isLowerCase()) c.titlecase() else c.toString()
+        }
+}
+
 
 fun detectWalletRail(body: String?): WalletRail {
     if (body == null) return WalletRail.UNKNOWN

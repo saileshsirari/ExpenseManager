@@ -1,6 +1,5 @@
 package com.spendwise.core.linked
 
-import com.spendwise.core.com.spendwise.core.extractWalletMerchant
 import com.spendwise.core.com.spendwise.core.isBillPayment
 import com.spendwise.core.com.spendwise.core.isCardBillPayment
 import com.spendwise.core.com.spendwise.core.isCreditCardSpend
@@ -9,6 +8,7 @@ import com.spendwise.core.com.spendwise.core.isPaymentReceiptInfo
 import com.spendwise.core.com.spendwise.core.isWalletAutoload
 import com.spendwise.core.com.spendwise.core.isWalletCredit
 import com.spendwise.core.com.spendwise.core.isWalletDeduction
+import com.spendwise.core.ml.MerchantExtractorMl.extractWalletMerchant
 import com.spendwise.core.model.TransactionCoreModel
 import java.util.UUID
 import kotlin.math.absoluteValue
@@ -86,14 +86,6 @@ class LinkedTransactionDetector(
             markAsInternalTransfer(tx, confidence = 95)
             return
         }
-
-        // Wallet CREDIT (top-up / load) → INTERNAL
-        if (isWalletCredit(tx.body) ) {
-            Log.d(TAG, "INTERNAL — Wallet CREDIT")
-            markAsInternalTransfer(tx, confidence = 85)
-            return
-        }
-
         // Card → Wallet TOP-UP (only if wallet is credited)
         // Card → Wallet TOP-UP (wallet credit OR PayZapp system merchant)
         if (
@@ -105,6 +97,14 @@ class LinkedTransactionDetector(
             markAsInternalTransfer(tx, confidence = 95)
             return
         }
+        // Wallet CREDIT (top-up / load) → INTERNAL
+        if (isWalletCredit(tx.body) ) {
+            Log.d(TAG, "INTERNAL — Wallet CREDIT")
+            markAsInternalTransfer(tx, confidence = 85)
+            return
+        }
+
+
 // --------------------------------------------------------------------
 // WALLET SPEND — fix merchant before terminal return
 // --------------------------------------------------------------------

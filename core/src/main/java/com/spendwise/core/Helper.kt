@@ -251,5 +251,21 @@ fun isPaymentReceiptInfo(body: String?): Boolean {
             telcoKeywords.any { it in b }
 }
 
+ fun normalizeCardGatewayMerchant(raw: String): String {
+    val lower = raw.lowercase()
+
+    // Amazon gateways
+    if (lower.contains("amazon")) return "Amazon"
+
+    // (future-safe examples, optional)
+    if (lower.contains("flipkart")) return "Flipkart"
+    if (lower.contains("myntra")) return "Myntra"
+    if (lower.contains("swiggy")) return "Swiggy"
+    if (lower.contains("zomato")) return "Zomato"
+
+    return raw
+}
+
+
 
 

@@ -1,5 +1,6 @@
 package com.spendwise.core.ml
 
+import com.spendwise.core.com.spendwise.core.normalizeCardGatewayMerchant
 import com.spendwise.core.Logger as Log
 
 object MerchantExtractorMl {
@@ -166,7 +167,6 @@ object MerchantExtractorMl {
         }
 
 
-
         // --------------------------------------------------------------------
         // SPECIAL MERCHANT SENDERS (Airtel/Jio)
         // --------------------------------------------------------------------
@@ -205,9 +205,9 @@ object MerchantExtractorMl {
         if (!lower.contains(" wallet")) {
             val posMatch = Regex("at ([A-Za-z0-9 ][A-Za-z0-9 &.-]{2,40})").find(lower)
             if (posMatch != null) {
-                val norm = normalize(posMatch.groupValues[1])
-                Log.d(TAG, "POS merchant → $norm")
-                return norm
+                val cleaned = normalize(posMatch.groupValues[1])
+                Log.d(TAG, "POS merchant → $cleaned")
+                return normalizeCardGatewayMerchant(cleaned)
             }
         }
 
@@ -251,12 +251,26 @@ object MerchantExtractorMl {
             else -> "Credit Card"
         }
     }
+    private fun splitCamelCasePreserveAcronyms(input: String): String {
+        // Do not touch all-uppercase words (IRCTC, HDFC, UPI)
+        if (input.all { it.isUpperCase() || !it.isLetter() }) {
+            return input
+        }
 
-    fun normalize(name: String): String =
-        name.lowercase()
-            .replace("[^a-z0-9 ]".toRegex(), " ")
-            .replace("\\s+".toRegex(), " ")
+        // Insert space between lowerCase → UpperCase boundaries
+        return input.replace(
+            Regex("([a-z])([A-Z])"),
+            "$1 $2"
+        )
+    }
+
+     fun normalize(raw: String): String {
+        return raw
+            .replace(Regex("[^A-Za-z0-9 &-]"), " ") // remove junk, KEEP CASE
+            .replace(Regex("\\s+"), " ")             // collapse spaces
             .trim()
+    }
+
 
     private fun cleanSenderName(sender: String): String {
         val parts = sender.split("-", " ", "_")
@@ -270,54 +284,44 @@ object MerchantExtractorMl {
         return chosen.replace("[^A-Za-z0-9 ]".toRegex(), "")
             .uppercase()
     }
+
     // --------------------------------------------------------------------
 // WALLET SPEND — extract real merchant AFTER "for"/"on"
 // Examples:
 // "via PhonePe wallet for Wangzom Garments"
 // "via OlaMoney Wallet ... on OlaCabs"
 // --------------------------------------------------------------------
-    private fun extractWalletMerchant(body: String): String? {
-        val lower = body.lowercase()
+    fun extractWalletMerchant(body: String?): String? {
+        if (body == null) return null
 
-        // Must explicitly mention wallet
+        val lower = body.lowercase()
         if (!lower.contains(" wallet")) return null
 
-        val patterns = listOf(
-            Regex("for ([a-zA-Z0-9 &.-]{2,40})", RegexOption.IGNORE_CASE),
-            Regex("on ([a-zA-Z0-9 &.-]{2,40})", RegexOption.IGNORE_CASE)
-        )
-
-        for (p in patterns) {
-            val m = p.find(body)
-            if (m != null) {
-                return normalize(m.groupValues[1])
-            }
+        // Strong signal: "on <Merchant>."
+        Regex(
+            "on\\s+([A-Za-z][A-Za-z &-]{2,40}?)(?=\\.)",
+            RegexOption.IGNORE_CASE
+        ).find(body)?.let {
+            return splitCamelCasePreserveAcronyms(
+                normalize(it.groupValues[1])
+            )
         }
+
+        // Fallback: "for <Merchant>." but NOT txn
+        Regex(
+            "for\\s+(?!txn)([A-Za-z][A-Za-z &-]{2,40}?)(?=\\.)",
+            RegexOption.IGNORE_CASE
+        ).find(body)?.let {
+            return splitCamelCasePreserveAcronyms(
+                normalize(it.groupValues[1])
+            )
+        }
+
         return null
     }
 
-    // --------------------------------------------------------------------
-// WALLET-AWARE MERCHANT EXTRACTION
-// --------------------------------------------------------------------
-    private fun extractMerchantAfterWallet(body: String): String? {
-        val lower = body.lowercase()
 
-        // must explicitly mention wallet
-        if (!lower.contains(" wallet")) return null
 
-        // patterns like: "for XYZ", "on XYZ"
-        val patterns = listOf(
-            Regex("for ([a-zA-Z0-9 &.-]{2,40})", RegexOption.IGNORE_CASE),
-            Regex("on ([a-zA-Z0-9 &.-]{2,40})", RegexOption.IGNORE_CASE)
-        )
 
-        for (p in patterns) {
-            val m = p.find(body)
-            if (m != null) {
-                return normalize(m.groupValues[1])
-            }
-        }
-        return null
-    }
 
 }
