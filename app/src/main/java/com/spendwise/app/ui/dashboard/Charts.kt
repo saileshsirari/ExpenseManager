@@ -29,6 +29,7 @@ import androidx.compose.ui.unit.dp
 import java.time.YearMonth
 import java.time.format.DateTimeFormatter
 import kotlin.math.atan2
+import kotlin.math.min
 
 @RequiresApi(Build.VERSION_CODES.O)
 @Composable
@@ -56,50 +57,53 @@ fun MonthSelector(
 
 @Composable
 fun CategoryPieChart(
-    data: Map<String, Double>,
-    onSliceClick: (String) -> Unit
+    data: List<Double>,
+    labels: List<String>,
+    colors: List<Color>,
+    selectedLabel: String?,
+    onSliceClick: ((String?) -> Unit)? = null
 ) {
     if (data.isEmpty()) return
 
-    val colors = listOf(
-        Color(0xffE57373), Color(0xff64B5F6), Color(0xff81C784),
-        Color(0xffFFD54F), Color(0xffBA68C8), Color(0xff4DB6AC)
-    )
+    val total = data.sum()
+    if (total == 0.0) return
 
-    val total = data.values.sum().toFloat()
-    val entries = data.entries.toList()
+    val proportions = remember(data) {
+        data.map { it / total }
+    }
 
     Canvas(
         modifier = Modifier
-            .size(220.dp)
-            .pointerInput(entries) {
+            .size(260.dp)
+            .pointerInput(labels, selectedLabel) {
                 detectTapGestures { tapOffset ->
 
-                    val center = Offset((size.width / 2).toFloat(), (size.height / 2).toFloat())
+                    val center = Offset(size.width / 2f, size.height / 2f)
                     val dx = tapOffset.x - center.x
                     val dy = tapOffset.y - center.y
+                    val radius = min(size.width, size.height) / 2f
 
-                    // Check if tap is inside the circle
-                    val radius = size.width / 2
+                    // Outside circle
                     if (dx * dx + dy * dy > radius * radius) return@detectTapGestures
 
-                    // Angle in normal coordinate system (-180..180)
                     var angle = Math.toDegrees(atan2(dy, dx).toDouble()).toFloat()
+                    angle = (angle + 450) % 360
 
-                    // Convert: 0° should be TOP, clockwise rotation
-                    angle = (angle + 450) % 360   // this fixes EVERYTHING
+                    var startAngle = 0f
 
-                    var start = 0f
-                    entries.forEachIndexed { index, entry ->
-                        val sweep = (entry.value.toFloat() / total) * 360f
-                        val end = start + sweep
+                    proportions.forEachIndexed { i, prop ->
+                        val sweep = (prop * 360f).toFloat()
+                        val end = startAngle + sweep
 
-                        if (angle in start..end) {
-                            onSliceClick(entry.key)
+                        if (angle in startAngle..end) {
+                            val clicked = labels[i]
+                            val newSelection =
+                                if (clicked == selectedLabel) null else clicked
+                            onSliceClick?.invoke(newSelection)
                             return@detectTapGestures
                         }
 
-                        start = end
+                        startAngle += sweep
                     }
                 }
             }
@@ -107,20 +111,38 @@ fun CategoryPieChart(
 
         var startAngle = 0f
 
-        entries.forEachIndexed { i, entry ->
-            val sweepAngle = (entry.value.toFloat() / total) * 360f
+        proportions.forEachIndexed { i, prop ->
+            val sweep = (prop * 360f).toFloat()
+            val label = labels[i]
 
-            drawArc(
-                color = colors[i % colors.size],
-                startAngle = startAngle - 90,   // rotate entire pie
-                sweepAngle = sweepAngle,
-                useCenter = true
+            val isSelected = selectedLabel == null || selectedLabel == label
+            val alpha = if (selectedLabel == null || selectedLabel == label) 1f else 0.35f
+            val expansion = if (selectedLabel == label) 8.dp.toPx() else 0f
+
+            val arcSize = Size(
+                width = size.width + expansion,
+                height = size.height + expansion
             )
 
-            startAngle += sweepAngle
+            val topLeft = Offset(
+                x = (size.width - arcSize.width) / 2f,
+                y = (size.height - arcSize.height) / 2f
+            )
+
+            drawArc(
+                color = colors[i % colors.size].copy(alpha = alpha),
+                startAngle = startAngle - 90,
+                sweepAngle = sweep,
+                useCenter = true,
+                topLeft = topLeft,
+                size = arcSize
+            )
+
+            startAngle += sweep
         }
     }
 }
+
 
 
 

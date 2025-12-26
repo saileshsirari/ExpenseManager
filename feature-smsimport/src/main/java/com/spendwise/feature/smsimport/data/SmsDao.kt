@@ -35,15 +35,20 @@ interface SmsDao {
     @Update
     suspend fun update(item: SmsEntity)
 
+    @Query("DELETE FROM sms")
+    suspend fun deleteAll()
+
     @Query("UPDATE sms SET isIgnored = :ignored WHERE id = :id")
     suspend fun setIgnored(id: Long, ignored: Int)
 
-    @Query("""
+    @Query(
+        """
         SELECT * FROM sms
         WHERE amount = :amount
           AND timestamp BETWEEN :from AND :to
           AND id != :excludeId
-    """)
+    """
+    )
     suspend fun findByAmountAndDateRange(
         amount: Double,
         from: Long,
@@ -51,14 +56,16 @@ interface SmsDao {
         excludeId: Long
     ): List<SmsEntity>
 
-    @Query("""
+    @Query(
+        """
         UPDATE sms SET
             linkId = :linkId,
             linkType = :linkType,
             linkConfidence = :linkConfidence,
             isNetZero = :isNetZero
         WHERE id = :id
-    """)
+    """
+    )
     suspend fun updateLink(
         id: Long,
         linkId: String?,
@@ -71,7 +78,6 @@ interface SmsDao {
     suspend fun getAllLinked(): List<SmsEntity>
 
 
-
     // ======================================================
     // LINKED PATTERN TABLE
     // ======================================================
@@ -82,19 +88,55 @@ interface SmsDao {
     @Query("SELECT pattern FROM linked_patterns")
     suspend fun getAllLinkedPatterns(): List<String>
 
-    @Query("""
+    @Query(
+        """
         SELECT pattern FROM linked_patterns
         WHERE pattern LIKE '%|transferred_to'
            OR pattern LIKE '%|sent_to'
            OR pattern LIKE '%|person_transfer'
-    """)
+    """
+    )
     suspend fun getAllLinkedDebitPatterns(): List<String>
 
-    @Query("""
+    @Query(
+        """
         SELECT pattern FROM linked_patterns
         WHERE pattern LIKE '%|deposit_from'
            OR pattern LIKE '%|credited_to'
            OR pattern LIKE '%|person_transfer'
-    """)
+    """
+    )
     suspend fun getAllLinkedCreditPatterns(): List<String>
+
+
+    @Query(
+        """
+        UPDATE sms
+        SET 
+            isIgnored = :isIgnored,
+            ignoreReason = :reason,
+            updatedAt = strftime('%s','now') * 1000
+        WHERE id = :id
+    """
+    )
+    suspend fun updateIgnore(
+        id: Long,
+        isIgnored: Boolean,
+        reason: String
+    )
+
+    // ------------------------------------------------------------------
+    // Update merchant (used for wallet spends correction)
+    // ------------------------------------------------------------------
+    @Query("""
+        UPDATE sms
+        SET 
+            merchant = :merchant,
+            updatedAt = strftime('%s','now') * 1000
+        WHERE id = :id
+    """)
+    suspend fun updateMerchant(
+        id: Long,
+        merchant: String
+    )
 }

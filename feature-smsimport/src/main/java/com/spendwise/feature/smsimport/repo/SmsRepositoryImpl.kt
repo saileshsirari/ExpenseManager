@@ -38,6 +38,7 @@ class SmsRepositoryImpl @Inject constructor(
     // ------------------------------------------------------------
     override suspend fun importAll(resolverProvider: () -> ContentResolver): Flow<ImportEvent> =
         flow {
+            db.smsDao().deleteAll()
 
             val resolver = resolverProvider()
 
@@ -90,9 +91,22 @@ class SmsRepositoryImpl @Inject constructor(
 
                 // ---- ignore patterns ----
                 val bodyLower = sms.body.lowercase()
+
+
+// 🔥 HARD IGNORE — credit card spends
+              /*  if (isCreditCardSpend(bodyLower)) {
+                    Log.d("expense", "IMPORT SKIP — Credit card spend")
+                    continue
+                }*/
+
+// User-defined ignore patterns
+                if(bodyLower.contains("olamoney")) {
+                    Log.d("expense", "here import $bodyLower")
+                }
                 if (ignorePatterns.any { it.containsMatchIn(bodyLower) }) {
                     continue
                 }
+
 
                 val amount = SmsParser.parseAmount(sms.body)
                 if (amount == null || amount <= 0) continue
@@ -143,7 +157,6 @@ class SmsRepositoryImpl @Inject constructor(
             val finalList = db.smsDao().getAllOnce() // you can create this function
             emit(ImportEvent.Finished(finalList))
         }
-
 
 
     // ------------------------------------------------------------
@@ -320,6 +333,7 @@ class SmsRepositoryImpl @Inject constructor(
     suspend fun getAllOnce(): List<SmsEntity> {
         return db.smsDao().getAllOnce()
     }
+
     override suspend fun loadExisting(): List<SmsEntity> {
         return db.smsDao().getAllOnce()
     }

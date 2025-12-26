@@ -1,5 +1,6 @@
 package com.spendwise.app.ui
 
+import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -34,6 +35,7 @@ import java.util.Locale
 @Composable
 fun SmsListItem(
     sms: SmsEntity,
+    isExpanded: Boolean =false,
     onClick: (SmsEntity) -> Unit,
     onRequestMerchantFix: (SmsEntity) -> Unit,
     onMarkNotExpense: (SmsEntity, Boolean) -> Unit
@@ -52,7 +54,8 @@ fun SmsListItem(
     ElevatedCard(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable { onClick(sms) },
+            .clickable { onClick(sms) }
+            .animateContentSize() ,  // 🔥 smooth expand / collapse,
         colors = CardDefaults.elevatedCardColors(containerColor = cardColor),
         shape = RoundedCornerShape(14.dp),
         elevation = CardDefaults.cardElevation(defaultElevation = 3.dp)
@@ -106,9 +109,9 @@ fun SmsListItem(
 
                     // SMS preview
                     Text(
-                        sms.body.take(80),
+                        sms.body,
                         style = MaterialTheme.typography.bodySmall,
-                        maxLines = 2,
+                        maxLines = if (isExpanded) Int.MAX_VALUE else 2,
                         modifier = Modifier.padding(top = 4.dp)
                     )
                 }
@@ -137,12 +140,22 @@ fun SmsListItem(
                 }
 
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Checkbox(
-                        checked = sms.isIgnored,
-                        onCheckedChange = { onMarkNotExpense(sms, it) }
-                    )
-                    Text("Not Expense")
+
+                    if (!sms.isNetZero) {
+                        Checkbox(
+                            checked = sms.isIgnored,
+                            onCheckedChange = { onMarkNotExpense(sms, it) }
+                        )
+                        Text("Not Expense")
+                    } else {
+                        Text(
+                            text = "Internal transfer",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = Color.Gray
+                        )
+                    }
                 }
+
             }
         }
     }

@@ -9,17 +9,14 @@ import androidx.lifecycle.viewModelScope
 import com.spendwise.core.ml.CategoryType
 import com.spendwise.core.ml.MerchantExtractorMl
 import com.spendwise.core.ml.MlReasonBundle
+import com.spendwise.domain.com.spendwise.feature.smsimport.data.CategoryTotal
 import com.spendwise.domain.com.spendwise.feature.smsimport.data.DashboardMode
 import com.spendwise.domain.com.spendwise.feature.smsimport.data.DashboardUiState
 import com.spendwise.domain.com.spendwise.feature.smsimport.data.SortConfig
 import com.spendwise.domain.com.spendwise.feature.smsimport.data.SortField
 import com.spendwise.domain.com.spendwise.feature.smsimport.data.SortOrder
-import com.spendwise.domain.com.spendwise.feature.smsimport.data.active
-import com.spendwise.domain.com.spendwise.feature.smsimport.data.inMonth
-import com.spendwise.domain.com.spendwise.feature.smsimport.data.inQuarter
-import com.spendwise.domain.com.spendwise.feature.smsimport.data.inYear
+import com.spendwise.domain.com.spendwise.feature.smsimport.data.categoryColorProvider
 import com.spendwise.domain.com.spendwise.feature.smsimport.data.localDate
-import com.spendwise.domain.com.spendwise.feature.smsimport.data.ofType
 import com.spendwise.feature.smsimport.data.ImportEvent
 import com.spendwise.feature.smsimport.data.SmsEntity
 import com.spendwise.feature.smsimport.prefs.SmsImportPrefs
@@ -33,6 +30,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import java.time.Instant
@@ -57,6 +55,16 @@ class SmsImportViewModel @Inject constructor(
     private val uiInputs = _uiInputs.asStateFlow()
     private val _importProgress = MutableStateFlow(ImportProgress())
     val importProgress = _importProgress.asStateFlow()
+    private val _categoryTotalsAll = MutableStateFlow(emptyList<CategoryTotal>())
+    val categoryTotalsAll = _categoryTotalsAll.asStateFlow()
+    val totalSpend = categoryTotalsAll
+        .map { list -> list.sumOf { it.total } }
+        .stateIn(
+            viewModelScope,
+            SharingStarted.Eagerly,
+            0.0
+        )
+
 
     data class ImportProgress(
         val total: Int = 0,
@@ -74,6 +82,7 @@ class SmsImportViewModel @Inject constructor(
         val selectedDay: Int? = null,
         val selectedMonth: Int? = null,
         val isLoading: Boolean = true,
+        val showIgnored: Boolean = false,
 
         )
 
@@ -81,28 +90,50 @@ class SmsImportViewModel @Inject constructor(
     val uiState: StateFlow<DashboardUiState> =
         combine(items, uiInputs) { list, input ->
 
-            val base = list.active()
+            android.util.Log.d("expense","input.mode ${input.mode}")
 
-            // PERIOD filter
-            val periodTx = when (input.mode) {
-                DashboardMode.MONTH -> base.inMonth(input.period)
-                DashboardMode.QUARTER -> base.inQuarter(input.period)
-                DashboardMode.YEAR -> base.inYear(input.period.year)
-            }
+            // -----------------------------
+            // 1) Base list — ALL items
+            val baseAll = list
 
-            // Totals filtering
-            val totalsList = periodTx.filter {
-                !it.isNetZero &&
-                        it.linkType != "INTERNAL_TRANSFER" &&
-                        it.linkType != "POSSIBLE_TRANSFER"
-            }
+// 2) Period filter
+            val periodFiltered = baseAll.filterByPeriod(input.mode, input.period)
 
-            val totalDebit = totalsList
-                .filter { it.type.equals("DEBIT", true) }
-                .sumOf { it.amount }
+// 3) Internal transfer visibility
+            val afterInternalFilter =
+                if (input.showInternalTransfers) periodFiltered
+                else periodFiltered.filter { it.linkType != "INTERNAL_TRANSFER" }
 
-            val totalCredit = totalsList
-                .filter { it.type.equals("CREDIT", true) }
+// 4) Ignored visibility toggle (NEW)
+            val visibleList =
+                if (input.showIgnored) afterInternalFilter
+                else afterInternalFilter.filter { !it.isIgnored }
+
+// 5) Category filter
+            val finalList =
+                if (input.selectedType == null) visibleList
+                else visibleList.filter { it.category == input.selectedType }
+
+// 6) Expense list (math-only)
+            val expenseList = finalList.filter { it.isExpense() }
+
+
+
+            // -----------------------------
+            // 5) Recalculate category totals
+            // -----------------------------
+            recalcCategoryTotalsAll(afterInternalFilter)   // PIE
+            recalcCategoryTotals(expenseList)     // LIST
+
+            // -----------------------------
+            // 6) Compute totals (Debit / Credit)
+            // -----------------------------
+            val totalDebit = expenseList.sumOf { it.amount }
+
+
+            // Optional: credits usually informational only
+            val totalCredit = finalList
+                .filter { it.type.equals("CREDIT", true) && !it.isNetZero }
                 .sumOf { it.amount }
 
             val debitCreditTotals = mapOf(
@@ -110,41 +141,24 @@ class SmsImportViewModel @Inject constructor(
                 "CREDIT" to totalCredit
             ).filter { it.value > 0 }
 
-            // Bar chart
+            // -----------------------------
+            // 7) Compute bar chart
+            // -----------------------------
             val barData = when (input.mode) {
                 DashboardMode.MONTH ->
-                    periodTx.groupBy { it.localDate().dayOfMonth }
+                    expenseList.groupBy { it.localDate().dayOfMonth }
                         .mapValues { it.value.sumOf { tx -> tx.amount } }
 
-                DashboardMode.QUARTER, DashboardMode.YEAR ->
-                    periodTx.groupBy { it.localDate().monthValue }
+                DashboardMode.QUARTER,
+                DashboardMode.YEAR ->
+                    expenseList.groupBy { it.localDate().monthValue }
                         .mapValues { it.value.sumOf { tx -> tx.amount } }
             }
 
-            // Date filter
-            val dateFiltered = when {
-                input.mode == DashboardMode.MONTH && input.selectedDay != null ->
-                    periodTx.filter { it.localDate().dayOfMonth == input.selectedDay }
 
-                input.mode != DashboardMode.MONTH && input.selectedMonth != null ->
-                    periodTx.filter { it.localDate().monthValue == input.selectedMonth }
-
-                else -> periodTx
-            }
-
-            // Type filter
-            val typeFiltered = dateFiltered.ofType(input.selectedType)
-
-            val finalList =
-                if (input.showInternalTransfers)
-                    typeFiltered
-                else
-                    typeFiltered.filter {
-                        it.linkType != "INTERNAL_TRANSFER" &&
-                                it.linkType != "POSSIBLE_TRANSFER"
-                    }
-
-            // Sorting
+            // -----------------------------
+            // 8) Sorting
+            // -----------------------------
             val sortedList = finalList.sortedWith(
                 compareBy<SmsEntity> {
                     when (input.sortConfig.primary) {
@@ -167,8 +181,10 @@ class SmsImportViewModel @Inject constructor(
                 }
             )
 
+            // -----------------------------
+            // 9) UI State
+            // -----------------------------
             DashboardUiState(
-                // mirror inputs so UI reads authoritative mode/period/filter values
                 mode = input.mode,
                 period = input.period,
                 selectedType = input.selectedType,
@@ -176,8 +192,8 @@ class SmsImportViewModel @Inject constructor(
                 selectedMonth = input.selectedMonth,
                 showInternalTransfers = input.showInternalTransfers,
                 sortConfig = input.sortConfig,
+                showIgnored = input.showIgnored,
 
-                // computed results
                 finalList = finalList,
                 sortedList = sortedList,
 
@@ -188,17 +204,36 @@ class SmsImportViewModel @Inject constructor(
                 barData = barData,
                 isLoading = input.isLoading
             )
+        }
+            .flowOn(Dispatchers.Default)
+            .stateIn(
+                viewModelScope,
+                SharingStarted.Eagerly,
+                DashboardUiState()
+            )
 
-        }.flowOn(Dispatchers.Default)
-            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(3000), DashboardUiState())
+
 
     // ---- Expose input update functions ----
+    fun toggleShowIgnored() =
+        update { it.copy(showIgnored = !it.showIgnored) }
 
     fun updateSort(sort: SortConfig) = update { it.copy(sortConfig = sort) }
     fun toggleInternalTransfers() =
         update { it.copy(showInternalTransfers = !it.showInternalTransfers) }
 
-    fun setMode(m: DashboardMode) = update { it.copy(mode = m) }
+    fun setMode(newMode: DashboardMode) {
+        update {
+            if (it.mode == newMode) it
+            else it.copy(
+                mode = newMode,
+                selectedType = null,      // reset category filter
+                selectedDay = null,
+                selectedMonth = null
+            )
+        }
+    }
+
     fun setPeriod(p: YearMonth) = update { it.copy(period = p) }
     fun setSelectedType(t: String?) = update { it.copy(selectedType = t) }
     fun setSelectedDay(d: Int?) = update { it.copy(selectedDay = d) }
@@ -377,13 +412,6 @@ class SmsImportViewModel @Inject constructor(
         }
     }
 
-    fun markNotExpense(tx: SmsEntity) {
-        viewModelScope.launch {
-            repo.markIgnored(tx)
-            refresh()
-        }
-    }
-
 
     fun addManualExpense(
         amount: Double,
@@ -415,9 +443,11 @@ class SmsImportViewModel @Inject constructor(
     fun setIgnoredState(tx: SmsEntity, ignored: Boolean) {
         viewModelScope.launch {
             repo.setIgnored(tx.id, ignored)
-            refresh()   // reload list
+            refresh()
+            // NO refresh() needed if repo.getAll() is a Flow
         }
     }
+
 
     fun startImportIfNeeded(resolverProvider: () -> ContentResolver) {
 
@@ -452,4 +482,114 @@ class SmsImportViewModel @Inject constructor(
         }
     }
 
+
+    private val _categoryTotals = MutableStateFlow(emptyList<CategoryTotal>())
+    val categoryTotals = _categoryTotals.asStateFlow()
+
+    // --- Convenience helpers to clear or set selected filter (if needed) ---
+    fun clearSelectedType() {
+        update { it.copy(selectedType = null) } // use your existing update(...) method
+        // optionally trigger recompute if you don't recompute from combine automatically
+    }
+
+    fun setSelectedTypeSafe(type: String?) {
+        update { it.copy(selectedType = type) }
+        // The combine block should react to uiInputs.selectedType and recompute finalList / totals
+    }
+    private fun recalcCategoryTotalsAll(list: List<SmsEntity>) {
+
+        val expenseList = list.filter {
+            !it.isNetZero &&
+                    !it.isIgnored &&
+                    it.type.equals("DEBIT", true)
+        }
+
+        _categoryTotalsAll.value =
+            expenseList
+                .groupBy { it.category ?: "Uncategorized" }
+                .map { (cat, txs) ->
+                    CategoryTotal(
+                        name = cat,
+                        total = txs.sumOf { it.amount },
+                        color = categoryColorProvider(cat)
+                    )
+                }
+                .sortedByDescending { it.total }
+    }
+
+    private fun recalcCategoryTotals(list: List<SmsEntity>) {
+        _categoryTotals.value =
+            list.groupBy { it.category ?: "Other" }
+                .map { (cat, items) ->
+                    CategoryTotal(
+                        name = cat,
+                        total = items.sumOf { it.amount },
+                        color = categoryColorProvider(cat)
+                    )
+                }
+                .sortedByDescending { it.total }
+    }
+    private fun List<SmsEntity>.filterActive(): List<SmsEntity> {
+        return this.filter { !it.isNetZero }   // or any other "active" condition you prefer
+    }
+    private fun SmsEntity.isExpense(): Boolean {
+        return type.equals("DEBIT", true)
+                && !isNetZero
+                && !isIgnored
+    }
+
 }
+private fun List<SmsEntity>.filterByInternal(showInternal: Boolean): List<SmsEntity> {
+    return if (showInternal) {
+        this
+    } else {
+        this.filter { it.linkType != "INTERNAL_TRANSFER" }
+        // OR if linkType is an enum: it.linkType != LinkType.INTERNAL_TRANSFER
+    }
+}
+private fun List<SmsEntity>.filterByPeriod(
+    mode: DashboardMode,
+    period: YearMonth
+): List<SmsEntity> {
+
+    return when (mode) {
+
+        DashboardMode.MONTH -> {
+            filter {
+                val date = Instant.ofEpochMilli(it.timestamp)
+                    .atZone(ZoneId.systemDefault())
+                    .toLocalDate()
+
+                date.year == period.year && date.monthValue == period.monthValue
+            }
+        }
+
+        DashboardMode.QUARTER -> {
+            val startMonth = ((period.monthValue - 1) / 3) * 3 + 1
+            val quarterStart = YearMonth.of(period.year, startMonth)
+            val quarterEnd = quarterStart.plusMonths(2)
+
+            filter {
+                val date = Instant.ofEpochMilli(it.timestamp)
+                    .atZone(ZoneId.systemDefault())
+                    .toLocalDate()
+
+                val ym = YearMonth.of(date.year, date.monthValue)
+                ym >= quarterStart && ym <= quarterEnd
+            }
+        }
+
+        DashboardMode.YEAR -> {
+            filter {
+                val date = Instant.ofEpochMilli(it.timestamp)
+                    .atZone(ZoneId.systemDefault())
+                    .toLocalDate()
+
+                date.year == period.year
+            }
+        }
+    }
+
+
+}
+

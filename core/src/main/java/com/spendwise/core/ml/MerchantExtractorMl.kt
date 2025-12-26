@@ -1,5 +1,6 @@
 package com.spendwise.core.ml
 
+import com.spendwise.core.com.spendwise.core.normalizeCardGatewayMerchant
 import com.spendwise.core.Logger as Log
 
 object MerchantExtractorMl {
@@ -154,6 +155,19 @@ object MerchantExtractorMl {
         }
 
         // --------------------------------------------------------------------
+// WALLET SPEND (PhonePe / OlaMoney / Paytm etc.)
+// Explicit: "via <wallet> wallet for/on <merchant>"
+// --------------------------------------------------------------------
+
+        // 🔑 Wallet spend override
+        val walletMerchant = extractWalletMerchant(body)
+        if (walletMerchant != null) {
+            Log.d(TAG, "Wallet spend merchant → $walletMerchant")
+            return walletMerchant
+        }
+
+
+        // --------------------------------------------------------------------
         // SPECIAL MERCHANT SENDERS (Airtel/Jio)
         // --------------------------------------------------------------------
         merchantSenderMap.forEach { (key, pretty) ->
@@ -176,21 +190,27 @@ object MerchantExtractorMl {
         // --------------------------------------------------------------------
         // PERSON NAME DETECTOR (UPI)
         // --------------------------------------------------------------------
-        val person = extractPersonName(body)
-        if (person != null) {
-            Log.d(TAG, "Person-detected merchant → $person")
-            return person
+        // PERSON NAME DETECTOR (UPI P2P only — NOT wallets)
+        if (!lower.contains(" wallet")) {
+            val person = extractPersonName(body)
+            if (person != null) {
+                Log.d(TAG, "Person-detected merchant → $person")
+                return person
+            }
         }
 
+
         // --------------------------------------------------------------------
-        // POS detector (HDFC retail POS)
-        // --------------------------------------------------------------------
-        val posMatch = Regex("at ([A-Za-z0-9 ][A-Za-z0-9 &.-]{2,40})").find(lower)
-        if (posMatch != null) {
-            val norm = normalize(posMatch.groupValues[1])
-            Log.d(TAG, "POS merchant → $norm")
-            return norm
+        // POS detector — skip for wallet spends
+        if (!lower.contains(" wallet")) {
+            val posMatch = Regex("at ([A-Za-z0-9 ][A-Za-z0-9 &.-]{2,40})").find(lower)
+            if (posMatch != null) {
+                val cleaned = normalize(posMatch.groupValues[1])
+                Log.d(TAG, "POS merchant → $cleaned")
+                return normalizeCardGatewayMerchant(cleaned)
+            }
         }
+
 
         // --------------------------------------------------------------------
         // STANDARD KEYWORD MERCHANTS
@@ -201,6 +221,16 @@ object MerchantExtractorMl {
                 return pretty
             }
         }
+
+        // ------------------------------------------------------------
+// UPI P2P — "<NAME> credited"
+// ------------------------------------------------------------
+        val creditedPerson = extractCreditedPerson(body)
+        if (creditedPerson != null) {
+            Log.d(TAG, "UPI credited person → $creditedPerson")
+            return creditedPerson
+        }
+
 
         // --------------------------------------------------------------------
         // FALLBACK BANK SENDER CLEANING
@@ -231,12 +261,41 @@ object MerchantExtractorMl {
             else -> "Credit Card"
         }
     }
+    private fun splitCamelCasePreserveAcronyms(input: String): String {
+        // Do not touch all-uppercase words (IRCTC, HDFC, UPI)
+        if (input.all { it.isUpperCase() || !it.isLetter() }) {
+            return input
+        }
 
-    fun normalize(name: String): String =
-        name.lowercase()
-            .replace("[^a-z0-9 ]".toRegex(), " ")
-            .replace("\\s+".toRegex(), " ")
+        // Insert space between lowerCase → UpperCase boundaries
+        return input.replace(
+            Regex("([a-z])([A-Z])"),
+            "$1 $2"
+        )
+    }
+
+     fun normalize(raw: String): String {
+        return raw
+            .replace(Regex("[^A-Za-z0-9 &-]"), " ") // remove junk, KEEP CASE
+            .replace(Regex("\\s+"), " ")             // collapse spaces
             .trim()
+    }
+     fun extractCreditedPerson(body: String): String? {
+        // Matches: "; SHAHEED CHAMAN  credited"
+        val regex = Regex(
+            ";\\s*([A-Z][A-Z ]{2,40})\\s+credited",
+            RegexOption.IGNORE_CASE
+        )
+
+        val match = regex.find(body) ?: return null
+
+        val raw = match.groupValues[1].trim()
+
+        return splitCamelCasePreserveAcronyms(
+            normalize(raw)
+        )
+    }
+
 
     private fun cleanSenderName(sender: String): String {
         val parts = sender.split("-", " ", "_")
@@ -250,4 +309,44 @@ object MerchantExtractorMl {
         return chosen.replace("[^A-Za-z0-9 ]".toRegex(), "")
             .uppercase()
     }
+
+    // --------------------------------------------------------------------
+// WALLET SPEND — extract real merchant AFTER "for"/"on"
+// Examples:
+// "via PhonePe wallet for Wangzom Garments"
+// "via OlaMoney Wallet ... on OlaCabs"
+// --------------------------------------------------------------------
+    fun extractWalletMerchant(body: String?): String? {
+        if (body == null) return null
+
+        val lower = body.lowercase()
+        if (!lower.contains(" wallet")) return null
+
+        // Strong signal: "on <Merchant>."
+        Regex(
+            "on\\s+([A-Za-z][A-Za-z &-]{2,40}?)(?=\\.)",
+            RegexOption.IGNORE_CASE
+        ).find(body)?.let {
+            return splitCamelCasePreserveAcronyms(
+                normalize(it.groupValues[1])
+            )
+        }
+
+        // Fallback: "for <Merchant>." but NOT txn
+        Regex(
+            "for\\s+(?!txn)([A-Za-z][A-Za-z &-]{2,40}?)(?=\\.)",
+            RegexOption.IGNORE_CASE
+        ).find(body)?.let {
+            return splitCamelCasePreserveAcronyms(
+                normalize(it.groupValues[1])
+            )
+        }
+
+        return null
+    }
+
+
+
+
+
 }

@@ -1,9 +1,18 @@
 package com.spendwise.core.linked
 
-import com.spendwise.core.Logger as Log
+import com.spendwise.core.com.spendwise.core.isBillPayment
+import com.spendwise.core.com.spendwise.core.isCardBillPayment
+import com.spendwise.core.com.spendwise.core.isCreditCardSpend
+import com.spendwise.core.com.spendwise.core.isPayZappWalletTopup
+import com.spendwise.core.com.spendwise.core.isPaymentReceiptInfo
+import com.spendwise.core.com.spendwise.core.isWalletAutoload
+import com.spendwise.core.com.spendwise.core.isWalletCredit
+import com.spendwise.core.com.spendwise.core.isWalletDeduction
+import com.spendwise.core.ml.MerchantExtractorMl.extractWalletMerchant
 import com.spendwise.core.model.TransactionCoreModel
 import java.util.UUID
 import kotlin.math.absoluteValue
+import com.spendwise.core.Logger as Log
 
 class LinkedTransactionDetector(
     private val repo: LinkedTransactionRepository,
@@ -31,23 +40,118 @@ class LinkedTransactionDetector(
         Log.d(TAG, "\n\n========== PROCESS TX ${tx.id} ==========")
         Log.d(TAG, "type=${tx.type}, merchant=${tx.merchant}, sender=${tx.sender}")
         Log.d(TAG, "amount=${tx.amount}, ts=${tx.timestamp} (${tsReadable(tx.timestamp)})")
+        if (tx.isNetZero) {
+            Log.d(TAG, "Already net-zero → skipping further processing")
+            return
+        }
+
+        // INFO — Merchant payment acknowledgement (receipt / FYI)
+        if (isPaymentReceiptInfo(tx.body)) {
+            Log.d(TAG, "IGNORE — Payment receipt / info SMS")
+
+            repo.updateIgnore(
+                id = tx.id,
+                isIgnored = true,
+                reason = "PAYMENT_RECEIPT_INFO"
+            )
+
+            return
+        }
+// Bill payment (credit card / utility / etc.) → INTERNAL
+
+        if (isCardBillPayment(tx.body) ) {
+            Log.d(TAG, "SKIP isCardBillPayment — ${tx.body}")
+            markAsInternalTransfer(tx, confidence = 95)
+            return
+        }
+
+        if (isBillPayment(tx.body) ) {
+            Log.d(TAG, "INTERNAL — Bill payment settlement")
+            markAsInternalTransfer(tx, confidence = 95)
+            return
+        }
+        if (
+            isAssetDestination(tx.body) &&
+            !tx.body.lowercase().contains("interest")
+
+        ) {
+            Log.d(TAG, "SKIP isAssetDestination — ${tx.body}")
+            markAsInternalTransfer(tx)
+            return
+        }
+
+        // UPI Mandate → Wallet AUTOLOAD → INTERNAL
+        if (isWalletAutoload(tx.body) ) {
+            Log.d(TAG, "INTERNAL — Wallet AUTOLOAD (UPI mandate)")
+            markAsInternalTransfer(tx, confidence = 95)
+            return
+        }
+        // Card → Wallet TOP-UP (only if wallet is credited)
+        // Card → Wallet TOP-UP (wallet credit OR PayZapp system merchant)
+        if (
+            isCreditCardSpend(tx.body) && (isWalletCredit(tx.body) ||
+                    isPayZappWalletTopup(tx.body)
+                    )
+        ) {
+            Log.d(TAG, "Card → Wallet TOP-UP detected → INTERNAL_TRANSFER")
+            markAsInternalTransfer(tx, confidence = 95)
+            return
+        }
+        // Wallet CREDIT (top-up / load) → INTERNAL
+        if (isWalletCredit(tx.body) ) {
+            Log.d(TAG, "INTERNAL — Wallet CREDIT")
+            markAsInternalTransfer(tx, confidence = 85)
+            return
+        }
+
+
+// --------------------------------------------------------------------
+// WALLET SPEND — fix merchant before terminal return
+// --------------------------------------------------------------------
+        val walletMerchant = extractWalletMerchant(tx.body)
+        if (walletMerchant != null) {
+            Log.d(TAG, "Wallet spend merchant override → $walletMerchant")
+            repo.updateMerchant(tx.id, walletMerchant)
+        }
+
+        // Wallet spend = REAL EXPENSE
+        if (isWalletDeduction(tx.body)) {
+            Log.d(TAG, "Wallet spend detected → EXPENSE")
+            return   // DO NOT mark internal
+        }
+
+// Card spend to merchant / gateway → EXPENSE
+        if (isCreditCardSpend(tx.body)) {
+            Log.d(TAG, "Card spend detected → EXPENSE")
+            return
+        }
 
         if (!isDebitOrCredit(tx)) {
             Log.d(TAG, "SKIP — Not debit/credit\n")
             return
         }
 
+
+        // --------------------------------------------------
+        // 5️⃣ PURE WALLET MOVEMENT (bank → wallet)
+        // --------------------------------------------------
+
+
+
         // ---------- QUICK SINGLE-SIDED INTERNAL TRANSFER RULE (Option A) ----------
         // If it's a DEBIT and body contains internal marker -> mark as internal transfer immediately.
-        val bodyLower = tx.body?.lowercase() ?: ""
+        val bodyLower = tx.body.lowercase()
         if (tx.type?.equals("DEBIT", ignoreCase = true) == true &&
             internalMarkers.any { bodyLower.contains(it) } &&
             tx.linkId.isNullOrBlank()
         ) {
-            Log.d(TAG, "Internal-marker detected (Option A). Will mark TX ${tx.id} as INTERNAL_TRANSFER (single-sided).")
+            Log.d(
+                TAG,
+                "Internal-marker detected (Option A). Will mark TX ${tx.id} as INTERNAL_TRANSFER (single-sided)."
+            )
             val singleLinkId = "SINGLE-${UUID.randomUUID()}"
             // Mark transaction single-sided as internal transfer (net-zero) so UI and totals will exclude it
-            repo.updateLink(tx.id, singleLinkId, "INTERNAL_TRANSFER", 100, true)
+            markAsInternalTransfer(tx, confidence = 100)
 
             // Learn pattern immediately for future inference
             try {
@@ -87,24 +191,25 @@ class LinkedTransactionDetector(
 
             val score = scorePair(tx, cand)
 
-            Log.d(TAG, " → score vs TX ${cand.id} = $score (merchant=${cand.merchant}, sender=${cand.sender})")
+            Log.d(
+                TAG,
+                " → score vs TX ${cand.id} = $score (merchant=${cand.merchant}, sender=${cand.sender})"
+            )
 
             when {
-                score >= autoLinkThreshold -> {
-                    Log.d(TAG, " ⭐ AUTO-LINKED (Internal Transfer)")
+                score >= possibleLinkThreshold -> {
+                    // possibleLinkThreshold now means: "good enough to be internal"
+                    Log.d(TAG, " ⭐ INTERNAL_TRANSFER (from possible-or-better)")
+
                     applyLink(tx, cand, score, "INTERNAL_TRANSFER", true)
+
                     autoLinked = true
                     break
                 }
 
-                score >= possibleLinkThreshold -> {
-                    Log.d(TAG, " ⚠️ POSSIBLE-LINK")
-                    applyLink(tx, cand, score, "POSSIBLE_TRANSFER", false)
-                    maybeLinked = true
-                    // continue — we may find a better auto link
+                else -> {
+                    Log.d(TAG, " ❌ Not linked (score=$score)")
                 }
-
-                else -> Log.d(TAG, " ❌ Not linked (score=$score)")
             }
         }
 
@@ -114,6 +219,17 @@ class LinkedTransactionDetector(
         // Even if maybeLinked, still attempt inference for stronger historical matches
         inferMissingCredit(tx)
     }
+
+    private suspend fun markAsInternalTransfer(tx: TransactionCoreModel, confidence: Int = 90) {
+        repo.updateLink(
+            id = tx.id,
+            linkId = null,
+            linkType = "INTERNAL_TRANSFER",
+            confidence = confidence,
+            isNetZero = true
+        )
+    }
+
 
     // ------------------------------------------------------------
     // APPLY LINK
@@ -156,44 +272,32 @@ class LinkedTransactionDetector(
 
         Log.d(TAG, "---- SCORE CHECK: A=${a.id} B=${b.id} ----")
 
-        // Opposite direction required
-        if (!isOpposite(a.type, b.type)) {
-            Log.d(TAG, "   block: same direction")
-            return 0
-        }
+        if (!isOpposite(a.type, b.type)) return 0
+        if (a.amount != b.amount) return 0
 
-        // Amount must match exactly
-        if (a.amount != b.amount) {
-            Log.d(TAG, "   block: amount mismatch ${a.amount} != ${b.amount}")
-            return 0
-        }
-
-        val bodyA = a.body ?: ""
-        val bodyB = b.body ?: ""
-
-        val skipMerchantCheck =
-            isTransferLike(bodyA) || isTransferLike(bodyB) ||
-                    isCardPayment(bodyA) || isCardPayment(bodyB)
+        val bodyA = a.body.orEmpty()
+        val bodyB = b.body.orEmpty()
 
         val merchantSim = similarity(a.merchant, b.merchant)
-        Log.d(TAG, "MerchantSim=$merchantSim skipMerchantCheck=$skipMerchantCheck")
 
-        // Only block on merchant mismatch when not transfer-like
-        if (!skipMerchantCheck && merchantSim < 10) {
-            Log.d(TAG, "   block: merchant mismatch (sim=$merchantSim) and not transfer-like")
+        val transferLike =
+            isTransferLike(bodyA) && isTransferLike(bodyB)
+
+        val skipMerchantCheck =
+            transferLike ||
+                    isCardBillPayment(bodyA) || isCardBillPayment(bodyB)
+
+
+        if (!skipMerchantCheck && merchantSim < 10) return 0
+
+
+        // Inside scorePair or before linking
+        if (isCreditCardSpend(a.body) || isCreditCardSpend(b.body)) {
+            Log.d(TAG, "Skip linking — card spend detected")
             return 0
         }
-
         var score = 0
         score += amountWeight
-
-        val dayDiff = ((a.timestamp - b.timestamp).absoluteValue / DAY_MS)
-        score += when (dayDiff) {
-            0L -> dateWeightSameDay
-            1L -> dateWeightOneDay
-            else -> 0
-        }
-
         score += oppositeDirWeight
         score += (merchantSim * nameSimWeight / 100)
 
@@ -201,8 +305,29 @@ class LinkedTransactionDetector(
             score += bankMatchWeight
         }
 
+        val dayDiff =
+            ((a.timestamp - b.timestamp).absoluteValue / DAY_MS)
+
+        val strongDelayedTransfer =
+            dayDiff in 2..35 &&
+                    a.amount >= 1000 &&
+                    transferLike &&
+                    merchantSim >= 60
+
+        score += when {
+            dayDiff == 0L -> dateWeightSameDay
+            dayDiff == 1L -> dateWeightOneDay
+            strongDelayedTransfer -> {
+                Log.d(TAG, "delayed-transfer boost (dayDiff=$dayDiff)")
+                dateWeightSameDay
+            }
+
+            else -> 0
+        }
+
         return score.coerceIn(0, 100)
     }
+
 
     private fun isOpposite(a: String?, b: String?): Boolean {
         val x = a?.lowercase()
@@ -216,6 +341,12 @@ class LinkedTransactionDetector(
     private suspend fun inferMissingCredit(tx: TransactionCoreModel) {
         Log.d(TAG, "---- Missing Credit Inference for TX=${tx.id} ----")
         Log.d(TAG, "merchant=${tx.merchant}, amount=${tx.amount}, sender=${tx.sender}")
+
+        // Do not touch already-internal transactions
+        if (tx.linkType == "INTERNAL_TRANSFER") {
+            Log.d(TAG, "Skip inference — already INTERNAL_TRANSFER")
+            return
+        }
 
         // 1) Build normalized key for current tx
         val normMerchant = normalize(tx.merchant ?: tx.sender ?: "")
@@ -232,36 +363,34 @@ class LinkedTransactionDetector(
         }
 
         Log.d(TAG, "Expected pattern count = ${expectedPatterns.size}")
-        expectedPatterns.forEach { pat ->
-            Log.d(TAG, " → ExpectedPattern = '$pat'")
-        }
 
         if (!expectedPatterns.contains(currentKey)) {
             Log.d(TAG, "❌ No matching opposite-pattern → skip inference.")
-            Log.d(TAG, "Current key was '$currentKey', but expected patterns were:")
-            expectedPatterns.forEach { Log.d(TAG, "   - '$it'") }
             return
         }
 
         Log.d(TAG, "✅ Opposite-pattern FOUND → searching wider window...")
 
-        // 3) wide window ± inferenceWindowDays
+        // 3) Wide window ± inferenceWindowDays
         val window = inferenceWindowDays * DAY_MS
         val from = tx.timestamp - window
         val to = tx.timestamp + window
 
-        val candidates = repo.findCandidates(tx.amount, from, to, tx.id)
+        val candidates = repo.findCandidates(
+            amount = tx.amount,
+            from = from,
+            to = to,
+            excludeId = tx.id
+        )
 
         Log.d(TAG, "Found ${candidates.size} wide-window candidates")
 
-        val filtered = candidates.filter { isOpposite(tx.type, it.type) }
+        val best = candidates
+            .asSequence()
+            .filter { isOpposite(tx.type, it.type) }
             .filter { similarity(tx.merchant, it.merchant) >= 20 }
-
-        Log.d(TAG, "Filtered to ${filtered.size} opposite-direction + merchant-sim candidates")
-
-        val best = filtered
             .map { it to scorePair(tx, it) }
-            .filter { it.second >= possibleLinkThreshold }
+            .filter { it.second >= autoLinkThreshold }   // 🔑 ONLY internal-worthy
             .maxByOrNull { it.second }
 
         if (best == null) {
@@ -271,9 +400,17 @@ class LinkedTransactionDetector(
 
         val (match, score) = best
 
-        Log.d(TAG, "✅ INFERRED MATCH → TX=${match.id}, score=$score")
-        applyLink(tx, match, score, "POSSIBLE_TRANSFER", false)
+        Log.d(TAG, "⭐ INFERRED INTERNAL_TRANSFER → TX=${match.id}, score=$score")
+
+        applyLink(
+            a = tx,
+            b = match,
+            score = score,
+            type = "INTERNAL_TRANSFER",
+            isNetZero = true
+        )
     }
+
 
     // ------------------------------------------------------------
     // HELPERS
@@ -318,11 +455,46 @@ class LinkedTransactionDetector(
                 internalMarkers.any { b.contains(it) })
     }
 
-    private fun isCardPayment(text: String?): Boolean {
-        if (text == null) return false
-        val b = text.lowercase()
-        return ("credit card" in b || "card payment" in b || "bill payment" in b)
+    private val assetRegexes = listOf(
+        // Mutual Funds
+        "\\bmutual fund(s)?\\b",
+        "\\bmf\\b",
+        "\\bsip(s)?\\b",
+        "\\bfolio(s)?\\b",
+        "\\bcams\\b",
+        "\\bkfintech\\b",
+        "\\bgroww\\b",
+        "\\bzerodha\\b",
+        "\\bcoin\\b",
+
+        // EPF / PF / VPF
+        "\\bepf\\b",
+        "\\bpf\\b",
+        "\\bvpf\\b",
+        "\\bepfo\\b",
+        "\\buan\\b",
+
+        // NPS
+        "\\bnps\\b",
+        "\\bpran(s)?\\b",
+
+        // RD / FD / TD
+        "\\brd(s)?\\b",
+        "\\bfd(s)?\\b",
+        "\\btd(s)?\\b",
+
+        // Implicit asset signals
+        "passbook balance",
+        "contribution of"
+    ).map { Regex(it) }
+
+
+    private fun isAssetDestination(body: String?): Boolean {
+        if (body == null) return false
+        val b = body.lowercase()
+        return assetRegexes.any { it.containsMatchIn(b) }
     }
+
 
     private fun similarity(a: String?, b: String?): Int {
         if (a.isNullOrBlank() || b.isNullOrBlank()) return 0
@@ -345,6 +517,7 @@ class LinkedTransactionDetector(
         val t = tx.type?.lowercase() ?: return false
         return (t == "debit" || t == "credit")
     }
+
 
     companion object {
         private const val DAY_MS = 24L * 60L * 60L * 1000L

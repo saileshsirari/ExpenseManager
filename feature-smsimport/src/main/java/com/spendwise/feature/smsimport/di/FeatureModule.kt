@@ -58,3 +58,5 @@ val MIGRATION_2_3 = object : Migration(2, 3) {
         db.execSQL("ALTER TABLE sms ADD COLUMN isNetZero INTEGER NOT NULL DEFAULT 0")
     }
 }
+
+

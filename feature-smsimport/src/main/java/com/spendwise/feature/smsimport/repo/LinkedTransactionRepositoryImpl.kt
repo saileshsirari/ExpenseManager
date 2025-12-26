@@ -34,6 +34,8 @@ class LinkedTransactionRepositoryImpl(
         isNetZero: Boolean
     ) {
         dao.updateLink(id, linkId, linkType, confidence, isNetZero)
+
+
     }
 
     // ---------------------------------------------------------
@@ -49,6 +51,8 @@ class LinkedTransactionRepositoryImpl(
     override suspend fun saveLinkedPattern(pattern: String) {
         dao.insertPattern(LinkedPatternEntity(pattern))
     }
+
+
 
     // ---------------------------------------------------------
     // READ ALL STORED PATTERNS
@@ -68,5 +72,13 @@ class LinkedTransactionRepositoryImpl(
     // ---------------------------------------------------------
     override suspend fun getAllLinkedCreditPatterns(): Set<String> {
         return dao.getAllLinkedCreditPatterns().toSet()
+    }
+
+    override suspend fun updateIgnore(id: Long, isIgnored: Boolean, reason: String) {
+        dao.updateIgnore(id, isIgnored, reason)
+    }
+
+    override suspend fun updateMerchant(id: Long, merchant: String) {
+        dao.updateMerchant(id,merchant)
     }
 }
