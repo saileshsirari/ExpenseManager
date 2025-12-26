@@ -21,6 +21,7 @@ data class SmsEntity(
     val merchant: String?,
     val type: String?,          // debit/credit/etc (from ML)
     val category: String?,
+    val showIgnored: Boolean = false,
 
     // 🔒 Ignore / override
     val isIgnored: Boolean = false,

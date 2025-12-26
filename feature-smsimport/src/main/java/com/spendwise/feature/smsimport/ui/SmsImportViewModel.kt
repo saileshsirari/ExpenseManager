@@ -82,6 +82,7 @@ class SmsImportViewModel @Inject constructor(
         val selectedDay: Int? = null,
         val selectedMonth: Int? = null,
         val isLoading: Boolean = true,
+        val showIgnored: Boolean = false,
 
         )
 
@@ -92,35 +93,28 @@ class SmsImportViewModel @Inject constructor(
             android.util.Log.d("expense","input.mode ${input.mode}")
 
             // -----------------------------
-            // 1) Base filter — ACTIVE only
-            // -----------------------------
-            val activeList = list.filter { !it.isIgnored }
+            // 1) Base list — ALL items
+            val baseAll = list
 
-            // -----------------------------
-            // 2) Period filtering (MONTH / QUARTER / YEAR)
-            // -----------------------------
-            val periodFiltered = activeList.filterByPeriod(input.mode, input.period)
+// 2) Period filter
+            val periodFiltered = baseAll.filterByPeriod(input.mode, input.period)
 
-            // -----------------------------
-            // 3) Internal transfer toggle
-            // -----------------------------
-            val baseList = periodFiltered.filterByInternal(input.showInternalTransfers)
-            // 🚀 baseList is the ONLY list used by the PIE
+// 3) Internal transfer visibility
+            val afterInternalFilter =
+                if (input.showInternalTransfers) periodFiltered
+                else periodFiltered.filter { it.linkType != "INTERNAL_TRANSFER" }
 
-            // -----------------------------
-            // 4) Category selection filter (Insights)
-            // -----------------------------
+// 4) Ignored visibility toggle (NEW)
+            val visibleList =
+                if (input.showIgnored) afterInternalFilter
+                else afterInternalFilter.filter { !it.isIgnored }
+
+// 5) Category filter
             val finalList =
-                if (input.selectedType == null) baseList
-                else baseList.filter { it.category == input.selectedType }
-            // 🚀 ONLY finalList filters by category
+                if (input.selectedType == null) visibleList
+                else visibleList.filter { it.category == input.selectedType }
 
-            // -----------------------------
-// 4.5) Expense-effective list
-// -----------------------------
-            // -----------------------------
-// 4.5) Expense list (canonical)
-// -----------------------------
+// 6) Expense list (math-only)
             val expenseList = finalList.filter { it.isExpense() }
 
 
@@ -128,7 +122,7 @@ class SmsImportViewModel @Inject constructor(
             // -----------------------------
             // 5) Recalculate category totals
             // -----------------------------
-            recalcCategoryTotalsAll(baseList)   // PIE
+            recalcCategoryTotalsAll(afterInternalFilter)   // PIE
             recalcCategoryTotals(expenseList)     // LIST
 
             // -----------------------------
@@ -198,6 +192,7 @@ class SmsImportViewModel @Inject constructor(
                 selectedMonth = input.selectedMonth,
                 showInternalTransfers = input.showInternalTransfers,
                 sortConfig = input.sortConfig,
+                showIgnored = input.showIgnored,
 
                 finalList = finalList,
                 sortedList = sortedList,
@@ -220,6 +215,8 @@ class SmsImportViewModel @Inject constructor(
 
 
     // ---- Expose input update functions ----
+    fun toggleShowIgnored() =
+        update { it.copy(showIgnored = !it.showIgnored) }
 
     fun updateSort(sort: SortConfig) = update { it.copy(sortConfig = sort) }
     fun toggleInternalTransfers() =
@@ -415,13 +412,6 @@ class SmsImportViewModel @Inject constructor(
         }
     }
 
-    fun markNotExpense(tx: SmsEntity) {
-        viewModelScope.launch {
-            repo.markIgnored(tx)
-            refresh()
-        }
-    }
-
 
     fun addManualExpense(
         amount: Double,
@@ -453,9 +443,11 @@ class SmsImportViewModel @Inject constructor(
     fun setIgnoredState(tx: SmsEntity, ignored: Boolean) {
         viewModelScope.launch {
             repo.setIgnored(tx.id, ignored)
-            refresh()   // reload list
+            refresh()
+            // NO refresh() needed if repo.getAll() is a Flow
         }
     }
+
 
     fun startImportIfNeeded(resolverProvider: () -> ContentResolver) {
 
@@ -468,19 +460,12 @@ class SmsImportViewModel @Inject constructor(
             importAll(resolverProvider)
 
         } else {
-          /*  // 1) No import → load DB instantly
+            // 1) No import → load DB instantly
             update { it.copy(isLoading = true) }
             _importProgress.value = ImportProgress(done = true)  // IMPORTANT
 
             // 2) Load DB data
-            loadExistingData()*/
-
-            // 1) Start loading
-            update { it.copy(isLoading = true) }
-            _importProgress.value = ImportProgress(done = false)
-
-            // 2) Start import
-            importAll(resolverProvider)
+            loadExistingData()
         }
     }
 
@@ -548,7 +533,9 @@ class SmsImportViewModel @Inject constructor(
         return this.filter { !it.isNetZero }   // or any other "active" condition you prefer
     }
     private fun SmsEntity.isExpense(): Boolean {
-        return !isNetZero && type.equals("DEBIT", true)
+        return type.equals("DEBIT", true)
+                && !isNetZero
+                && !isIgnored
     }
 
 }

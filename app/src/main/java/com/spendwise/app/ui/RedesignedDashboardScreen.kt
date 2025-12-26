@@ -31,6 +31,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Divider
 import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -52,7 +53,6 @@ import androidx.compose.ui.unit.dp
 import androidx.navigation.NavController
 import com.spendwise.app.navigation.Screen
 import com.spendwise.app.ui.dashboard.CategoryPieChart
-import com.spendwise.app.ui.dashboard.DailyBarChart
 import com.spendwise.app.ui.dashboard.FixMerchantDialog
 import com.spendwise.core.extensions.nextQuarter
 import com.spendwise.core.extensions.previousQuarter
@@ -189,51 +189,32 @@ fun RedesignedDashboardScreen(
                 Spacer(Modifier.height(12.dp))
             }
 
-            item {
-                // Primary visualization: Bar chart (trend-first)
-                Card(modifier = Modifier.fillMaxWidth()) {
-                    Column(modifier = Modifier.padding(12.dp)) {
-                        Text("Spending trend", style = MaterialTheme.typography.titleMedium)
-                        Spacer(Modifier.height(8.dp))
-                        // Use your existing DailyBarChart which is performant
-                        DailyBarChart(
-                            data = uiState.barData,
-                            onBarClick = { dayIndex -> viewModel.setSelectedDay(dayIndex) }
-                        )
-
-                        Spacer(Modifier.height(16.dp))
-
-                        // Sorting
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween
-                        ) {
-                            SortHeader(
-                                sortConfig = uiState.sortConfig,
-                                onSortChange = { viewModel.updateSort(it) }
-                            )
-                        }
-
-                        Spacer(Modifier.height(12.dp))
-
-                    }
-                }
-                Spacer(Modifier.height(12.dp))
-            }
 
             item {
                 // Quick filters & actions row
                 QuickActionsRow(
                     showInternal = uiState.showInternalTransfers,
+                    showExcluded = uiState.showIgnored,
                     onToggleInternal = { viewModel.toggleInternalTransfers() },
                     onOpenInsights = { navController.navigate(Screen.Insights.route) },
-                    onClearFilters = {
-                        viewModel.setSelectedTypeSafe(null); viewModel.setSelectedDay(
-                        null
-                    )
+                    onToggleExcluded = {
+                        viewModel.toggleShowIgnored()
                     }
+
                 )
                 Spacer(Modifier.height(8.dp))
+            }
+
+
+
+            item {
+                Spacer(Modifier.height(12.dp))
+                SortHeader(
+                    sortConfig = uiState.sortConfig,
+                    onSortChange = { viewModel.updateSort(it) }
+                )
+                Spacer(Modifier.height(12.dp))
+
             }
 
             item {
@@ -243,7 +224,6 @@ fun RedesignedDashboardScreen(
                     modifier = Modifier.padding(vertical = 6.dp)
                 )
             }
-
             // Transaction list: lightweight items (no heavy recompute here)
 
             items(
@@ -536,67 +516,50 @@ fun SummaryHeader(totalDebit: Double, totalCredit: Double, onOpenInsights: () ->
             Text("₹${totalCredit.toInt()}", style = MaterialTheme.typography.titleMedium)
         }
     }
-    Spacer(Modifier.height(8.dp))
-    // mini donut + insights CTA row
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        SmallDonutCard(onClick = onOpenInsights)
-        Button(onClick = onOpenInsights) {
-            Text("View insights")
-        }
-    }
-}
-
-@Composable
-fun SmallDonutCard(onClick: () -> Unit) {
-    Card(
-        modifier = Modifier
-            .size(92.dp)
-            .clickable { onClick() }) {
-        Column(
-            modifier = Modifier.padding(8.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.Center
-        ) {
-            // placeholder mini donut — replace with a small CategoryPieChart if you want
-            Box(
-                modifier = Modifier
-                    .size(48.dp)
-                    .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.08f)),
-                contentAlignment = Alignment.Center
-            ) {
-                Text("Pie", style = MaterialTheme.typography.bodySmall)
-            }
-            Spacer(Modifier.height(6.dp))
-            Text("Categories", style = MaterialTheme.typography.bodySmall)
-        }
-    }
 }
 
 @Composable
 fun QuickActionsRow(
     showInternal: Boolean,
+    showExcluded: Boolean,
     onToggleInternal: () -> Unit,
     onOpenInsights: () -> Unit,
-    onClearFilters: () -> Unit
+    onToggleExcluded: () -> Unit,
 ) {
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Button(onClick = onOpenInsights) { Text("Insights") }
-            Spacer(Modifier.height(4.dp))
-            Button(onClick = onClearFilters) { Text("Clear") }
-        }
-        Row {
-            Button(onClick = onToggleInternal) {
-                Text(if (showInternal) "Hide transfers" else "Show transfers")
+    Column(modifier = Modifier.fillMaxWidth()) {
+
+        // Row 1: Primary actions
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Button(onClick = onOpenInsights) {
+                Text("Insights")
             }
+        }
+
+        Spacer(Modifier.height(8.dp))
+
+        // Row 2: Filter chips (secondary / advanced)
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            FilterChip(
+                selected = showInternal,
+                onClick = onToggleInternal,
+                label = {
+                    Text(if (showInternal) "Transfers shown" else "Transfers hidden")
+                }
+            )
+
+            FilterChip(
+                selected = showExcluded,
+                onClick = onToggleExcluded,
+                label = { Text("Excluded") }
+            )
+
         }
     }
 }

@@ -11,6 +11,8 @@ data class DashboardUiState(
     val selectedDay: Int? = null,
     val selectedMonth: Int? = null,
     val showInternalTransfers: Boolean = false,
+    val showIgnored: Boolean = false,
+
     val sortConfig: SortConfig = SortConfig(),
 
     val finalList: List<SmsEntity> = emptyList(),
