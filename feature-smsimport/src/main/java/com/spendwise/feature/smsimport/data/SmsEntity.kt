@@ -10,7 +10,6 @@ import androidx.room.PrimaryKey
         Index(value = ["sender", "timestamp", "body"], unique = true)
     ]
 )
-
 data class SmsEntity(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
     val sender: String,
@@ -22,7 +21,13 @@ data class SmsEntity(
     val merchant: String?,
     val type: String?,          // debit/credit/etc (from ML)
     val category: String?,
+
+    // 🔒 Ignore / override
     val isIgnored: Boolean = false,
+
+    // 🔑 ADD THESE (new, safe)
+    val ignoreReason: String? = null,
+    val updatedAt: Long = 0L,
 
     // Linked-transfer fields
     val linkId: String? = null,
@@ -30,4 +35,5 @@ data class SmsEntity(
     val linkConfidence: Int = 0,
     val isNetZero: Boolean = false        // true when auto-excluded by linking
 )
+
 

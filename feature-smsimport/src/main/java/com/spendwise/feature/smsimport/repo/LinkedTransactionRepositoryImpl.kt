@@ -52,6 +52,8 @@ class LinkedTransactionRepositoryImpl(
         dao.insertPattern(LinkedPatternEntity(pattern))
     }
 
+
+
     // ---------------------------------------------------------
     // READ ALL STORED PATTERNS
     // ---------------------------------------------------------
@@ -70,5 +72,9 @@ class LinkedTransactionRepositoryImpl(
     // ---------------------------------------------------------
     override suspend fun getAllLinkedCreditPatterns(): Set<String> {
         return dao.getAllLinkedCreditPatterns().toSet()
+    }
+
+    override suspend fun updateIgnore(id: Long, isIgnored: Boolean, reason: String) {
+        dao.updateIgnore(id, isIgnored, reason)
     }
 }

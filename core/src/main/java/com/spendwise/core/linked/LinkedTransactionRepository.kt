@@ -28,4 +28,6 @@ interface LinkedTransactionRepository {
     suspend fun getAllLinkedCreditPatterns(): Set<String>
 
     suspend fun saveLinkedPattern(pattern: String)
+
+    suspend fun updateIgnore(id: Long, isIgnored: Boolean, reason: String)
 }

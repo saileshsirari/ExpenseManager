@@ -4,6 +4,7 @@ import com.spendwise.core.com.spendwise.core.isBillPayment
 import com.spendwise.core.com.spendwise.core.isCardBillPayment
 import com.spendwise.core.com.spendwise.core.isCreditCardSpend
 import com.spendwise.core.com.spendwise.core.isPayZappWalletTopup
+import com.spendwise.core.com.spendwise.core.isPaymentReceiptInfo
 import com.spendwise.core.com.spendwise.core.isWalletAutoload
 import com.spendwise.core.com.spendwise.core.isWalletCredit
 import com.spendwise.core.com.spendwise.core.isWalletDeduction
@@ -56,6 +57,19 @@ class LinkedTransactionDetector(
             return
         }
 
+
+        // INFO — Merchant payment acknowledgement (receipt / FYI)
+        if (isPaymentReceiptInfo(tx.body)) {
+            Log.d(TAG, "IGNORE — Payment receipt / info SMS")
+
+            repo.updateIgnore(
+                id = tx.id,
+                isIgnored = true,
+                reason = "PAYMENT_RECEIPT_INFO"
+            )
+
+            return
+        }
 
 
 
