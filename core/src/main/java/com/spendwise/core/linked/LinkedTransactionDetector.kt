@@ -1,5 +1,6 @@
 package com.spendwise.core.linked
 
+import com.spendwise.core.com.spendwise.core.extractWalletMerchant
 import com.spendwise.core.com.spendwise.core.isBillPayment
 import com.spendwise.core.com.spendwise.core.isCardBillPayment
 import com.spendwise.core.com.spendwise.core.isCreditCardSpend
@@ -43,20 +44,6 @@ class LinkedTransactionDetector(
             Log.d(TAG, "Already net-zero → skipping further processing")
             return
         }
-// Bill payment (credit card / utility / etc.) → INTERNAL
-
-        if (isCardBillPayment(tx.body) ) {
-            Log.d(TAG, "SKIP isCardBillPayment — ${tx.body}")
-            markAsInternalTransfer(tx, confidence = 95)
-            return
-        }
-
-        if (isBillPayment(tx.body) && !tx.isNetZero) {
-            Log.d(TAG, "INTERNAL — Bill payment settlement")
-            markAsInternalTransfer(tx, confidence = 95)
-            return
-        }
-
 
         // INFO — Merchant payment acknowledgement (receipt / FYI)
         if (isPaymentReceiptInfo(tx.body)) {
@@ -70,9 +57,19 @@ class LinkedTransactionDetector(
 
             return
         }
+// Bill payment (credit card / utility / etc.) → INTERNAL
 
+        if (isCardBillPayment(tx.body) ) {
+            Log.d(TAG, "SKIP isCardBillPayment — ${tx.body}")
+            markAsInternalTransfer(tx, confidence = 95)
+            return
+        }
 
-
+        if (isBillPayment(tx.body) ) {
+            Log.d(TAG, "INTERNAL — Bill payment settlement")
+            markAsInternalTransfer(tx, confidence = 95)
+            return
+        }
         if (
             isAssetDestination(tx.body) &&
             !tx.body.lowercase().contains("interest")
@@ -83,32 +80,51 @@ class LinkedTransactionDetector(
             return
         }
 
-        // Wallet spend = REAL EXPENSE
-        if (isWalletDeduction(tx.body)) {
-            Log.d(TAG, "Wallet spend detected → EXPENSE")
-            return   // DO NOT mark internal
+        // UPI Mandate → Wallet AUTOLOAD → INTERNAL
+        if (isWalletAutoload(tx.body) ) {
+            Log.d(TAG, "INTERNAL — Wallet AUTOLOAD (UPI mandate)")
+            markAsInternalTransfer(tx, confidence = 95)
+            return
         }
+
+        // Wallet CREDIT (top-up / load) → INTERNAL
+        if (isWalletCredit(tx.body) ) {
+            Log.d(TAG, "INTERNAL — Wallet CREDIT")
+            markAsInternalTransfer(tx, confidence = 85)
+            return
+        }
+
         // Card → Wallet TOP-UP (only if wallet is credited)
         // Card → Wallet TOP-UP (wallet credit OR PayZapp system merchant)
         if (
             isCreditCardSpend(tx.body) && (isWalletCredit(tx.body) ||
-                            isPayZappWalletTopup(tx.body)
+                    isPayZappWalletTopup(tx.body)
                     )
         ) {
             Log.d(TAG, "Card → Wallet TOP-UP detected → INTERNAL_TRANSFER")
             markAsInternalTransfer(tx, confidence = 95)
             return
         }
+// --------------------------------------------------------------------
+// WALLET SPEND — fix merchant before terminal return
+// --------------------------------------------------------------------
+        val walletMerchant = extractWalletMerchant(tx.body)
+        if (walletMerchant != null) {
+            Log.d(TAG, "Wallet spend merchant override → $walletMerchant")
+            repo.updateMerchant(tx.id, walletMerchant)
+        }
 
+        // Wallet spend = REAL EXPENSE
+        if (isWalletDeduction(tx.body)) {
+            Log.d(TAG, "Wallet spend detected → EXPENSE")
+            return   // DO NOT mark internal
+        }
 
 // Card spend to merchant / gateway → EXPENSE
         if (isCreditCardSpend(tx.body)) {
             Log.d(TAG, "Card spend detected → EXPENSE")
             return
         }
-
-
-
 
         if (!isDebitOrCredit(tx)) {
             Log.d(TAG, "SKIP — Not debit/credit\n")
@@ -119,19 +135,7 @@ class LinkedTransactionDetector(
         // --------------------------------------------------
         // 5️⃣ PURE WALLET MOVEMENT (bank → wallet)
         // --------------------------------------------------
-        // Wallet CREDIT (top-up / load) → INTERNAL
-        if (isWalletCredit(tx.body) ) {
-            Log.d(TAG, "INTERNAL — Wallet CREDIT")
-            markAsInternalTransfer(tx, confidence = 85)
-            return
-        }
 
-        // UPI Mandate → Wallet AUTOLOAD → INTERNAL
-        if (isWalletAutoload(tx.body) ) {
-            Log.d(TAG, "INTERNAL — Wallet AUTOLOAD (UPI mandate)")
-            markAsInternalTransfer(tx, confidence = 95)
-            return
-        }
 
 
         // ---------- QUICK SINGLE-SIDED INTERNAL TRANSFER RULE (Option A) ----------
@@ -449,31 +453,6 @@ class LinkedTransactionDetector(
                 "deposit" in b ||
                 "credited by" in b ||
                 internalMarkers.any { b.contains(it) })
-    }
-
-    private fun isWalletTransaction(body: String?): Boolean {
-        if (body == null) return false
-        val b = body.lowercase()
-
-        val walletKeywords = listOf(
-            "wallet",
-            "payzapp",
-            "paytm",
-            "phonepe",
-            "amazon pay",
-            "amazonpay",
-            "mobikwik",
-            "freecharge",
-            "google pay balance",
-            "gpay balance",
-
-            //OLA
-            "ola money",
-            "ola financial",
-            "ola financial s"
-        )
-
-        return walletKeywords.any { it in b }
     }
 
     private val assetRegexes = listOf(

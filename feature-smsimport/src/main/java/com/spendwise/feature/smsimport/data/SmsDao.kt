@@ -124,4 +124,19 @@ interface SmsDao {
         isIgnored: Boolean,
         reason: String
     )
+
+    // ------------------------------------------------------------------
+    // Update merchant (used for wallet spends correction)
+    // ------------------------------------------------------------------
+    @Query("""
+        UPDATE sms
+        SET 
+            merchant = :merchant,
+            updatedAt = strftime('%s','now') * 1000
+        WHERE id = :id
+    """)
+    suspend fun updateMerchant(
+        id: Long,
+        merchant: String
+    )
 }

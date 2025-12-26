@@ -77,4 +77,8 @@ class LinkedTransactionRepositoryImpl(
     override suspend fun updateIgnore(id: Long, isIgnored: Boolean, reason: String) {
         dao.updateIgnore(id, isIgnored, reason)
     }
+
+    override suspend fun updateMerchant(id: Long, merchant: String) {
+        dao.updateMerchant(id,merchant)
+    }
 }

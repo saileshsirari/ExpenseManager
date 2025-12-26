@@ -154,6 +154,20 @@ object MerchantExtractorMl {
         }
 
         // --------------------------------------------------------------------
+// WALLET SPEND (PhonePe / OlaMoney / Paytm etc.)
+// Explicit: "via <wallet> wallet for/on <merchant>"
+// --------------------------------------------------------------------
+
+        // 🔑 Wallet spend override
+        val walletMerchant = extractWalletMerchant(body)
+        if (walletMerchant != null) {
+            Log.d(TAG, "Wallet spend merchant → $walletMerchant")
+            return walletMerchant
+        }
+
+
+
+        // --------------------------------------------------------------------
         // SPECIAL MERCHANT SENDERS (Airtel/Jio)
         // --------------------------------------------------------------------
         merchantSenderMap.forEach { (key, pretty) ->
@@ -176,21 +190,27 @@ object MerchantExtractorMl {
         // --------------------------------------------------------------------
         // PERSON NAME DETECTOR (UPI)
         // --------------------------------------------------------------------
-        val person = extractPersonName(body)
-        if (person != null) {
-            Log.d(TAG, "Person-detected merchant → $person")
-            return person
+        // PERSON NAME DETECTOR (UPI P2P only — NOT wallets)
+        if (!lower.contains(" wallet")) {
+            val person = extractPersonName(body)
+            if (person != null) {
+                Log.d(TAG, "Person-detected merchant → $person")
+                return person
+            }
         }
 
+
         // --------------------------------------------------------------------
-        // POS detector (HDFC retail POS)
-        // --------------------------------------------------------------------
-        val posMatch = Regex("at ([A-Za-z0-9 ][A-Za-z0-9 &.-]{2,40})").find(lower)
-        if (posMatch != null) {
-            val norm = normalize(posMatch.groupValues[1])
-            Log.d(TAG, "POS merchant → $norm")
-            return norm
+        // POS detector — skip for wallet spends
+        if (!lower.contains(" wallet")) {
+            val posMatch = Regex("at ([A-Za-z0-9 ][A-Za-z0-9 &.-]{2,40})").find(lower)
+            if (posMatch != null) {
+                val norm = normalize(posMatch.groupValues[1])
+                Log.d(TAG, "POS merchant → $norm")
+                return norm
+            }
         }
+
 
         // --------------------------------------------------------------------
         // STANDARD KEYWORD MERCHANTS
@@ -250,4 +270,54 @@ object MerchantExtractorMl {
         return chosen.replace("[^A-Za-z0-9 ]".toRegex(), "")
             .uppercase()
     }
+    // --------------------------------------------------------------------
+// WALLET SPEND — extract real merchant AFTER "for"/"on"
+// Examples:
+// "via PhonePe wallet for Wangzom Garments"
+// "via OlaMoney Wallet ... on OlaCabs"
+// --------------------------------------------------------------------
+    private fun extractWalletMerchant(body: String): String? {
+        val lower = body.lowercase()
+
+        // Must explicitly mention wallet
+        if (!lower.contains(" wallet")) return null
+
+        val patterns = listOf(
+            Regex("for ([a-zA-Z0-9 &.-]{2,40})", RegexOption.IGNORE_CASE),
+            Regex("on ([a-zA-Z0-9 &.-]{2,40})", RegexOption.IGNORE_CASE)
+        )
+
+        for (p in patterns) {
+            val m = p.find(body)
+            if (m != null) {
+                return normalize(m.groupValues[1])
+            }
+        }
+        return null
+    }
+
+    // --------------------------------------------------------------------
+// WALLET-AWARE MERCHANT EXTRACTION
+// --------------------------------------------------------------------
+    private fun extractMerchantAfterWallet(body: String): String? {
+        val lower = body.lowercase()
+
+        // must explicitly mention wallet
+        if (!lower.contains(" wallet")) return null
+
+        // patterns like: "for XYZ", "on XYZ"
+        val patterns = listOf(
+            Regex("for ([a-zA-Z0-9 &.-]{2,40})", RegexOption.IGNORE_CASE),
+            Regex("on ([a-zA-Z0-9 &.-]{2,40})", RegexOption.IGNORE_CASE)
+        )
+
+        for (p in patterns) {
+            val m = p.find(body)
+            if (m != null) {
+                return normalize(m.groupValues[1])
+            }
+        }
+        return null
+    }
+
 }
