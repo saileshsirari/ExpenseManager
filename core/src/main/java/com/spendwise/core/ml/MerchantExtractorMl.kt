@@ -1,6 +1,5 @@
 package com.spendwise.core.ml
 
-import com.spendwise.core.com.spendwise.core.normalizeCardGatewayMerchant
 import com.spendwise.core.Logger as Log
 
 object MerchantExtractorMl {
@@ -203,24 +202,24 @@ object MerchantExtractorMl {
         // --------------------------------------------------------------------
         // POS detector — skip for wallet spends
         if (!lower.contains(" wallet")) {
-            val posMatch = Regex("at ([A-Za-z0-9 ][A-Za-z0-9 &.-]{2,40})").find(lower)
+            val posMatch = Regex(
+                "at\\s+([A-Za-z0-9 _&-]{2,50}?)(?=\\.{1,2}|\\s+on\\s|\\s+bal\\s|\\s+rs\\.|$)",
+                RegexOption.IGNORE_CASE
+            ).find(body)
+
             if (posMatch != null) {
+
                 val cleaned = normalize(posMatch.groupValues[1])
+                val pretty = smartTitleCase(cleaned)
                 Log.d(TAG, "POS merchant → $cleaned")
-                return normalizeCardGatewayMerchant(cleaned)
+
+                return stripGatewayTokens(pretty)
+
             }
         }
 
 
-        // --------------------------------------------------------------------
-        // STANDARD KEYWORD MERCHANTS
-        // --------------------------------------------------------------------
-        merchantMap.forEach { (token, pretty) ->
-            if (lower.contains(token)) {
-                Log.d(TAG, "Keyword merchant → $pretty")
-                return pretty
-            }
-        }
+
 
         // ------------------------------------------------------------
 // UPI P2P — "<NAME> credited"
@@ -232,7 +231,28 @@ object MerchantExtractorMl {
         }
 
 
+// SECONDARY "on <MERCHANT>." detector (non-POS)
+        Regex(
+            "on\\s+([A-Z][A-Z0-9 &-]{2,50})(?=\\.)"
+        ).find(body)?.let {
+            val cleaned = normalize(it.groupValues[1])
+            val pretty = smartTitleCase(cleaned)
+            Log.d(TAG, "ON-merchant → $pretty")
+            return pretty
+        }
         // --------------------------------------------------------------------
+
+        // --------------------------------------------------------------------
+        // STANDARD KEYWORD MERCHANTS
+        // --------------------------------------------------------------------
+        merchantMap.forEach { (token, pretty) ->
+            if (lower.contains(token)) {
+                Log.d(TAG, "Keyword merchant → $pretty")
+                return pretty
+            }
+        }
+
+
         // FALLBACK BANK SENDER CLEANING
         // --------------------------------------------------------------------
         if (senderType == SenderType.BANK) {
@@ -242,7 +262,6 @@ object MerchantExtractorMl {
                 return cleaned
             }
         }
-
         Log.d(TAG, "Merchant not identified.")
         return null
     }
@@ -291,11 +310,21 @@ object MerchantExtractorMl {
 
         val raw = match.groupValues[1].trim()
 
-        return splitCamelCasePreserveAcronyms(
-            normalize(raw)
-        )
+         return titleCaseName(
+             normalize(raw)
+         )
     }
-
+    fun titleCaseName(input: String): String {
+        return input
+            .split(" ")
+            .filter { it.isNotBlank() }
+            .joinToString(" ") {
+                it.lowercase().replaceFirstChar { c -> c.uppercase() }
+            }
+    }
+    private val gatewayTokens = setOf(
+        "CYBS", "SI", "RZRPAY", "RAZORPAY", "PAYU", "JUSPAY"
+    )
 
     private fun cleanSenderName(sender: String): String {
         val parts = sender.split("-", " ", "_")
@@ -346,7 +375,31 @@ object MerchantExtractorMl {
     }
 
 
+    private val acronyms = setOf(
+        "UPI", "IRCTC", "SBI", "HDFC", "ICICI",
+        "BBPS", "POS", "ATM", "HPCL", "BPCL", "IOCL"
+    )
 
+    private fun smartTitleCase(input: String): String {
+        return input
+            .split(" ")
+            .filter { it.isNotBlank() }
+            .joinToString(" ") { word ->
+                val w = word.uppercase()
+                when {
+                    w in acronyms -> w
+                    else -> w.lowercase().replaceFirstChar { it.uppercase() }
+                }
+            }
+    }
+
+    private fun stripGatewayTokens(input: String): String {
+        return input
+            .split(" ")
+            .filterNot { it.uppercase() in gatewayTokens }
+            .joinToString(" ")
+            .trim()
+    }
 
 
 }
