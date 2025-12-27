@@ -189,6 +189,12 @@ object MerchantExtractorMl {
         // --------------------------------------------------------------------
         // PERSON NAME DETECTOR (UPI)
         // --------------------------------------------------------------------
+
+        // STRONG UPI: "To <NAME>"
+        extractToPerson(body)?.let {
+            Log.d(TAG, "UPI to-person → $it")
+            return it
+        }
         // PERSON NAME DETECTOR (UPI P2P only — NOT wallets)
         if (!lower.contains(" wallet")) {
             val person = extractPersonName(body)
@@ -299,7 +305,21 @@ object MerchantExtractorMl {
             .replace(Regex("\\s+"), " ")             // collapse spaces
             .trim()
     }
-     fun extractCreditedPerson(body: String): String? {
+
+    private fun extractToPerson(body: String): String? {
+        val regex = Regex(
+            "(?i)to\\s+([A-Z][A-Z ]{2,40})"
+        )
+
+        val match = regex.find(body) ?: return null
+        val raw = match.groupValues[1]
+
+        return titleCaseName(
+            normalize(raw)
+        )
+    }
+
+    fun extractCreditedPerson(body: String): String? {
         // Matches: "; SHAHEED CHAMAN  credited"
         val regex = Regex(
             ";\\s*([A-Z][A-Z ]{2,40})\\s+credited",
