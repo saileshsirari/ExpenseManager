@@ -5,7 +5,13 @@ import com.spendwise.core.Logger as Log
 object MerchantExtractorMl {
 
     private const val TAG = "MerchantDebug"
-
+    private val knownWallets = mapOf(
+        "payzapp" to "PayZapp Wallet",
+        "amazon pay" to "Amazon Pay Wallet",
+        "phonepe" to "PhonePe Wallet",
+        "paytm" to "Paytm Wallet",
+        "mobikwik" to "MobiKwik Wallet"
+    )
     // --------------------------------------------------------------------
     // SPECIAL MERCHANT SENDERS
     // --------------------------------------------------------------------
@@ -257,6 +263,11 @@ object MerchantExtractorMl {
                 return pretty
             }
         }
+// WALLET SELF TRANSACTION (balance / deduction)
+        extractWalletSelf(body)?.let {
+            Log.d(TAG, "Wallet self transaction → $it")
+            return it
+        }
 
 
         // FALLBACK BANK SENDER CLEANING
@@ -299,12 +310,27 @@ object MerchantExtractorMl {
         )
     }
 
-     fun normalize(raw: String): String {
+    private fun extractWalletSelf(body: String): String? {
+        val lower = body.lowercase()
+        knownWallets.forEach { (token, pretty) ->
+            if (
+                lower.contains(token) &&
+                lower.contains(" wallet")
+            ) {
+                return pretty
+            }
+        }
+        return null
+    }
+
+
+    fun normalize(raw: String): String {
         return raw
             .replace(Regex("[^A-Za-z0-9 &-]"), " ") // remove junk, KEEP CASE
             .replace(Regex("\\s+"), " ")             // collapse spaces
             .trim()
     }
+
 
     private fun extractToPerson(body: String): String? {
         val regex = Regex(
