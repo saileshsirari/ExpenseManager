@@ -84,15 +84,14 @@ class SmsImportViewModel @Inject constructor(
         val selectedMonth: Int? = null,
         val isLoading: Boolean = true,
         val showIgnored: Boolean = false,
-        val  showInternalTransfers: Boolean =false
-
-        )
+        val showInternalTransfers: Boolean = false
+    )
 
     // FINAL UI STATE (all expensive computation happens here)
     val uiState: StateFlow<DashboardUiState> =
         combine(items, uiInputs) { list, input ->
 
-            android.util.Log.d("expense","input.mode ${input.mode}")
+            android.util.Log.d("expense", "input.mode ${input.mode}")
 
             // -----------------------------
             // 1) Base list — ALL items
@@ -118,7 +117,6 @@ class SmsImportViewModel @Inject constructor(
 
 // 6) Expense list (math-only)
             val expenseList = finalList.filter { it.isExpense() }
-
 
 
             // -----------------------------
@@ -165,6 +163,7 @@ class SmsImportViewModel @Inject constructor(
             val sortedTxs = sortTransactions(finalList, input.sortConfig)
             val groupedRows = buildUiRows(
                 txs = sortedTxs,
+                sortConfig = input.sortConfig,
                 groupByMerchant = input.showGroupedMerchants
             )
             val finalRows =
@@ -225,6 +224,7 @@ class SmsImportViewModel @Inject constructor(
                     when (row) {
                         is UiTxnRow.Grouped ->
                             row.children.first().timestamp.toDouble()
+
                         is UiTxnRow.Normal ->
                             row.tx.timestamp.toDouble()
                     }
@@ -251,6 +251,7 @@ class SmsImportViewModel @Inject constructor(
 
     private fun buildUiRows(
         txs: List<SmsEntity>,
+        sortConfig: SortConfig,
         groupByMerchant: Boolean
     ): List<UiTxnRow> {
 
@@ -280,10 +281,17 @@ class SmsImportViewModel @Inject constructor(
         }
 
         for (tx in txs) {
-            if (
+            val sameMerchant =
                 buffer.isNotEmpty() &&
-                buffer.first().merchant == tx.merchant
-            ) {
+                        buffer.first().merchant == tx.merchant
+
+            val shouldGroup =
+                when (sortConfig.primary) {
+                    SortField.AMOUNT -> sameMerchant   // ignore date
+                    SortField.DATE -> sameMerchant     // date already handled by sort
+                }
+
+            if (shouldGroup) {
                 buffer += tx
             } else {
                 flush()
@@ -291,11 +299,11 @@ class SmsImportViewModel @Inject constructor(
             }
         }
         flush()
-
         return result
     }
 
-    fun toggleGroupByMerchant( ) =     update { it.copy(showGroupedMerchants = !it.showGroupedMerchants) }
+    fun toggleGroupByMerchant() =
+        update { it.copy(showGroupedMerchants = !it.showGroupedMerchants) }
 
     // ---- Expose input update functions ----
     fun toggleShowIgnored() =
@@ -303,7 +311,7 @@ class SmsImportViewModel @Inject constructor(
 
     fun updateSort(sort: SortConfig) = update { it.copy(sortConfig = sort) }
     fun toggleInternalTransfers() =
-        update { it.copy(showGroupedMerchants = !it.showGroupedMerchants) }
+        update { it.copy(showInternalTransfers = !it.showInternalTransfers) }
 
     fun setMode(newMode: DashboardMode) {
         update {
@@ -579,6 +587,7 @@ class SmsImportViewModel @Inject constructor(
         update { it.copy(selectedType = type) }
         // The combine block should react to uiInputs.selectedType and recompute finalList / totals
     }
+
     private fun recalcCategoryTotalsAll(list: List<SmsEntity>) {
 
         val expenseList = list.filter {
@@ -612,12 +621,14 @@ class SmsImportViewModel @Inject constructor(
                 }
                 .sortedByDescending { it.total }
     }
+
     private fun List<SmsEntity>.filterActive(): List<SmsEntity> {
         return this.filter { !it.isNetZero }   // or any other "active" condition you prefer
     }
 
 
 }
+
 sealed class UiTxnRow {
     data class Normal(val tx: SmsEntity) : UiTxnRow()
 
@@ -629,6 +640,7 @@ sealed class UiTxnRow {
         val children: List<SmsEntity>
     ) : UiTxnRow()
 }
+
 private fun sortTransactions(
     list: List<SmsEntity>,
     config: SortConfig
@@ -664,7 +676,6 @@ private fun sortTransactions(
 }
 
 
-
 private fun SmsEntity.isWalletMovement(): Boolean {
     val m = merchant ?: return false
 
@@ -681,6 +692,7 @@ private fun List<SmsEntity>.filterByInternal(showInternal: Boolean): List<SmsEnt
         // OR if linkType is an enum: it.linkType != LinkType.INTERNAL_TRANSFER
     }
 }
+
 private fun List<SmsEntity>.filterByPeriod(
     mode: DashboardMode,
     period: YearMonth

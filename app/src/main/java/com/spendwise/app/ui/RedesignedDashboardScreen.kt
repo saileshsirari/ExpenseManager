@@ -47,12 +47,14 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.rememberTooltipState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -199,7 +201,6 @@ fun RedesignedDashboardScreen(
                 Spacer(Modifier.height(12.dp))
             }
 
-
             item {
                 // Quick filters & actions row
                 QuickActionsRow(
@@ -210,12 +211,9 @@ fun RedesignedDashboardScreen(
                     onToggleGroupByMerchant = {
                         viewModel.toggleGroupByMerchant()
                     }
-
                 )
                 Spacer(Modifier.height(8.dp))
             }
-
-
 
             item {
                 Spacer(Modifier.height(12.dp))
@@ -250,11 +248,16 @@ fun RedesignedDashboardScreen(
                     is UiTxnRow.Normal -> {
                         TransactionRow(
                             sms = row.tx,
-                            onClick = {},
+                            isExpanded = expandedItemId == row.tx.id,
+                            onClick = {
+                                expandedItemId =
+                                    if (expandedItemId == row.tx.id) null else row.tx.id
+                            },
                             onMarkNotExpense = { _, _ -> }
                         )
                         Spacer(Modifier.height(8.dp))
                     }
+
                     is UiTxnRow.Grouped -> {
                         GroupedMerchantRow(row)
                         Spacer(Modifier.height(8.dp))
@@ -524,6 +527,31 @@ fun SummaryHeader(totalDebit: Double, totalCredit: Double, onOpenInsights: () ->
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun GroupGroupingToggle(
+    grouped: Boolean,
+    onToggle: () -> Unit
+) {
+    val scope = rememberCoroutineScope()
+    val tooltipState = rememberTooltipState()
+
+    Row(
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        FilterChip(
+            selected = grouped,
+            onClick = onToggle,
+            label = { Text("Group similar merchants") }
+        )
+
+        Spacer(Modifier.width(6.dp))
+
+
+
+    }
+}
+
 @Composable
 fun QuickActionsRow(
     showInternal: Boolean,
@@ -552,6 +580,8 @@ fun QuickActionsRow(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
+
+            
             FilterChip(
                 selected = showInternal,
                 onClick = onToggleInternal,
@@ -560,12 +590,13 @@ fun QuickActionsRow(
                 }
             )
 
-            FilterChip(
-                selected = showGroupedMerchants,
-                onClick = {onToggleGroupByMerchant() },
-                label = { Text("Group similar merchants") }
-            )
-
+            Column {
+                FilterChip(
+                    selected = showGroupedMerchants,
+                    onClick = { onToggleGroupByMerchant() },
+                    label = { Text("Group") }
+                )
+            }
 
         }
     }
@@ -574,6 +605,7 @@ fun QuickActionsRow(
 @Composable
 fun GroupedMerchantRow(group: UiTxnRow.Grouped) {
     var expanded by remember { mutableStateOf(false) }
+    var expandedItemId by remember { mutableStateOf<Long?>(null) }
 
     Column(
         modifier = Modifier
@@ -585,10 +617,11 @@ fun GroupedMerchantRow(group: UiTxnRow.Grouped) {
             )
             .padding(12.dp)
     ) {
-
         // Header
         Row(
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable { expanded = !expanded },
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
@@ -609,7 +642,7 @@ fun GroupedMerchantRow(group: UiTxnRow.Grouped) {
                 Text(
                     text = "₹${group.totalAmount}",
                     style = MaterialTheme.typography.titleMedium,
-                    color =  Color.Red
+                    color = Color.Red
                 )
             }
 
@@ -634,10 +667,15 @@ fun GroupedMerchantRow(group: UiTxnRow.Grouped) {
                 group.children.forEach { tx ->
                     TransactionRow(
                         sms = tx,
-                        onClick = {},
-                        onMarkNotExpense = {_,_ ->{
+                        isExpanded = expandedItemId == tx.id,
+                        onClick = {
+                            expandedItemId =
+                                if (expandedItemId == tx.id) null else tx.id
+                        },
+                        onMarkNotExpense = { _, _ ->
+                            {
 
-                        }
+                            }
 
                         }   // optional: lighter UI
 
@@ -652,6 +690,7 @@ fun GroupedMerchantRow(group: UiTxnRow.Grouped) {
 @Composable
 fun TransactionRow(
     sms: SmsEntity,
+    isExpanded: Boolean,
     onClick: (SmsEntity) -> Unit,
     onMarkNotExpense: (SmsEntity, Boolean) -> Unit
 ) {
@@ -686,8 +725,8 @@ fun TransactionRow(
                     sms.body,
                     style = MaterialTheme.typography.bodySmall,
                     color = Color.Gray,
-                    maxLines = 2, // 🚀 prevents vertical explosion
-                    overflow = TextOverflow.Ellipsis
+                    maxLines = if (isExpanded) Int.MAX_VALUE else 2,
+                    overflow = if (isExpanded) TextOverflow.Visible else TextOverflow.Ellipsis
                 )
 
                 if (sms.isNetZero) {
