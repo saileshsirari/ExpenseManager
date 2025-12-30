@@ -6,6 +6,12 @@ package com.spendwise.app.ui
 import android.R
 import android.os.Build
 import androidx.annotation.RequiresApi
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -24,6 +30,10 @@ import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ExpandLess
+import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CenterAlignedTopAppBar
@@ -57,9 +67,9 @@ import com.spendwise.app.ui.dashboard.FixMerchantDialog
 import com.spendwise.core.extensions.nextQuarter
 import com.spendwise.core.extensions.previousQuarter
 import com.spendwise.domain.com.spendwise.feature.smsimport.data.DashboardMode
-import com.spendwise.domain.com.spendwise.feature.smsimport.data.DashboardUiState
 import com.spendwise.feature.smsimport.data.SmsEntity
 import com.spendwise.feature.smsimport.ui.SmsImportViewModel
+import com.spendwise.feature.smsimport.ui.UiTxnRow
 import java.time.Instant
 import java.time.YearMonth
 import java.time.ZoneId
@@ -194,11 +204,11 @@ fun RedesignedDashboardScreen(
                 // Quick filters & actions row
                 QuickActionsRow(
                     showInternal = uiState.showInternalTransfers,
-                    showExcluded = uiState.showIgnored,
+                    showGroupedMerchants = uiState.showGroupedMerchants,
                     onToggleInternal = { viewModel.toggleInternalTransfers() },
                     onOpenInsights = { navController.navigate(Screen.Insights.route) },
-                    onToggleExcluded = {
-                        viewModel.toggleShowIgnored()
+                    onToggleGroupByMerchant = {
+                        viewModel.toggleGroupByMerchant()
                     }
 
                 )
@@ -227,28 +237,30 @@ fun RedesignedDashboardScreen(
             // Transaction list: lightweight items (no heavy recompute here)
 
             items(
-                items = uiState.sortedList,
-                key = { it.id }
-            ) { tx ->
-                SmsListItem(
-                    sms = tx,
-                    isExpanded = expandedItemId == tx.id,
-                    onClick = {
-                        expandedItemId =
-                            if (expandedItemId == tx.id) null else tx.id
-                        viewModel.onMessageClicked(it)
-                    },
-                    onRequestMerchantFix = { showFixDialog = it },
-                    onMarkNotExpense = { item, checked ->
-                        if (!item.isNetZero) {
-                            viewModel.setIgnoredState(item, checked)
-                        }
+                items = uiState.rows,
+                key = { row ->
+                    when (row) {
+                        is UiTxnRow.Normal -> "tx-${row.tx.id}"
+                        is UiTxnRow.Grouped -> "group-${row.groupId}"
                     }
-                )
-                Spacer(Modifier.height(8.dp))
+                }
+
+            ) { row ->
+                when (row) {
+                    is UiTxnRow.Normal -> {
+                        TransactionRow(
+                            sms = row.tx,
+                            onClick = {},
+                            onMarkNotExpense = { _, _ -> }
+                        )
+                        Spacer(Modifier.height(8.dp))
+                    }
+                    is UiTxnRow.Grouped -> {
+                        GroupedMerchantRow(row)
+                        Spacer(Modifier.height(8.dp))
+                    }
+                }
             }
-
-
             // small footer / explore insights
             item {
                 Spacer(Modifier.height(12.dp))
@@ -265,12 +277,6 @@ fun RedesignedDashboardScreen(
             }
         }
     }
-}
-
-@Composable
-fun TransactionList(uiState: DashboardUiState, viewModel: SmsImportViewModel) {
-    // Transaction list: lightweight items (no heavy recompute here)
-
 }
 
 @Composable
@@ -521,10 +527,10 @@ fun SummaryHeader(totalDebit: Double, totalCredit: Double, onOpenInsights: () ->
 @Composable
 fun QuickActionsRow(
     showInternal: Boolean,
-    showExcluded: Boolean,
+    showGroupedMerchants: Boolean,
     onToggleInternal: () -> Unit,
     onOpenInsights: () -> Unit,
-    onToggleExcluded: () -> Unit,
+    onToggleGroupByMerchant: () -> Unit,
 ) {
     Column(modifier = Modifier.fillMaxWidth()) {
 
@@ -555,11 +561,90 @@ fun QuickActionsRow(
             )
 
             FilterChip(
-                selected = showExcluded,
-                onClick = onToggleExcluded,
-                label = { Text("Excluded") }
+                selected = showGroupedMerchants,
+                onClick = {onToggleGroupByMerchant() },
+                label = { Text("Group similar merchants") }
             )
 
+
+        }
+    }
+}
+
+@Composable
+fun GroupedMerchantRow(group: UiTxnRow.Grouped) {
+    var expanded by remember { mutableStateOf(false) }
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .animateContentSize()   // 🔥 smooth height animation
+            .background(
+                MaterialTheme.colorScheme.surfaceVariant,
+                RoundedCornerShape(12.dp)
+            )
+            .padding(12.dp)
+    ) {
+
+        // Header
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column {
+                Text(
+                    text = group.title,
+                    style = MaterialTheme.typography.titleMedium,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+
+                Text(
+                    text = "${group.count} spends",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+
+                // 🔴 ONLY amount is red
+                Text(
+                    text = "₹${group.totalAmount}",
+                    style = MaterialTheme.typography.titleMedium,
+                    color =  Color.Red
+                )
+            }
+
+
+            Icon(
+                imageVector =
+                    if (expanded) Icons.Default.ExpandLess
+                    else Icons.Default.ExpandMore,
+                contentDescription = null
+            )
+        }
+
+
+        // Children (animated)
+        AnimatedVisibility(
+            visible = expanded,
+            enter = expandVertically() + fadeIn(),
+            exit = shrinkVertically() + fadeOut()
+        ) {
+            Column {
+                Spacer(Modifier.height(8.dp))
+                group.children.forEach { tx ->
+                    TransactionRow(
+                        sms = tx,
+                        onClick = {},
+                        onMarkNotExpense = {_,_ ->{
+
+                        }
+
+                        }   // optional: lighter UI
+
+                    )
+                    Spacer(Modifier.height(4.dp))
+                }
+            }
         }
     }
 }

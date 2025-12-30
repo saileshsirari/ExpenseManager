@@ -19,6 +19,7 @@ import com.spendwise.domain.com.spendwise.feature.smsimport.data.categoryColorPr
 import com.spendwise.domain.com.spendwise.feature.smsimport.data.localDate
 import com.spendwise.feature.smsimport.data.ImportEvent
 import com.spendwise.feature.smsimport.data.SmsEntity
+import com.spendwise.feature.smsimport.data.isExpense
 import com.spendwise.feature.smsimport.prefs.SmsImportPrefs
 import com.spendwise.feature.smsimport.repo.SmsRepositoryImpl
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -75,7 +76,7 @@ class SmsImportViewModel @Inject constructor(
 
     data class UiInputs(
         val sortConfig: SortConfig = SortConfig(),
-        val showInternalTransfers: Boolean = false,
+        val showGroupedMerchants: Boolean = false,
         val mode: DashboardMode = DashboardMode.MONTH,
         val period: YearMonth = YearMonth.now(),
         val selectedType: String? = null,
@@ -83,6 +84,7 @@ class SmsImportViewModel @Inject constructor(
         val selectedMonth: Int? = null,
         val isLoading: Boolean = true,
         val showIgnored: Boolean = false,
+        val  showInternalTransfers: Boolean =false
 
         )
 
@@ -159,27 +161,22 @@ class SmsImportViewModel @Inject constructor(
             // -----------------------------
             // 8) Sorting
             // -----------------------------
-            val sortedList = finalList.sortedWith(
-                compareBy<SmsEntity> {
-                    when (input.sortConfig.primary) {
-                        SortField.DATE -> it.timestamp
-                        SortField.AMOUNT -> it.amount
-                    }
-                }.let { cmp ->
-                    if (input.sortConfig.primaryOrder == SortOrder.ASC) cmp else cmp.reversed()
-                }.thenComparator { a, b ->
-                    val secA = when (input.sortConfig.secondary) {
-                        SortField.DATE -> a.timestamp
-                        SortField.AMOUNT -> a.amount
-                    }
-                    val secB = when (input.sortConfig.secondary) {
-                        SortField.DATE -> b.timestamp
-                        SortField.AMOUNT -> b.amount
-                    }
-                    val r = compareValues(secA, secB)
-                    if (input.sortConfig.secondaryOrder == SortOrder.ASC) r else -r
-                }
+
+            val sortedTxs = sortTransactions(finalList, input.sortConfig)
+            val groupedRows = buildUiRows(
+                txs = sortedTxs,
+                groupByMerchant = input.showGroupedMerchants
             )
+            val finalRows =
+                if (input.showGroupedMerchants)
+                    sortUiRows(groupedRows, input.sortConfig)
+                else
+                    groupedRows
+
+
+// -----------------------------
+// 9) UI grouping (wallet merchant spends)
+// -----------------------------
 
             // -----------------------------
             // 9) UI State
@@ -187,20 +184,19 @@ class SmsImportViewModel @Inject constructor(
             DashboardUiState(
                 mode = input.mode,
                 period = input.period,
+                rows = finalRows,              // 👈 NEW
                 selectedType = input.selectedType,
                 selectedDay = input.selectedDay,
                 selectedMonth = input.selectedMonth,
                 showInternalTransfers = input.showInternalTransfers,
                 sortConfig = input.sortConfig,
                 showIgnored = input.showIgnored,
-
                 finalList = finalList,
-                sortedList = sortedList,
-
+                sortedList = sortedTxs,
                 totalsDebit = totalDebit,
                 totalsCredit = totalCredit,
                 debitCreditTotals = debitCreditTotals,
-
+                showGroupedMerchants = input.showGroupedMerchants,
                 barData = barData,
                 isLoading = input.isLoading
             )
@@ -212,7 +208,94 @@ class SmsImportViewModel @Inject constructor(
                 DashboardUiState()
             )
 
+    private fun sortUiRows(
+        rows: List<UiTxnRow>,
+        config: SortConfig
+    ): List<UiTxnRow> {
 
+        fun valueFor(row: UiTxnRow, field: SortField): Double =
+            when (field) {
+                SortField.AMOUNT ->
+                    when (row) {
+                        is UiTxnRow.Grouped -> row.totalAmount
+                        is UiTxnRow.Normal -> row.tx.amount
+                    }
+
+                SortField.DATE ->
+                    when (row) {
+                        is UiTxnRow.Grouped ->
+                            row.children.first().timestamp.toDouble()
+                        is UiTxnRow.Normal ->
+                            row.tx.timestamp.toDouble()
+                    }
+            }
+
+        fun compare(
+            a: UiTxnRow,
+            b: UiTxnRow,
+            field: SortField,
+            order: SortOrder
+        ): Int {
+            val result = valueFor(a, field)
+                .compareTo(valueFor(b, field))
+
+            return if (order == SortOrder.ASC) result else -result
+        }
+
+        return rows.sortedWith { a, b ->
+            val primary = compare(a, b, config.primary, config.primaryOrder)
+            if (primary != 0) primary
+            else compare(a, b, config.secondary, config.secondaryOrder)
+        }
+    }
+
+    private fun buildUiRows(
+        txs: List<SmsEntity>,
+        groupByMerchant: Boolean
+    ): List<UiTxnRow> {
+
+        if (!groupByMerchant) {
+            return txs.map { UiTxnRow.Normal(it) }
+        }
+
+        val result = mutableListOf<UiTxnRow>()
+        val buffer = mutableListOf<SmsEntity>()
+
+        fun flush() {
+            if (buffer.isEmpty()) return
+
+            if (buffer.size == 1) {
+                result += UiTxnRow.Normal(buffer.first())
+            } else {
+                val first = buffer.first()
+                result += UiTxnRow.Grouped(
+                    groupId = "${first.merchant}-${first.timestamp}", // unique
+                    title = first.merchant!!,
+                    count = buffer.size,
+                    totalAmount = buffer.sumOf { it.amount },
+                    children = buffer.toList() // 🔒 preserve sort order
+                )
+            }
+            buffer.clear()
+        }
+
+        for (tx in txs) {
+            if (
+                buffer.isNotEmpty() &&
+                buffer.first().merchant == tx.merchant
+            ) {
+                buffer += tx
+            } else {
+                flush()
+                buffer += tx
+            }
+        }
+        flush()
+
+        return result
+    }
+
+    fun toggleGroupByMerchant( ) =     update { it.copy(showGroupedMerchants = !it.showGroupedMerchants) }
 
     // ---- Expose input update functions ----
     fun toggleShowIgnored() =
@@ -220,7 +303,7 @@ class SmsImportViewModel @Inject constructor(
 
     fun updateSort(sort: SortConfig) = update { it.copy(sortConfig = sort) }
     fun toggleInternalTransfers() =
-        update { it.copy(showInternalTransfers = !it.showInternalTransfers) }
+        update { it.copy(showGroupedMerchants = !it.showGroupedMerchants) }
 
     fun setMode(newMode: DashboardMode) {
         update {
@@ -532,13 +615,64 @@ class SmsImportViewModel @Inject constructor(
     private fun List<SmsEntity>.filterActive(): List<SmsEntity> {
         return this.filter { !it.isNetZero }   // or any other "active" condition you prefer
     }
-    private fun SmsEntity.isExpense(): Boolean {
-        return type.equals("DEBIT", true)
-                && !isNetZero
-                && !isIgnored
-    }
+
 
 }
+sealed class UiTxnRow {
+    data class Normal(val tx: SmsEntity) : UiTxnRow()
+
+    data class Grouped(
+        val groupId: String,
+        val title: String,             // same as merchant
+        val count: Int,
+        val totalAmount: Double,
+        val children: List<SmsEntity>
+    ) : UiTxnRow()
+}
+private fun sortTransactions(
+    list: List<SmsEntity>,
+    config: SortConfig
+): List<SmsEntity> {
+
+    fun compareByField(
+        a: SmsEntity,
+        b: SmsEntity,
+        field: SortField,
+        order: SortOrder
+    ): Int {
+        val result = when (field) {
+            SortField.DATE ->
+                a.timestamp.compareTo(b.timestamp)
+
+            SortField.AMOUNT ->
+                a.amount.compareTo(b.amount)
+        }
+
+        return if (order == SortOrder.ASC) result else -result
+    }
+
+    return list.sortedWith { a, b ->
+        val primaryResult =
+            compareByField(a, b, config.primary, config.primaryOrder)
+
+        if (primaryResult != 0) {
+            primaryResult
+        } else {
+            compareByField(a, b, config.secondary, config.secondaryOrder)
+        }
+    }
+}
+
+
+
+private fun SmsEntity.isWalletMovement(): Boolean {
+    val m = merchant ?: return false
+
+    return m.contains("wallet", ignoreCase = true)
+            && !isExpense()          // 🔒 exclude real spends
+}
+
+
 private fun List<SmsEntity>.filterByInternal(showInternal: Boolean): List<SmsEntity> {
     return if (showInternal) {
         this
