@@ -76,7 +76,7 @@ class SmsImportViewModel @Inject constructor(
 
     data class UiInputs(
         val sortConfig: SortConfig = SortConfig(),
-        val showGroupedMerchants: Boolean = false,
+        val showGroupedMerchants: Boolean = true,
         val mode: DashboardMode = DashboardMode.MONTH,
         val period: YearMonth = YearMonth.now(),
         val selectedType: String? = null,
