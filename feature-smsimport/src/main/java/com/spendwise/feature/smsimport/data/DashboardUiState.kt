@@ -1,12 +1,14 @@
 package com.spendwise.domain.com.spendwise.feature.smsimport.data
 
 import com.spendwise.feature.smsimport.data.SmsEntity
+import com.spendwise.feature.smsimport.ui.UiTxnRow
 import java.time.YearMonth
 
 data class DashboardUiState(
     val mode: DashboardMode = DashboardMode.MONTH,
     val period: YearMonth = YearMonth.now(),
-
+    val rows : List<UiTxnRow> = emptyList(),
+    val showGroupedMerchants: Boolean =true,
     val selectedType: String? = null,
     val selectedDay: Int? = null,
     val selectedMonth: Int? = null,

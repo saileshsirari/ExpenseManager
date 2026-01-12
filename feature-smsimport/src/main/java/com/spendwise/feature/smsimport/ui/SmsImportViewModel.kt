@@ -19,6 +19,7 @@ import com.spendwise.domain.com.spendwise.feature.smsimport.data.categoryColorPr
 import com.spendwise.domain.com.spendwise.feature.smsimport.data.localDate
 import com.spendwise.feature.smsimport.data.ImportEvent
 import com.spendwise.feature.smsimport.data.SmsEntity
+import com.spendwise.feature.smsimport.data.isExpense
 import com.spendwise.feature.smsimport.prefs.SmsImportPrefs
 import com.spendwise.feature.smsimport.repo.SmsRepositoryImpl
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -75,7 +76,7 @@ class SmsImportViewModel @Inject constructor(
 
     data class UiInputs(
         val sortConfig: SortConfig = SortConfig(),
-        val showInternalTransfers: Boolean = false,
+        val showGroupedMerchants: Boolean = true,
         val mode: DashboardMode = DashboardMode.MONTH,
         val period: YearMonth = YearMonth.now(),
         val selectedType: String? = null,
@@ -83,14 +84,14 @@ class SmsImportViewModel @Inject constructor(
         val selectedMonth: Int? = null,
         val isLoading: Boolean = true,
         val showIgnored: Boolean = false,
-
-        )
+        val showInternalTransfers: Boolean = false
+    )
 
     // FINAL UI STATE (all expensive computation happens here)
     val uiState: StateFlow<DashboardUiState> =
         combine(items, uiInputs) { list, input ->
 
-            android.util.Log.d("expense","input.mode ${input.mode}")
+            android.util.Log.d("expense", "input.mode ${input.mode}")
 
             // -----------------------------
             // 1) Base list — ALL items
@@ -105,9 +106,9 @@ class SmsImportViewModel @Inject constructor(
                 else periodFiltered.filter { it.linkType != "INTERNAL_TRANSFER" }
 
 // 4) Ignored visibility toggle (NEW)
-            val visibleList =
-                if (input.showIgnored) afterInternalFilter
-                else afterInternalFilter.filter { !it.isIgnored }
+            // 4) UI list — ALWAYS show ignored items
+            val visibleList = afterInternalFilter
+
 
 // 5) Category filter
             val finalList =
@@ -116,7 +117,6 @@ class SmsImportViewModel @Inject constructor(
 
 // 6) Expense list (math-only)
             val expenseList = finalList.filter { it.isExpense() }
-
 
 
             // -----------------------------
@@ -159,27 +159,23 @@ class SmsImportViewModel @Inject constructor(
             // -----------------------------
             // 8) Sorting
             // -----------------------------
-            val sortedList = finalList.sortedWith(
-                compareBy<SmsEntity> {
-                    when (input.sortConfig.primary) {
-                        SortField.DATE -> it.timestamp
-                        SortField.AMOUNT -> it.amount
-                    }
-                }.let { cmp ->
-                    if (input.sortConfig.primaryOrder == SortOrder.ASC) cmp else cmp.reversed()
-                }.thenComparator { a, b ->
-                    val secA = when (input.sortConfig.secondary) {
-                        SortField.DATE -> a.timestamp
-                        SortField.AMOUNT -> a.amount
-                    }
-                    val secB = when (input.sortConfig.secondary) {
-                        SortField.DATE -> b.timestamp
-                        SortField.AMOUNT -> b.amount
-                    }
-                    val r = compareValues(secA, secB)
-                    if (input.sortConfig.secondaryOrder == SortOrder.ASC) r else -r
-                }
+
+            val sortedTxs = sortTransactions(finalList, input.sortConfig)
+            val groupedRows = buildUiRows(
+                txs = sortedTxs,
+                sortConfig = input.sortConfig,
+                groupByMerchant = input.showGroupedMerchants
             )
+            val finalRows =
+                if (input.showGroupedMerchants)
+                    sortUiRows(groupedRows, input.sortConfig)
+                else
+                    groupedRows
+
+
+// -----------------------------
+// 9) UI grouping (wallet merchant spends)
+// -----------------------------
 
             // -----------------------------
             // 9) UI State
@@ -187,20 +183,19 @@ class SmsImportViewModel @Inject constructor(
             DashboardUiState(
                 mode = input.mode,
                 period = input.period,
+                rows = finalRows,              // 👈 NEW
                 selectedType = input.selectedType,
                 selectedDay = input.selectedDay,
                 selectedMonth = input.selectedMonth,
                 showInternalTransfers = input.showInternalTransfers,
                 sortConfig = input.sortConfig,
                 showIgnored = input.showIgnored,
-
                 finalList = finalList,
-                sortedList = sortedList,
-
+                sortedList = sortedTxs,
                 totalsDebit = totalDebit,
                 totalsCredit = totalCredit,
                 debitCreditTotals = debitCreditTotals,
-
+                showGroupedMerchants = input.showGroupedMerchants,
                 barData = barData,
                 isLoading = input.isLoading
             )
@@ -212,7 +207,125 @@ class SmsImportViewModel @Inject constructor(
                 DashboardUiState()
             )
 
+    private fun sortUiRows(
+        rows: List<UiTxnRow>,
+        config: SortConfig
+    ): List<UiTxnRow> {
 
+        fun valueFor(row: UiTxnRow, field: SortField): Double =
+            when (field) {
+                SortField.AMOUNT ->
+                    when (row) {
+                        is UiTxnRow.Grouped -> row.totalAmount
+                        is UiTxnRow.Normal -> row.tx.amount
+                    }
+
+                SortField.DATE ->
+                    when (row) {
+                        is UiTxnRow.Grouped ->
+                            row.children.first().timestamp.toDouble()
+
+                        is UiTxnRow.Normal ->
+                            row.tx.timestamp.toDouble()
+                    }
+            }
+
+        fun compare(
+            a: UiTxnRow,
+            b: UiTxnRow,
+            field: SortField,
+            order: SortOrder
+        ): Int {
+            val result = valueFor(a, field)
+                .compareTo(valueFor(b, field))
+
+            return if (order == SortOrder.ASC) result else -result
+        }
+
+        return rows.sortedWith { a, b ->
+            val primary = compare(a, b, config.primary, config.primaryOrder)
+            if (primary != 0) primary
+            else compare(a, b, config.secondary, config.secondaryOrder)
+        }
+    }
+
+    private fun buildUiRows(
+        txs: List<SmsEntity>,
+        sortConfig: SortConfig,
+        groupByMerchant: Boolean
+    ): List<UiTxnRow> {
+
+        if (!groupByMerchant) {
+            return txs.map { UiTxnRow.Normal(it) }
+        }
+
+        val result = mutableListOf<UiTxnRow>()
+        val buffer = mutableListOf<SmsEntity>()
+
+        fun flush() {
+            if (buffer.isEmpty()) return
+
+            val first = buffer.first()
+
+            // 🔒 If merchant is null OR only one item → normal row(s)
+            if (first.merchant == null || buffer.size == 1) {
+                buffer.forEach { tx ->
+                    result += UiTxnRow.Normal(tx)
+                }
+            } else {
+                val effective = buffer.filterNot { it.isIgnored }
+
+                val totalDebit = effective
+                    .filter { it.type.equals("DEBIT", true) }
+                    .sumOf { it.amount }
+
+                val totalCredit = effective
+                    .filter { it.type.equals("CREDIT", true) }
+                    .sumOf { it.amount }
+
+                val netAmount = totalCredit - totalDebit
+
+                result += UiTxnRow.Grouped(
+                    groupId = "${first.merchant}-${first.timestamp}",
+                    title = first.merchant,   // ✅ safe now
+                    count = buffer.size,
+                    netAmount = netAmount,
+                    totalAmount = buffer.sumOf { it.amount },
+                    children = buffer.toList()
+                )
+            }
+
+            buffer.clear()
+        }
+
+
+        for (tx in txs) {
+            val sameMerchant =
+                buffer.isNotEmpty() &&
+                        buffer.first().merchant != null &&
+                        tx.merchant != null &&
+                        buffer.first().merchant == tx.merchant
+
+
+            val shouldGroup =
+                when (sortConfig.primary) {
+                    SortField.AMOUNT -> sameMerchant   // ignore date
+                    SortField.DATE -> sameMerchant     // date already handled by sort
+                }
+
+            if (shouldGroup) {
+                buffer += tx
+            } else {
+                flush()
+                buffer += tx
+            }
+        }
+        flush()
+        return result
+    }
+
+    fun toggleGroupByMerchant() =
+        update { it.copy(showGroupedMerchants = !it.showGroupedMerchants) }
 
     // ---- Expose input update functions ----
     fun toggleShowIgnored() =
@@ -462,10 +575,8 @@ class SmsImportViewModel @Inject constructor(
         } else {
             // 1) Start loading
             update { it.copy(isLoading = true) }
-            _importProgress.value = ImportProgress(done = false)
-
             // 2) Start import
-            importAll(resolverProvider)
+            loadExistingData()
         }
     }
 
@@ -496,6 +607,7 @@ class SmsImportViewModel @Inject constructor(
         update { it.copy(selectedType = type) }
         // The combine block should react to uiInputs.selectedType and recompute finalList / totals
     }
+
     private fun recalcCategoryTotalsAll(list: List<SmsEntity>) {
 
         val expenseList = list.filter {
@@ -529,16 +641,70 @@ class SmsImportViewModel @Inject constructor(
                 }
                 .sortedByDescending { it.total }
     }
+
     private fun List<SmsEntity>.filterActive(): List<SmsEntity> {
         return this.filter { !it.isNetZero }   // or any other "active" condition you prefer
     }
-    private fun SmsEntity.isExpense(): Boolean {
-        return type.equals("DEBIT", true)
-                && !isNetZero
-                && !isIgnored
-    }
+
 
 }
+
+sealed class UiTxnRow {
+    data class Normal(val tx: SmsEntity) : UiTxnRow()
+
+    data class Grouped(
+        val groupId: String,
+        val title: String,             // same as merchant
+        val count: Int,
+        val netAmount: Double,
+        val totalAmount: Double,
+        val children: List<SmsEntity>
+    ) : UiTxnRow()
+}
+
+private fun sortTransactions(
+    list: List<SmsEntity>,
+    config: SortConfig
+): List<SmsEntity> {
+
+    fun compareByField(
+        a: SmsEntity,
+        b: SmsEntity,
+        field: SortField,
+        order: SortOrder
+    ): Int {
+        val result = when (field) {
+            SortField.DATE ->
+                a.timestamp.compareTo(b.timestamp)
+
+            SortField.AMOUNT ->
+                a.amount.compareTo(b.amount)
+        }
+
+        return if (order == SortOrder.ASC) result else -result
+    }
+
+    return list.sortedWith { a, b ->
+        val primaryResult =
+            compareByField(a, b, config.primary, config.primaryOrder)
+
+        if (primaryResult != 0) {
+            primaryResult
+        } else {
+            compareByField(a, b, config.secondary, config.secondaryOrder)
+        }
+    }
+}
+
+
+private fun SmsEntity.isWalletMovement(): Boolean {
+    val m = merchant ?: return false
+
+    return m.contains("wallet", ignoreCase = true)
+            && !isExpense()          // 🔒 exclude real spends
+}
+
+
 private fun List<SmsEntity>.filterByInternal(showInternal: Boolean): List<SmsEntity> {
     return if (showInternal) {
         this
@@ -547,6 +713,7 @@ private fun List<SmsEntity>.filterByInternal(showInternal: Boolean): List<SmsEnt
         // OR if linkType is an enum: it.linkType != LinkType.INTERNAL_TRANSFER
     }
 }
+
 private fun List<SmsEntity>.filterByPeriod(
     mode: DashboardMode,
     period: YearMonth

@@ -1,9 +1,11 @@
 
 package com.spendwise.feature.smsimport.data
 
+import android.util.Log
 import androidx.room.Entity
 import androidx.room.Index
 import androidx.room.PrimaryKey
+
 @Entity(
     tableName = "sms",
     indices = [
@@ -37,4 +39,38 @@ data class SmsEntity(
     val isNetZero: Boolean = false        // true when auto-excluded by linking
 )
 
+private val walletRailKeywords = listOf(
+    "payzapp",
+    "paytm",
+    "phonepe",
+    "amazon pay",
+    "amazonpay",
+    "mobikwik"
+)
+
+fun SmsEntity.isWalletMerchantSpend(): Boolean {
+    if (!isExpense()) return false
+
+    val bodyLower = body.lowercase()
+
+    // Wallet rail must be present
+    if (!walletRailKeywords.any { bodyLower.contains(it) }) return false
+
+    // Merchant itself must not be wallet
+    val m = merchant?.lowercase() ?: return false
+    if ("wallet" in m) return false
+    Log.d(
+        "WALLET_SPEND",
+        "id=$id, merchant=$merchant, isWalletMerchantSpend=true"
+    )
+    return true
+}
+
+
+
+fun SmsEntity.isExpense(): Boolean {
+    return type.equals("DEBIT", true)
+            && !isNetZero
+            && !isIgnored
+}
 

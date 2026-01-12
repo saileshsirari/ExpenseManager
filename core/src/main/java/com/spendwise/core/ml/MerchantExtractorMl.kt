@@ -5,6 +5,19 @@ import com.spendwise.core.Logger as Log
 object MerchantExtractorMl {
 
     private const val TAG = "MerchantDebug"
+    private val knownWallets = mapOf(
+        "payzapp" to "PayZapp Wallet",
+        "amazon pay" to "Amazon Pay Wallet",
+        "phonepe" to "PhonePe Wallet",
+        "paytm" to "Paytm Wallet",
+        "mobikwik" to "MobiKwik Wallet"
+    )
+
+    private val personStopWords = setOf(
+        "LIMITED", "LTD", "PRIVATE", "PVT", "LLP",
+        "ON", "OF", "FOR", "AND"
+    )
+
 
     // --------------------------------------------------------------------
     // SPECIAL MERCHANT SENDERS
@@ -188,13 +201,39 @@ object MerchantExtractorMl {
 
         // --------------------------------------------------------------------
         // PERSON NAME DETECTOR (UPI)
+        var skipPersonDetection  =false
         // --------------------------------------------------------------------
-        // PERSON NAME DETECTOR (UPI P2P only — NOT wallets)
-        if (!lower.contains(" wallet")) {
-            val person = extractPersonName(body)
-            if (person != null) {
-                Log.d(TAG, "Person-detected merchant → $person")
-                return person
+        val isCardSpend =
+            lower.contains(" card ") ||
+                    lower.contains(" credit card ") ||
+                    lower.contains(" debit card ")
+
+        if (isCardSpend) {
+            // 🔒 Persons are impossible in card spends
+            skipPersonDetection = true
+        }
+
+        // UPI P2P — "<NAME> credited"
+// ------------------------------------------------------------
+        if (!skipPersonDetection) {
+            // 1️⃣ STRONGEST: "<NAME> credited"
+            extractCreditedPerson(body)?.let {
+                Log.d(TAG, "UPI credited person → $it")
+                return it
+            }
+
+            // 2️⃣ "To <NAME>"
+            extractToPerson(body)?.let {
+                Log.d(TAG, "UPI to-person → $it")
+                return it
+            }
+
+            // 3️⃣ Generic fallback
+            if (!lower.contains(" wallet")) {
+                extractGenericPerson(body)?.let {
+                    Log.d(TAG, "UPI generic person → $it")
+                    return it
+                }
             }
         }
 
@@ -212,9 +251,9 @@ object MerchantExtractorMl {
                 val cleaned = normalize(posMatch.groupValues[1])
                 val pretty = smartTitleCase(cleaned)
                 Log.d(TAG, "POS merchant → $cleaned")
-
-                return stripGatewayTokens(pretty)
-
+                return cleanTrailingNoise(
+                    stripGatewayTokens(pretty)
+                )
             }
         }
 
@@ -222,13 +261,7 @@ object MerchantExtractorMl {
 
 
         // ------------------------------------------------------------
-// UPI P2P — "<NAME> credited"
-// ------------------------------------------------------------
-        val creditedPerson = extractCreditedPerson(body)
-        if (creditedPerson != null) {
-            Log.d(TAG, "UPI credited person → $creditedPerson")
-            return creditedPerson
-        }
+
 
 
 // SECONDARY "on <MERCHANT>." detector (non-POS)
@@ -237,9 +270,11 @@ object MerchantExtractorMl {
         ).find(body)?.let {
             val cleaned = normalize(it.groupValues[1])
             val pretty = smartTitleCase(cleaned)
-            Log.d(TAG, "ON-merchant → $pretty")
-            return pretty
+            val finalName = cleanTrailingNoise(pretty)
+            Log.d(TAG, "ON-merchant → $finalName")
+            return finalName
         }
+
         // --------------------------------------------------------------------
 
         // --------------------------------------------------------------------
@@ -250,6 +285,11 @@ object MerchantExtractorMl {
                 Log.d(TAG, "Keyword merchant → $pretty")
                 return pretty
             }
+        }
+// WALLET SELF TRANSACTION (balance / deduction)
+        extractWalletSelf(body)?.let {
+            Log.d(TAG, "Wallet self transaction → $it")
+            return it
         }
 
 
@@ -293,13 +333,46 @@ object MerchantExtractorMl {
         )
     }
 
-     fun normalize(raw: String): String {
+    private fun extractWalletSelf(body: String): String? {
+        val lower = body.lowercase()
+        knownWallets.forEach { (token, pretty) ->
+            if (
+                lower.contains(token) &&
+                lower.contains(" wallet")
+            ) {
+                return pretty
+            }
+        }
+        return null
+    }
+
+
+    fun normalize(raw: String): String {
         return raw
             .replace(Regex("[^A-Za-z0-9 &-]"), " ") // remove junk, KEEP CASE
             .replace(Regex("\\s+"), " ")             // collapse spaces
             .trim()
     }
-     fun extractCreditedPerson(body: String): String? {
+
+
+    private fun extractToPerson(body: String): String? {
+            val regex = Regex(
+                "(?im)^\\s*to\\s+([A-Z][A-Z ]{2,40})\\b"
+            )
+        val match = regex.find(body) ?: return null
+        val raw = match.groupValues[1]
+        val cleaned = normalize(raw)
+        val words = cleaned.split(" ")
+        if (words.any { it.uppercase() in personStopWords }) {
+            return null
+        }
+
+        return titleCaseName(
+            normalize(raw)
+        )
+    }
+
+    fun extractCreditedPerson(body: String): String? {
         // Matches: "; SHAHEED CHAMAN  credited"
         val regex = Regex(
             ";\\s*([A-Z][A-Z ]{2,40})\\s+credited",
@@ -309,10 +382,16 @@ object MerchantExtractorMl {
         val match = regex.find(body) ?: return null
 
         val raw = match.groupValues[1].trim()
+        val cleaned = normalize(raw)
+        val words = cleaned.split(" ")
+        if (words.any { it.uppercase() in personStopWords }) {
+            return null
+        }
 
-         return titleCaseName(
-             normalize(raw)
-         )
+        return cleanTrailingNoise(
+            titleCaseName(normalize(raw))
+        )
+
     }
     fun titleCaseName(input: String): String {
         return input
@@ -401,5 +480,66 @@ object MerchantExtractorMl {
             .trim()
     }
 
+    private val trailingNoiseTokens = setOf(
+        "O", "P", "G", "E"
+    )
+
+    private val routingPairs = setOf(
+        "IN", "UP", "DL", "MH", "KA", "TN"
+    )
+
+    private fun cleanTrailingNoise(input: String): String {
+        val parts = input.split(" ").toMutableList()
+
+        while (parts.isNotEmpty()) {
+
+            // Rule 1: routing pairs at end (IN G, IN E, UP P, etc.)
+            if (
+                parts.size >= 2 &&
+                parts[parts.size - 2].uppercase() in routingPairs &&
+                parts.last().uppercase().length == 1
+            ) {
+                parts.removeAt(parts.lastIndex)       // remove G / E / P
+                parts.removeAt(parts.lastIndex)       // remove IN / UP
+                continue
+            }
+
+            val last = parts.last().uppercase()
+
+            // Rule 2: single-letter noise
+            if (last.length == 1 && last in trailingNoiseTokens) {
+                parts.removeAt(parts.lastIndex)
+                continue
+            }
+
+            break
+        }
+
+        return parts.joinToString(" ")
+    }
+
+    private fun extractGenericPerson(body: String): String? {
+        val regex = Regex(
+            "(?i)(?:to|from)\\s+([A-Z][A-Z ]{2,40})"
+        )
+
+        val match = regex.find(body) ?: return null
+        val raw = match.groupValues[1]
+
+        val cleaned = normalize(raw)
+        val words = cleaned.split(" ")
+
+        // Guardrails
+        if (words.any { it.uppercase() in personStopWords }) return null
+        if (words.size > 3) return null
+        if (cleaned.contains("BANK")) return null
+        if (cleaned.contains("CARD")) return null
+
+        return cleanTrailingNoise(
+            titleCaseName(cleaned)
+        )
+    }
 
 }
+
+
