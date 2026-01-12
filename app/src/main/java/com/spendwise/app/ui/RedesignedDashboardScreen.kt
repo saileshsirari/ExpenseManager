@@ -257,6 +257,7 @@ fun RedesignedDashboardScreen(
                             onClick = {
                                 expandedItemId =
                                     if (expandedItemId == row.tx.id) null else row.tx.id
+                                viewModel.onMessageClicked(it)
                             },
                             onMarkNotExpense ={sms, ignored ->
                                 onMarkNotExpense(sms,ignored)
@@ -268,7 +269,7 @@ fun RedesignedDashboardScreen(
                     }
 
                     is UiTxnRow.Grouped -> {
-                        GroupedMerchantRow(row,onMarkNotExpense)
+                        GroupedMerchantRow(row,viewModel,onMarkNotExpense)
                         Spacer(Modifier.height(8.dp))
                     }
                 }
@@ -612,7 +613,7 @@ fun QuickActionsRow(
 }
 
 @Composable
-fun GroupedMerchantRow(group: UiTxnRow.Grouped,onMarkNotExpense: (SmsEntity, Boolean)-> Unit) {
+fun GroupedMerchantRow(group: UiTxnRow.Grouped, viewModel: SmsImportViewModel,onMarkNotExpense: (SmsEntity, Boolean)-> Unit) {
     var expanded by remember { mutableStateOf(false) }
     var expandedItemId by remember { mutableStateOf<Long?>(null) }
 
@@ -681,6 +682,7 @@ fun GroupedMerchantRow(group: UiTxnRow.Grouped,onMarkNotExpense: (SmsEntity, Boo
                         onClick = {
                             expandedItemId =
                                 if (expandedItemId == tx.id) null else tx.id
+                            viewModel.onMessageClicked(it)
                         },
                         onMarkNotExpense ={sms, ignored ->
                             onMarkNotExpense(sms,ignored)

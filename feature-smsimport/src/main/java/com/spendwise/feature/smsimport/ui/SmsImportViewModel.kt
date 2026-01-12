@@ -575,10 +575,8 @@ class SmsImportViewModel @Inject constructor(
         } else {
             // 1) Start loading
             update { it.copy(isLoading = true) }
-            _importProgress.value = ImportProgress(done = false)
-
             // 2) Start import
-            importAll(resolverProvider)
+            loadExistingData()
         }
     }
 

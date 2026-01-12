@@ -54,7 +54,9 @@ fun SmsListItem(
     ElevatedCard(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable { onClick(sms) }
+            .clickable {
+                onClick(sms)
+            }
             .animateContentSize() ,  // 🔥 smooth expand / collapse,
         colors = CardDefaults.elevatedCardColors(containerColor = cardColor),
         shape = RoundedCornerShape(14.dp),
