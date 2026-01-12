@@ -46,6 +46,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberTooltipState
 import androidx.compose.runtime.Composable
@@ -58,6 +59,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.style.TextOverflow
@@ -97,7 +99,9 @@ fun RedesignedDashboardScreen(
     val categories by viewModel.categoryTotals.collectAsState()
     var showFixDialog by remember { mutableStateOf<SmsEntity?>(null) }
     var expandedItemId by remember { mutableStateOf<Long?>(null) }
-
+    val onMarkNotExpense: (SmsEntity, Boolean) -> Unit = { id, ignored ->
+        viewModel.setIgnoredState (id, ignored)
+    }
     // top-level loading / import handling (assumes app-level permission + import triggers)
     if (!progress.done) {
         // small inset progress UI — full screen handled elsewhere
@@ -246,6 +250,7 @@ fun RedesignedDashboardScreen(
             ) { row ->
                 when (row) {
                     is UiTxnRow.Normal -> {
+
                         TransactionRow(
                             sms = row.tx,
                             isExpanded = expandedItemId == row.tx.id,
@@ -253,13 +258,17 @@ fun RedesignedDashboardScreen(
                                 expandedItemId =
                                     if (expandedItemId == row.tx.id) null else row.tx.id
                             },
-                            onMarkNotExpense = { _, _ -> }
+                            onMarkNotExpense ={sms, ignored ->
+                                onMarkNotExpense(sms,ignored)
+
+                            }   // optional: lighter UI
+
                         )
                         Spacer(Modifier.height(8.dp))
                     }
 
                     is UiTxnRow.Grouped -> {
-                        GroupedMerchantRow(row)
+                        GroupedMerchantRow(row,onMarkNotExpense)
                         Spacer(Modifier.height(8.dp))
                     }
                 }
@@ -581,7 +590,7 @@ fun QuickActionsRow(
             horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
 
-            
+
             FilterChip(
                 selected = showInternal,
                 onClick = onToggleInternal,
@@ -603,7 +612,7 @@ fun QuickActionsRow(
 }
 
 @Composable
-fun GroupedMerchantRow(group: UiTxnRow.Grouped) {
+fun GroupedMerchantRow(group: UiTxnRow.Grouped,onMarkNotExpense: (SmsEntity, Boolean)-> Unit) {
     var expanded by remember { mutableStateOf(false) }
     var expandedItemId by remember { mutableStateOf<Long?>(null) }
 
@@ -617,6 +626,10 @@ fun GroupedMerchantRow(group: UiTxnRow.Grouped) {
             )
             .padding(12.dp)
     ) {
+        val isCredit = group.netAmount > 0
+        val displayAmount = kotlin.math.abs(group.netAmount)
+
+
         // Header
         Row(
             modifier = Modifier
@@ -633,17 +646,14 @@ fun GroupedMerchantRow(group: UiTxnRow.Grouped) {
                 )
 
                 Text(
-                    text = "${group.count} spends",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                    text = if (isCredit)
+                        "+₹$displayAmount"
+                    else
+                        "-₹$displayAmount",
+                    style = MaterialTheme.typography.titleMedium,
+                    color = if (isCredit) Color(0xFF2E7D32) else Color.Red
                 )
 
-                // 🔴 ONLY amount is red
-                Text(
-                    text = "₹${group.totalAmount}",
-                    style = MaterialTheme.typography.titleMedium,
-                    color = Color.Red
-                )
             }
 
 
@@ -672,10 +682,8 @@ fun GroupedMerchantRow(group: UiTxnRow.Grouped) {
                             expandedItemId =
                                 if (expandedItemId == tx.id) null else tx.id
                         },
-                        onMarkNotExpense = { _, _ ->
-                            {
-
-                            }
+                        onMarkNotExpense ={sms, ignored ->
+                            onMarkNotExpense(sms,ignored)
 
                         }   // optional: lighter UI
 
@@ -779,6 +787,18 @@ fun TransactionRow(
                     style = MaterialTheme.typography.bodySmall,
                     color = Color.Gray,
                     maxLines = 1
+                )
+
+                Spacer(Modifier.height(6.dp))
+
+                Switch(
+                    modifier = Modifier.alpha(
+                        if (sms.isIgnored) 0.5f else 1f
+                    ),
+                    checked = sms.isIgnored,
+                    onCheckedChange = { checked ->
+                        onMarkNotExpense(sms, checked)
+                    }
                 )
             }
         }

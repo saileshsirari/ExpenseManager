@@ -106,9 +106,9 @@ class SmsImportViewModel @Inject constructor(
                 else periodFiltered.filter { it.linkType != "INTERNAL_TRANSFER" }
 
 // 4) Ignored visibility toggle (NEW)
-            val visibleList =
-                if (input.showIgnored) afterInternalFilter
-                else afterInternalFilter.filter { !it.isIgnored }
+            // 4) UI list — ALWAYS show ignored items
+            val visibleList = afterInternalFilter
+
 
 // 5) Category filter
             val finalList =
@@ -265,25 +265,47 @@ class SmsImportViewModel @Inject constructor(
         fun flush() {
             if (buffer.isEmpty()) return
 
-            if (buffer.size == 1) {
-                result += UiTxnRow.Normal(buffer.first())
+            val first = buffer.first()
+
+            // 🔒 If merchant is null OR only one item → normal row(s)
+            if (first.merchant == null || buffer.size == 1) {
+                buffer.forEach { tx ->
+                    result += UiTxnRow.Normal(tx)
+                }
             } else {
-                val first = buffer.first()
+                val effective = buffer.filterNot { it.isIgnored }
+
+                val totalDebit = effective
+                    .filter { it.type.equals("DEBIT", true) }
+                    .sumOf { it.amount }
+
+                val totalCredit = effective
+                    .filter { it.type.equals("CREDIT", true) }
+                    .sumOf { it.amount }
+
+                val netAmount = totalCredit - totalDebit
+
                 result += UiTxnRow.Grouped(
-                    groupId = "${first.merchant}-${first.timestamp}", // unique
-                    title = first.merchant!!,
+                    groupId = "${first.merchant}-${first.timestamp}",
+                    title = first.merchant,   // ✅ safe now
                     count = buffer.size,
+                    netAmount = netAmount,
                     totalAmount = buffer.sumOf { it.amount },
-                    children = buffer.toList() // 🔒 preserve sort order
+                    children = buffer.toList()
                 )
             }
+
             buffer.clear()
         }
+
 
         for (tx in txs) {
             val sameMerchant =
                 buffer.isNotEmpty() &&
+                        buffer.first().merchant != null &&
+                        tx.merchant != null &&
                         buffer.first().merchant == tx.merchant
+
 
             val shouldGroup =
                 when (sortConfig.primary) {
@@ -636,6 +658,7 @@ sealed class UiTxnRow {
         val groupId: String,
         val title: String,             // same as merchant
         val count: Int,
+        val netAmount: Double,
         val totalAmount: Double,
         val children: List<SmsEntity>
     ) : UiTxnRow()
