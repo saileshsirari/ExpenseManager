@@ -69,7 +69,6 @@ import com.spendwise.app.ui.dashboard.CategoryPieChart
 import com.spendwise.app.ui.dashboard.FixMerchantDialog
 import com.spendwise.core.extensions.nextQuarter
 import com.spendwise.core.extensions.previousQuarter
-import com.spendwise.core.ml.CategoryType
 import com.spendwise.domain.com.spendwise.feature.smsimport.data.DashboardMode
 import com.spendwise.feature.smsimport.data.SmsEntity
 import com.spendwise.feature.smsimport.ui.SmsImportViewModel
@@ -700,8 +699,7 @@ fun GroupedMerchantRow(
 @Composable
 private fun TransactionRowContent(
     sms: SmsEntity,
-    isExpanded: Boolean,
-    onMarkNotExpense: (SmsEntity, Boolean) -> Unit
+    isExpanded: Boolean
 ) {
     val isCredit =
         sms.type.equals("CREDIT", true) ||
@@ -720,7 +718,7 @@ private fun TransactionRowContent(
             .padding(12.dp)
     ) {
 
-        // 🔹 Main row
+        // Main row
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
@@ -750,42 +748,17 @@ private fun TransactionRowContent(
             }
         }
 
-        // 🔹 Expanded content
+        // Expanded SMS body ONLY
         if (isExpanded) {
             Spacer(Modifier.height(8.dp))
-
             Text(
                 text = sms.body,
                 style = MaterialTheme.typography.bodySmall,
                 color = Color.DarkGray
             )
-
-            Spacer(Modifier.height(10.dp))
-
-            // 🔒 Mark not expense (restore)
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    text = "Exclude from spending",
-                    style = MaterialTheme.typography.bodyMedium
-                )
-
-                Switch(
-                    checked = sms.isIgnored,
-                    onCheckedChange = { checked ->
-                        onMarkNotExpense(sms, checked)
-                    }
-                )
-            }
         }
     }
 }
-
-
-
 
 
 @Composable
@@ -799,7 +772,7 @@ fun TransactionRow(
 ) {
     Column {
 
-        // 🔹 Main transaction card (never changes shape)
+        // 🔹 Main transaction card
         Card(
             modifier = Modifier
                 .fillMaxWidth()
@@ -808,7 +781,7 @@ fun TransactionRow(
                     onClick = { onClick(sms) },
                     onLongClick = {
                         // Power-user shortcut
-                        if (!sms.isNetZero && sms.category == CategoryType.PERSON.name) {
+                        if (!sms.isNetZero) {
                             onMarkAsSelfTransfer(sms)
                         }
                     }
@@ -817,49 +790,56 @@ fun TransactionRow(
             TransactionRowContent(
                 sms = sms,
                 isExpanded = isExpanded,
-                onMarkNotExpense = onMarkNotExpense
             )
         }
 
-        // 🔹 Secondary action row (ONLY when expanded)
+        // 🔹 Expanded controls (both switches)
         if (isExpanded) {
-            Row(
+            Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 6.dp),
-                horizontalArrangement = Arrangement.End,
-                verticalAlignment = Alignment.CenterVertically
+                    .padding(horizontal = 16.dp, vertical = 8.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
 
-                when {
-                    // 🔴 Undo self transfer
-                    sms.isNetZero && sms.linkType == "INTERNAL_TRANSFER" -> {
-                        Text(
-                            text = "Undo self transfer",
-                            style = MaterialTheme.typography.labelMedium,
-                            color = MaterialTheme.colorScheme.error,
-                            modifier = Modifier
-                                .clickable { onUndoSelfTransfer(sms) }
-                                .padding(8.dp)
-                        )
-                    }
+                // Exclude from spending
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("Exclude from spending")
+                    Switch(
+                        checked = sms.isIgnored,
+                        onCheckedChange = { checked ->
+                            onMarkNotExpense(sms, checked)
+                        }
+                    )
+                }
 
-                    // 🟢 Mark as self transfer (person only)
-                    sms.category == CategoryType.PERSON.name && !sms.isNetZero -> {
-                        Text(
-                            text = "Mark as self transfer",
-                            style = MaterialTheme.typography.labelMedium,
-                            color = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier
-                                .clickable { onMarkAsSelfTransfer(sms) }
-                                .padding(8.dp)
-                        )
-                    }
+                // Self transfer
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("Self transfer")
+                    Switch(
+                        checked = sms.isNetZero && sms.linkType == "INTERNAL_TRANSFER",
+                        onCheckedChange = { checked ->
+                            if (checked) {
+                                onMarkAsSelfTransfer(sms)
+                            } else {
+                                onUndoSelfTransfer(sms)
+                            }
+                        }
+                    )
                 }
             }
         }
     }
 }
+
 
 
 
