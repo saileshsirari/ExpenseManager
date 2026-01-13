@@ -16,6 +16,7 @@ import com.spendwise.feature.smsimport.SmsParser
 import com.spendwise.feature.smsimport.SmsReaderImpl
 import com.spendwise.feature.smsimport.data.AppDatabase
 import com.spendwise.feature.smsimport.data.ImportEvent
+import com.spendwise.feature.smsimport.data.SmsDao.SelfRecipientEntity
 import com.spendwise.feature.smsimport.data.SmsEntity
 import com.spendwise.feature.smsimport.data.UserMlOverride
 import kotlinx.coroutines.Dispatchers
@@ -116,6 +117,9 @@ class SmsRepositoryImpl @Inject constructor(
                     parsedAmount = amount,
                     overrideProvider = { key ->
                         db.userMlOverrideDao().getValue(key)
+                    },
+                    selfRecipientProvider = {
+                        getSelfRecipients()
                     }
                 ) ?: continue
 
@@ -139,14 +143,34 @@ class SmsRepositoryImpl @Inject constructor(
                 for (entity in classifiedEntities) {
 
                     // 1) Insert raw classified entity
+                    // 1) Insert raw classified entity
                     val id = db.smsDao().insert(entity)
 
-                    // 2) read row
+// 2) Read inserted row
                     val saved = db.smsDao().getById(id) ?: continue
-                    val coreModel = saved.toDomain()
 
-                    // 3) linked transfer learning / detection
-                    linkedDetector.process(coreModel)
+// 🔥 FINALIZE SINGLE-SMS INTERNAL TRANSFER HERE
+                    if (saved.category == CategoryType.TRANSFER.name) {
+
+                        val updated = saved.copy(
+                            isNetZero = true,
+                            linkType = "INTERNAL_TRANSFER",
+                            linkId = id.toString(),        // 🔒 self-link
+                            linkConfidence = 1
+                        )
+
+                        db.smsDao().update(updated)
+
+                        Log.d(
+                            "expense",
+                            "Single-SMS INTERNAL_TRANSFER finalized id=$id"
+                        )
+
+                    } else {
+                        // 3️⃣ ONLY non-single transfers go to linker
+                        linkedDetector.process(saved.toDomain())
+                    }
+
                 }
             }
 
@@ -234,6 +258,9 @@ class SmsRepositoryImpl @Inject constructor(
                     Log.d("expense", "exp key=$key => $v")
                 }
                 v
+            },
+            selfRecipientProvider = {
+                getSelfRecipients()
             }
         )?.explanation
     }
@@ -277,14 +304,39 @@ class SmsRepositoryImpl @Inject constructor(
 
                 Log.d("expense", "NO MATCH for key=$key")
                 null
+            },
+            selfRecipientProvider = {
+                getSelfRecipients()
             }
         ) ?: return null
 
         val updated = tx.copy(
             merchant = result.merchant,
             category = result.category.name,
-            type = if (result.isCredit) "CREDIT" else "DEBIT"
+            type = if (result.isCredit) "CREDIT" else "DEBIT",
+
+            // 🔒 FIX: preserve / re-apply internal transfer truth
+            isNetZero =
+                result.category == CategoryType.TRANSFER,
+
+            linkType =
+                if (result.category == CategoryType.TRANSFER)
+                    "INTERNAL_TRANSFER"
+                else null,
+
+            linkId =
+                if (result.category == CategoryType.TRANSFER)
+                    tx.id.toString()     // 🔒 self-link
+                else null,
+
+            linkConfidence =
+                if (result.category == CategoryType.TRANSFER)
+                    1
+                else 0
         )
+
+        db.smsDao().update(updated)
+
 
         Log.d("expense", "Updated merchant=${updated.merchant}")
 
@@ -337,4 +389,63 @@ class SmsRepositoryImpl @Inject constructor(
     override suspend fun loadExisting(): List<SmsEntity> {
         return db.smsDao().getAllOnce()
     }
+
+    suspend fun reclassifyAll() {
+        val all = getAllOnce()
+        all.forEach { tx ->
+            reclassifySingle(tx.id)
+        }
+    }
+
+    suspend fun markAsSelfTransfer(tx: SmsEntity) {
+
+        // 1️⃣ Normalize person name
+        val person = MerchantExtractorMl.normalize(tx.merchant ?: return)
+
+        // 2️⃣ Save self-recipient rule
+        db.smsDao().insertSelfRecipient(
+            SelfRecipientEntity(person)
+        )
+
+        // 3️⃣ Update THIS transaction immediately
+        val updated = tx.copy(
+            category = CategoryType.TRANSFER.name,
+            isNetZero = true,
+            linkType = "INTERNAL_TRANSFER",
+            linkId = tx.id.toString(),
+            linkConfidence = 1
+        )
+
+        db.smsDao().update(updated)
+    }
+    suspend fun getSelfRecipients(): Set<String> {
+        return db.smsDao()
+            .getAllSelfRecipients()
+            .map { MerchantExtractorMl.normalize(it) }
+            .toSet()
+    }
+
+    suspend fun undoSelfTransfer(tx: SmsEntity) {
+
+        // 1️⃣ Revert THIS transaction
+        val reverted = tx.copy(
+            category = CategoryType.PERSON.name,
+            isNetZero = false,
+            linkType = null,
+            linkId = null,
+            linkConfidence = 0
+        )
+
+        db.smsDao().update(reverted)
+
+        // 2️⃣ OPTIONAL (recommended UX):
+        // remove self-recipient rule ONLY if user wants global undo
+        val person = tx.merchant?.let { MerchantExtractorMl.normalize(it) }
+        if (person != null) {
+            db.smsDao().deleteSelfRecipient(person)
+        }
+    }
+
+
+
 }

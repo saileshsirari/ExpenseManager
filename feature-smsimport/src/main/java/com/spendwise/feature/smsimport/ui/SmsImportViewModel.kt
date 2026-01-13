@@ -268,7 +268,11 @@ class SmsImportViewModel @Inject constructor(
             val first = buffer.first()
 
             // 🔒 If merchant is null OR only one item → normal row(s)
-            if (first.merchant == null || buffer.size == 1) {
+            if (
+                first.merchant == null ||
+                buffer.size == 1 ||
+                first.isNetZero
+            ) {
                 buffer.forEach { tx ->
                     result += UiTxnRow.Normal(tx)
                 }
@@ -304,7 +308,9 @@ class SmsImportViewModel @Inject constructor(
                 buffer.isNotEmpty() &&
                         buffer.first().merchant != null &&
                         tx.merchant != null &&
-                        buffer.first().merchant == tx.merchant
+                        buffer.first().merchant == tx.merchant &&
+                        !buffer.first().isNetZero &&
+                        !tx.isNetZero
 
 
             val shouldGroup =
@@ -563,20 +569,24 @@ class SmsImportViewModel @Inject constructor(
 
 
     fun startImportIfNeeded(resolverProvider: () -> ContentResolver) {
+        viewModelScope.launch(Dispatchers.Default) {
 
-        if (!prefs.importCompleted) {
-            // 1) Start loading
-            update { it.copy(isLoading = true) }
-            _importProgress.value = ImportProgress(done = false)
+            if (!prefs.importCompleted) {
+                // 1) Start loading
+                update { it.copy(isLoading = true) }
+                _importProgress.value = ImportProgress(done = false)
 
-            // 2) Start import
-            importAll(resolverProvider)
+                // 2) Start import
+                importAll(resolverProvider)
 
-        } else {
-            // 1) Start loading
-            update { it.copy(isLoading = true) }
-            // 2) Start import
-            loadExistingData()
+            } else {
+                // 1) Start loading
+               // repo.reclassifyAll()
+
+                update { it.copy(isLoading = true) }
+                // 2) Start import
+                loadExistingData()
+            }
         }
     }
 
@@ -646,6 +656,19 @@ class SmsImportViewModel @Inject constructor(
         return this.filter { !it.isNetZero }   // or any other "active" condition you prefer
     }
 
+    fun markAsSelfTransfer(tx: SmsEntity) {
+        viewModelScope.launch {
+            repo.markAsSelfTransfer(tx)
+            refresh()   // reload list + recompute UI state
+        }
+    }
+
+    fun undoSelfTransfer(tx: SmsEntity) {
+        viewModelScope.launch {
+            repo.undoSelfTransfer(tx)
+            refresh()
+        }
+    }
 
 }
 
@@ -756,6 +779,7 @@ private fun List<SmsEntity>.filterByPeriod(
             }
         }
     }
+
 
 
 }

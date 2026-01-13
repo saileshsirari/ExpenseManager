@@ -14,6 +14,7 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -59,10 +60,8 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.painterResource
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.navigation.NavController
 import com.spendwise.app.navigation.Screen
@@ -70,13 +69,12 @@ import com.spendwise.app.ui.dashboard.CategoryPieChart
 import com.spendwise.app.ui.dashboard.FixMerchantDialog
 import com.spendwise.core.extensions.nextQuarter
 import com.spendwise.core.extensions.previousQuarter
+import com.spendwise.core.ml.CategoryType
 import com.spendwise.domain.com.spendwise.feature.smsimport.data.DashboardMode
 import com.spendwise.feature.smsimport.data.SmsEntity
 import com.spendwise.feature.smsimport.ui.SmsImportViewModel
 import com.spendwise.feature.smsimport.ui.UiTxnRow
-import java.time.Instant
 import java.time.YearMonth
-import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import kotlin.math.roundToInt
 
@@ -246,11 +244,10 @@ fun RedesignedDashboardScreen(
                         is UiTxnRow.Grouped -> "group-${row.groupId}"
                     }
                 }
-
             ) { row ->
                 when (row) {
-                    is UiTxnRow.Normal -> {
 
+                    is UiTxnRow.Normal -> {
                         TransactionRow(
                             sms = row.tx,
                             isExpanded = expandedItemId == row.tx.id,
@@ -259,21 +256,30 @@ fun RedesignedDashboardScreen(
                                     if (expandedItemId == row.tx.id) null else row.tx.id
                                 viewModel.onMessageClicked(it)
                             },
-                            onMarkNotExpense ={sms, ignored ->
-                                onMarkNotExpense(sms,ignored)
-
-                            }   // optional: lighter UI
-
+                            onMarkNotExpense = { sms, ignored ->
+                                onMarkNotExpense(sms, ignored)
+                            },
+                            onMarkAsSelfTransfer = {
+                                viewModel.markAsSelfTransfer(it)
+                            },
+                            onUndoSelfTransfer = {
+                                viewModel.undoSelfTransfer(it)
+                            }
                         )
                         Spacer(Modifier.height(8.dp))
                     }
 
                     is UiTxnRow.Grouped -> {
-                        GroupedMerchantRow(row,viewModel,onMarkNotExpense)
+                        GroupedMerchantRow(
+                            group = row,
+                            viewModel = viewModel,
+                            onMarkNotExpense = onMarkNotExpense
+                        )
                         Spacer(Modifier.height(8.dp))
                     }
                 }
             }
+
             // small footer / explore insights
             item {
                 Spacer(Modifier.height(12.dp))
@@ -613,14 +619,18 @@ fun QuickActionsRow(
 }
 
 @Composable
-fun GroupedMerchantRow(group: UiTxnRow.Grouped, viewModel: SmsImportViewModel,onMarkNotExpense: (SmsEntity, Boolean)-> Unit) {
+fun GroupedMerchantRow(
+    group: UiTxnRow.Grouped,
+    viewModel: SmsImportViewModel,
+    onMarkNotExpense: (SmsEntity, Boolean) -> Unit
+) {
     var expanded by remember { mutableStateOf(false) }
     var expandedItemId by remember { mutableStateOf<Long?>(null) }
 
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .animateContentSize()   // 🔥 smooth height animation
+            .animateContentSize()
             .background(
                 MaterialTheme.colorScheme.surfaceVariant,
                 RoundedCornerShape(12.dp)
@@ -630,8 +640,7 @@ fun GroupedMerchantRow(group: UiTxnRow.Grouped, viewModel: SmsImportViewModel,on
         val isCredit = group.netAmount > 0
         val displayAmount = kotlin.math.abs(group.netAmount)
 
-
-        // Header
+        // 🔹 Group header
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -642,21 +651,15 @@ fun GroupedMerchantRow(group: UiTxnRow.Grouped, viewModel: SmsImportViewModel,on
             Column {
                 Text(
                     text = group.title,
-                    style = MaterialTheme.typography.titleMedium,
-                    color = MaterialTheme.colorScheme.onSurface
+                    style = MaterialTheme.typography.titleMedium
                 )
 
                 Text(
-                    text = if (isCredit)
-                        "+₹$displayAmount"
-                    else
-                        "-₹$displayAmount",
+                    text = if (isCredit) "+₹$displayAmount" else "-₹$displayAmount",
                     style = MaterialTheme.typography.titleMedium,
                     color = if (isCredit) Color(0xFF2E7D32) else Color.Red
                 )
-
             }
-
 
             Icon(
                 imageVector =
@@ -666,8 +669,7 @@ fun GroupedMerchantRow(group: UiTxnRow.Grouped, viewModel: SmsImportViewModel,on
             )
         }
 
-
-        // Children (animated)
+        // 🔹 Children
         AnimatedVisibility(
             visible = expanded,
             enter = expandVertically() + fadeIn(),
@@ -684,13 +686,11 @@ fun GroupedMerchantRow(group: UiTxnRow.Grouped, viewModel: SmsImportViewModel,on
                                 if (expandedItemId == tx.id) null else tx.id
                             viewModel.onMessageClicked(it)
                         },
-                        onMarkNotExpense ={sms, ignored ->
-                            onMarkNotExpense(sms,ignored)
-
-                        }   // optional: lighter UI
-
+                        onMarkNotExpense = onMarkNotExpense,
+                        onMarkAsSelfTransfer = { viewModel.markAsSelfTransfer(it) },
+                        onUndoSelfTransfer = { viewModel.undoSelfTransfer(it) }
                     )
-                    Spacer(Modifier.height(4.dp))
+                    Spacer(Modifier.height(6.dp))
                 }
             }
         }
@@ -698,105 +698,82 @@ fun GroupedMerchantRow(group: UiTxnRow.Grouped, viewModel: SmsImportViewModel,on
 }
 
 @Composable
-fun TransactionRow(
+private fun TransactionRowContent(
     sms: SmsEntity,
     isExpanded: Boolean,
-    onClick: (SmsEntity) -> Unit,
     onMarkNotExpense: (SmsEntity, Boolean) -> Unit
 ) {
-    Card(
+    val isCredit =
+        sms.type.equals("CREDIT", true) ||
+                sms.type.equals("REFUND", true)
+
+    val formattedDate = remember(sms.timestamp) {
+        java.text.SimpleDateFormat(
+            "dd MMM yyyy",
+            java.util.Locale.getDefault()
+        ).format(java.util.Date(sms.timestamp))
+    }
+
+    Column(
         modifier = Modifier
             .fillMaxWidth()
-            .wrapContentHeight() // 🚀 prevents vertical stretch
-            .clickable { onClick(sms) }
+            .padding(12.dp)
     ) {
+
+        // 🔹 Main row
         Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(12.dp),
+            modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-
-            // LEFT: Merchant + message
-            Column(
-                modifier = Modifier.weight(1f), // 🚀 prevents squeezing
-                verticalArrangement = Arrangement.Center
-            ) {
+            Column(modifier = Modifier.weight(1f)) {
                 Text(
-                    sms.merchant ?: sms.sender,
-                    style = MaterialTheme.typography.bodyLarge,
-                    maxLines = 1
+                    text = sms.merchant ?: "Unknown",
+                    style = MaterialTheme.typography.bodyLarge
                 )
 
-                Spacer(Modifier.height(4.dp))
-
                 Text(
-                    sms.body,
+                    text = formattedDate,
                     style = MaterialTheme.typography.bodySmall,
-                    color = Color.Gray,
-                    maxLines = if (isExpanded) Int.MAX_VALUE else 2,
-                    overflow = if (isExpanded) TextOverflow.Visible else TextOverflow.Ellipsis
+                    color = Color.Gray
                 )
-
-                if (sms.isNetZero) {
-                    Spacer(Modifier.height(4.dp))
-                    Text(
-                        text = "Internal transfer",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = Color.Gray
-                    )
-                }
-
             }
 
-            Spacer(Modifier.width(12.dp))
-
-            // RIGHT: Amount + date
-            Column(
-                horizontalAlignment = Alignment.End,
-                verticalArrangement = Arrangement.Center
-            ) {
-                val amountText = when {
-                    sms.isNetZero -> "₹${sms.amount.toInt()}"
-                    sms.type == "DEBIT" -> "-₹${sms.amount.toInt()}"
-                    else -> "₹${sms.amount.toInt()}"
-                }
-
-                val amountColor = when {
-                    sms.isNetZero -> Color.Gray
-                    sms.type == "DEBIT" -> Color.Red
-                    else -> Color(0xFF2E7D32) // green
-                }
-
+            Column(horizontalAlignment = Alignment.End) {
                 Text(
-                    amountText,
+                    text =
+                        if (isCredit) "+₹${sms.amount.toInt()}"
+                        else "-₹${sms.amount.toInt()}",
                     style = MaterialTheme.typography.bodyLarge,
-                    color = amountColor,
-                    maxLines = 1
+                    color = if (isCredit) Color(0xFF2E7D32) else Color.Red
                 )
+            }
+        }
 
+        // 🔹 Expanded content
+        if (isExpanded) {
+            Spacer(Modifier.height(8.dp))
 
-                Spacer(Modifier.height(4.dp))
+            Text(
+                text = sms.body,
+                style = MaterialTheme.typography.bodySmall,
+                color = Color.DarkGray
+            )
 
-                val date = Instant
-                    .ofEpochMilli(sms.timestamp)
-                    .atZone(ZoneId.systemDefault())
-                    .toLocalDate()
+            Spacer(Modifier.height(10.dp))
 
+            // 🔒 Mark not expense (restore)
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
                 Text(
-                    date.toString(),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = Color.Gray,
-                    maxLines = 1
+                    text = "Exclude from spending",
+                    style = MaterialTheme.typography.bodyMedium
                 )
-
-                Spacer(Modifier.height(6.dp))
 
                 Switch(
-                    modifier = Modifier.alpha(
-                        if (sms.isIgnored) 0.5f else 1f
-                    ),
                     checked = sms.isIgnored,
                     onCheckedChange = { checked ->
                         onMarkNotExpense(sms, checked)
@@ -806,6 +783,84 @@ fun TransactionRow(
         }
     }
 }
+
+
+
+
+
+@Composable
+fun TransactionRow(
+    sms: SmsEntity,
+    isExpanded: Boolean,
+    onClick: (SmsEntity) -> Unit,
+    onMarkNotExpense: (SmsEntity, Boolean) -> Unit,
+    onMarkAsSelfTransfer: (SmsEntity) -> Unit,
+    onUndoSelfTransfer: (SmsEntity) -> Unit
+) {
+    Column {
+
+        // 🔹 Main transaction card (never changes shape)
+        Card(
+            modifier = Modifier
+                .fillMaxWidth()
+                .wrapContentHeight()
+                .combinedClickable(
+                    onClick = { onClick(sms) },
+                    onLongClick = {
+                        // Power-user shortcut
+                        if (!sms.isNetZero && sms.category == CategoryType.PERSON.name) {
+                            onMarkAsSelfTransfer(sms)
+                        }
+                    }
+                )
+        ) {
+            TransactionRowContent(
+                sms = sms,
+                isExpanded = isExpanded,
+                onMarkNotExpense = onMarkNotExpense
+            )
+        }
+
+        // 🔹 Secondary action row (ONLY when expanded)
+        if (isExpanded) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 6.dp),
+                horizontalArrangement = Arrangement.End,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+
+                when {
+                    // 🔴 Undo self transfer
+                    sms.isNetZero && sms.linkType == "INTERNAL_TRANSFER" -> {
+                        Text(
+                            text = "Undo self transfer",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.error,
+                            modifier = Modifier
+                                .clickable { onUndoSelfTransfer(sms) }
+                                .padding(8.dp)
+                        )
+                    }
+
+                    // 🟢 Mark as self transfer (person only)
+                    sms.category == CategoryType.PERSON.name && !sms.isNetZero -> {
+                        Text(
+                            text = "Mark as self transfer",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier
+                                .clickable { onMarkAsSelfTransfer(sms) }
+                                .padding(8.dp)
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
 
 
 /* -----------------------------------------------------------

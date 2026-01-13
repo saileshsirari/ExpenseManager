@@ -1,5 +1,6 @@
 
 import com.spendwise.core.ml.CategoryClassifierMl
+import com.spendwise.core.ml.CategoryType
 import com.spendwise.core.ml.ClassifiedTxn
 import com.spendwise.core.ml.IntentClassifierMl
 import com.spendwise.core.ml.IntentType
@@ -7,91 +8,76 @@ import com.spendwise.core.ml.MerchantExtractorMl
 import com.spendwise.core.ml.MlReasonBundle
 import com.spendwise.core.ml.RawSms
 import com.spendwise.core.ml.SenderClassifierMl
-import com.spendwise.core.Logger as Log
+import com.spendwise.core.transfer.InternalTransferDetector
+import com.spendwise.core.transfer.SelfRecipientProvider
+import com.spendwise.core.transfer.TransferBuffer
 
 object SmsMlPipeline {
+
     suspend fun classify(
         raw: RawSms,
         parsedAmount: Double?,
-        overrideProvider: suspend (String) -> String?
+        overrideProvider: suspend (String) -> String?,
+        selfRecipientProvider: SelfRecipientProvider
     ): ClassifiedTxn? {
 
         val amount = parsedAmount ?: return null
 
-        val senderReason = StringBuilder()
-        val intentReason = StringBuilder()
-        val merchantReason = StringBuilder()
-        val categoryReason = StringBuilder()
-
-        // 🔁 0. Overrides to ignore completely
-        //    (saved when user taps "Not expense")
-        val bodyHashKey = "ignore:${raw.body.hashCode()}"
-        Log.w("expense", "here body "+ raw.body)
-        if (overrideProvider(bodyHashKey) == "true") {
-            intentReason.append("Ignored by user override for this SMS pattern.")
-            Log.w("expense", raw.body)
+        // 0. User ignore override
+        if (overrideProvider("ignore:${raw.body.hashCode()}") == "true") {
             return null
         }
 
         // 1. Sender
-        val senderType = SenderClassifierMl.classify(raw.sender, raw.body).also {
-            Log.w("expense", raw.body)
-            senderReason.append("Detected sender type as $it because sender=${raw.sender}")
-        }
+        val senderType = SenderClassifierMl.classify(raw.sender, raw.body)
 
         // 2. Intent
-        val intentType = IntentClassifierMl.classify(senderType, raw.body).also {
-            intentReason.append("Detected intent as $it based on keywords in message.")
-        }
-            Log.d("expense", "here intentReason $intentReason ${raw.body}")
-      //  Log.w("expense","intentReason here $intentReason for ${raw.body}")
+        val intentType = IntentClassifierMl.classify(senderType, raw.body)
+        if (intentType == IntentType.IGNORE) return null
+        if (intentType !in listOf(IntentType.DEBIT, IntentType.CREDIT, IntentType.REFUND)) return null
 
-        if (intentType == IntentType.IGNORE) {
-            intentReason.append(" → Not a real transaction (alert/due/auto-debit info).")
-            Log.w("expense","intentReason $intentReason for ${raw.body}")
-            return null
+        // 🔥 2.5 INTERNAL TRANSFER DETECTION
+        val transferInfo = InternalTransferDetector.detect(
+            senderType = senderType,
+            body = raw.body,
+            amount = amount,
+            selfRecipientProvider = selfRecipientProvider
+        )
+
+        val isInternalTransfer = when {
+            transferInfo == null -> false
+
+            // 🔒 SINGLE SMS: debit + credit together
+            transferInfo.hasDebitAccount && transferInfo.hasCreditAccount
+                -> true
+
+            // 🔒 SPLIT SMS: wait for pair
+            else -> TransferBuffer.match(transferInfo)
         }
 
-        if (intentType !in listOf(IntentType.DEBIT, IntentType.CREDIT, IntentType.REFUND)) {
-            intentReason.append(" → Not a financial transaction.")
-            Log.w("expense","intentReason $intentReason for ${raw.body}")
-            return null
-        }
 
-        // 3. Merchant
+        // 3. Merchant (safe to run always)
         val merchant = MerchantExtractorMl.extract(
             senderType = senderType,
             sender = raw.sender,
             body = raw.body,
             overrideProvider = overrideProvider
-        ).also { m ->
-            if (m != null)
-                merchantReason.append("Merchant resolved as '$m'.")
-            else
-                merchantReason.append("No merchant detected.")
-        }
+        )
 
         // 4. Category
-        val category = CategoryClassifierMl.classify(
-            merchant = merchant,
-            body = raw.body,
-            intentType = intentType,
-            overrideProvider = overrideProvider
-        ).also { cat ->
-            categoryReason.append("Category resolved as ${cat.name}.")
-        }
-
-
-
+        val category =
+            if (isInternalTransfer) {
+                CategoryType.TRANSFER
+            } else {
+                CategoryClassifierMl.classify(
+                    merchant = merchant,
+                    body = raw.body,
+                    intentType = intentType,
+                    overrideProvider = overrideProvider
+                )
+            }
 
         val isCredit = intentType == IntentType.CREDIT || intentType == IntentType.REFUND
-
-        val reasons = MlReasonBundle(
-            senderReason = senderReason.toString(),
-            intentReason = intentReason.toString(),
-            merchantReason = merchantReason.toString(),
-            categoryReason = categoryReason.toString()
-        )
 
         return ClassifiedTxn(
             rawSms = raw,
@@ -101,7 +87,12 @@ object SmsMlPipeline {
             category = category,
             amount = amount,
             isCredit = isCredit,
-            explanation = reasons
+            explanation = MlReasonBundle(
+                senderReason = "Sender=$senderType",
+                intentReason = "Intent=$intentType",
+                merchantReason = "Merchant=$merchant",
+                categoryReason = "Category=$category"
+            )
         )
     }
 }
