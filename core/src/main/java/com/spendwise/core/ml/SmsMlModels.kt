@@ -44,7 +44,10 @@ data class ClassifiedTxn(
     val category: CategoryType,
     val amount: Double,
     val isCredit: Boolean,
-    val explanation: MlReasonBundle
+    val explanation: MlReasonBundle,
+    val isInternalTransfer: Boolean = false,
+    val isSingleSmsInternal: Boolean = false
+
 )
 
 

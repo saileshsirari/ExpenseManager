@@ -13,7 +13,6 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
-import androidx.compose.material3.Checkbox
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -25,7 +24,6 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -205,21 +203,6 @@ fun DashboardScreen(
 
                     Spacer(Modifier.height(12.dp))
 
-                    // Internal transfers toggle
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clickable { viewModel.toggleInternalTransfers() }
-                    ) {
-                        Checkbox(
-                            checked = uiState.showInternalTransfers,
-                            onCheckedChange = { viewModel.toggleInternalTransfers() }
-                        )
-                        Text("Show internal transfers", style = MaterialTheme.typography.bodyMedium)
-                    }
-
-                    Spacer(Modifier.height(12.dp))
                 }
             }
 

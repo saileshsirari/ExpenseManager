@@ -87,6 +87,14 @@ object SmsMlPipeline {
             category = category,
             amount = amount,
             isCredit = isCredit,
+
+            // 🔒 INTERNAL TRANSFER SIGNALS (NEW)
+            isInternalTransfer = isInternalTransfer,
+            isSingleSmsInternal =
+                transferInfo != null &&
+                        transferInfo.hasDebitAccount &&
+                        transferInfo.hasCreditAccount,
+
             explanation = MlReasonBundle(
                 senderReason = "Sender=$senderType",
                 intentReason = "Intent=$intentType",
@@ -94,5 +102,6 @@ object SmsMlPipeline {
                 categoryReason = "Category=$category"
             )
         )
+
     }
 }

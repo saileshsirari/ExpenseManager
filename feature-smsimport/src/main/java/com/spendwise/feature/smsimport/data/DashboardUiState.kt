@@ -12,7 +12,6 @@ data class DashboardUiState(
     val selectedType: String? = null,
     val selectedDay: Int? = null,
     val selectedMonth: Int? = null,
-    val showInternalTransfers: Boolean = false,
     val showIgnored: Boolean = false,
 
     val sortConfig: SortConfig = SortConfig(),

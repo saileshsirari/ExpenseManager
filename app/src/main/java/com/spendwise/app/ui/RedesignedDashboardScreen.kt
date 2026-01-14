@@ -37,6 +37,7 @@ import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CenterAlignedTopAppBar
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Divider
@@ -205,9 +206,7 @@ fun RedesignedDashboardScreen(
             item {
                 // Quick filters & actions row
                 QuickActionsRow(
-                    showInternal = uiState.showInternalTransfers,
                     showGroupedMerchants = uiState.showGroupedMerchants,
-                    onToggleInternal = { viewModel.toggleInternalTransfers() },
                     onOpenInsights = { navController.navigate(Screen.Insights.route) },
                     onToggleGroupByMerchant = {
                         viewModel.toggleGroupByMerchant()
@@ -241,10 +240,23 @@ fun RedesignedDashboardScreen(
                     when (row) {
                         is UiTxnRow.Normal -> "tx-${row.tx.id}"
                         is UiTxnRow.Grouped -> "group-${row.groupId}"
+                        is UiTxnRow.Section -> "section-${row.id}"
                     }
                 }
             ) { row ->
                 when (row) {
+
+                    is UiTxnRow.Section -> {
+                        InternalTransferSectionHeader(
+                            title = row.title,
+                            count = row.count,
+                            collapsed = row.collapsed,
+                            onToggle = {
+                                viewModel.toggleInternalSection()
+                            }
+                        )
+                        Spacer(Modifier.height(8.dp))
+                    }
 
                     is UiTxnRow.Normal -> {
                         TransactionRow(
@@ -279,6 +291,7 @@ fun RedesignedDashboardScreen(
                 }
             }
 
+
             // small footer / explore insights
             item {
                 Spacer(Modifier.height(12.dp))
@@ -306,6 +319,37 @@ fun CategoryHeader(selectedType: String?) {
         style = MaterialTheme.typography.titleMedium,
         modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
     )
+}
+@Composable
+fun InternalTransferSectionHeader(
+    title: String,
+    count: Int,
+    collapsed: Boolean,
+    onToggle: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable { onToggle() }
+            .padding(vertical = 10.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(
+            text = "$title ($count)",
+            style = MaterialTheme.typography.titleMedium,
+            color = MaterialTheme.colorScheme.primary
+        )
+
+        Icon(
+            imageVector =
+                if (collapsed) Icons.Default.ExpandMore
+                else Icons.Default.ExpandLess,
+            contentDescription = null
+        )
+    }
+
+    Divider()
 }
 
 /* -----------------------------------------------------------
@@ -569,12 +613,11 @@ fun GroupGroupingToggle(
 
 @Composable
 fun QuickActionsRow(
-    showInternal: Boolean,
     showGroupedMerchants: Boolean,
-    onToggleInternal: () -> Unit,
     onOpenInsights: () -> Unit,
-    onToggleGroupByMerchant: () -> Unit,
-) {
+    onToggleGroupByMerchant: () -> Unit
+)
+ {
     Column(modifier = Modifier.fillMaxWidth()) {
 
         // Row 1: Primary actions
@@ -595,15 +638,6 @@ fun QuickActionsRow(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-
-
-            FilterChip(
-                selected = showInternal,
-                onClick = onToggleInternal,
-                label = {
-                    Text(if (showInternal) "Transfers shown" else "Transfers hidden")
-                }
-            )
 
             Column {
                 FilterChip(
@@ -736,6 +770,22 @@ private fun TransactionRowContent(
                     color = Color.Gray
                 )
             }
+            if (sms.isNetZero && sms.linkType == "INTERNAL_TRANSFER") {
+                Text(
+                    text = "Self transfer",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.primary
+                )
+            }
+
+            if (sms.isIgnored) {
+                Text(
+                    text = "Excluded from spending",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = Color.Gray
+                )
+            }
+
 
             Column(horizontalAlignment = Alignment.End) {
                 Text(
@@ -770,6 +820,17 @@ fun TransactionRow(
     onMarkAsSelfTransfer: (SmsEntity) -> Unit,
     onUndoSelfTransfer: (SmsEntity) -> Unit
 ) {
+
+    val rowBackground = when {
+        sms.isNetZero && sms.linkType == "INTERNAL_TRANSFER" ->
+            MaterialTheme.colorScheme.primary.copy(alpha = 0.08f)
+
+        sms.isIgnored ->
+            MaterialTheme.colorScheme.onSurface.copy(alpha = 0.05f)
+
+        else ->
+            MaterialTheme.colorScheme.surface
+    }
     Column {
 
         // 🔹 Main transaction card
@@ -785,7 +846,10 @@ fun TransactionRow(
                             onMarkAsSelfTransfer(sms)
                         }
                     }
-                )
+                ),
+            colors = CardDefaults.cardColors(
+                containerColor = rowBackground
+            )
         ) {
             TransactionRowContent(
                 sms = sms,

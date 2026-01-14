@@ -122,6 +122,9 @@ class SmsRepositoryImpl @Inject constructor(
                         getSelfRecipients()
                     }
                 ) ?: continue
+                val isWalletSpend =
+                    sms.body.contains("wallet", ignoreCase = true) &&
+                            sms.body.contains("paid", ignoreCase = true)
 
                 val entity = SmsEntity(
                     sender = result.rawSms.sender,
@@ -130,9 +133,31 @@ class SmsRepositoryImpl @Inject constructor(
                     amount = result.amount,
                     merchant = result.merchant,
                     type = if (result.isCredit) "CREDIT" else "DEBIT",
-                    category = result.category.name
+                    category = result.category.name,
+
+                    // 🔒 APPLY INTERNAL TRANSFER DECISION HERE
+                    // 🔒 WALLET SPEND OVERRIDES INTERNAL TRANSFER
+                    isNetZero =
+                        if (isWalletSpend) false else result.isSingleSmsInternal,
+
+                    linkType =
+                        if (isWalletSpend) null
+                        else if (result.isSingleSmsInternal) "INTERNAL_TRANSFER"
+                        else null,
+
+                    linkId =
+                        if (isWalletSpend) null
+                        else if (result.isSingleSmsInternal) "single:${sms.timestamp}"
+                        else null,
+
+                    linkConfidence =
+                        if (isWalletSpend) 0
+                        else if (result.isSingleSmsInternal) 2
+                        else 0
+
                 )
                 classifiedEntities.add(entity)
+
             }
 
 
@@ -148,26 +173,11 @@ class SmsRepositoryImpl @Inject constructor(
 
 // 2) Read inserted row
                     val saved = db.smsDao().getById(id) ?: continue
-
-// 🔥 FINALIZE SINGLE-SMS INTERNAL TRANSFER HERE
-                    if (saved.category == CategoryType.TRANSFER.name) {
-
-                        val updated = saved.copy(
-                            isNetZero = true,
-                            linkType = "INTERNAL_TRANSFER",
-                            linkId = id.toString(),        // 🔒 self-link
-                            linkConfidence = 1
-                        )
-
-                        db.smsDao().update(updated)
-
-                        Log.d(
-                            "expense",
-                            "Single-SMS INTERNAL_TRANSFER finalized id=$id"
-                        )
-
-                    } else {
-                        // 3️⃣ ONLY non-single transfers go to linker
+                    val isWalletSpend =
+                        saved.body.contains("wallet", ignoreCase = true) &&
+                                saved.body.contains("paid", ignoreCase = true)
+                    // 🔒 NEVER run linker for wallet spends
+                    if (!saved.isNetZero && !isWalletSpend) {
                         linkedDetector.process(saved.toDomain())
                     }
 
@@ -316,23 +326,11 @@ class SmsRepositoryImpl @Inject constructor(
             type = if (result.isCredit) "CREDIT" else "DEBIT",
 
             // 🔒 FIX: preserve / re-apply internal transfer truth
-            isNetZero =
-                result.category == CategoryType.TRANSFER,
-
-            linkType =
-                if (result.category == CategoryType.TRANSFER)
-                    "INTERNAL_TRANSFER"
-                else null,
-
-            linkId =
-                if (result.category == CategoryType.TRANSFER)
-                    tx.id.toString()     // 🔒 self-link
-                else null,
-
-            linkConfidence =
-                if (result.category == CategoryType.TRANSFER)
-                    1
-                else 0
+            // 🔒 Preserve existing internal-transfer truth ONLY
+            isNetZero = tx.isNetZero,
+            linkType = tx.linkType,
+            linkId = tx.linkId,
+            linkConfidence = tx.linkConfidence
         )
 
         db.smsDao().update(updated)
