@@ -10,17 +10,10 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.CompareArrows
-import androidx.compose.material.icons.filled.Link
-import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.Checkbox
 import androidx.compose.material3.ElevatedCard
-import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -35,19 +28,11 @@ import java.util.Locale
 @Composable
 fun SmsListItem(
     sms: SmsEntity,
-    isExpanded: Boolean =false,
+    isExpanded: Boolean = false,
     onClick: (SmsEntity) -> Unit,
     onRequestMerchantFix: (SmsEntity) -> Unit,
     onMarkNotExpense: (SmsEntity, Boolean) -> Unit
 ) {
-    val isLinked = sms.linkId != null && sms.linkType == "INTERNAL_TRANSFER"
-    val isPossible = sms.linkId != null && sms.linkType == "POSSIBLE_TRANSFER"
-
-    val cardColor = when {
-        isLinked -> Color(0xFFDFF7DF)
-        isPossible -> Color(0xFFFFF3CD)
-        else -> MaterialTheme.colorScheme.surface
-    }
 
     val dateText = rememberFormattedDate(sms.timestamp)
 
@@ -57,8 +42,10 @@ fun SmsListItem(
             .clickable {
                 onClick(sms)
             }
-            .animateContentSize() ,  // 🔥 smooth expand / collapse,
-        colors = CardDefaults.elevatedCardColors(containerColor = cardColor),
+            .animateContentSize(),  // 🔥 smooth expand / collapse,
+        colors = CardDefaults.elevatedCardColors(
+            containerColor = MaterialTheme.colorScheme.surface
+        ),
         shape = RoundedCornerShape(14.dp),
         elevation = CardDefaults.cardElevation(defaultElevation = 3.dp)
     ) {
@@ -66,24 +53,7 @@ fun SmsListItem(
         Column(Modifier.padding(14.dp)) {
 
             // ---------- TRANSFER TAG ----------
-            if (isLinked || isPossible) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.padding(bottom = 6.dp)
-                ) {
-                    Icon(
-                        imageVector = if (isLinked) Icons.Default.CompareArrows else Icons.Default.Warning,
-                        contentDescription = null,
-                        tint = if (isLinked) Color(0xFF2E7D32) else Color(0xFFB76E00)
-                    )
-                    Text(
-                        text = if (isLinked) "Internal Transfer" else "Possible Transfer",
-                        color = if (isLinked) Color(0xFF2E7D32) else Color(0xFFB76E00),
-                        fontWeight = FontWeight.Bold,
-                        modifier = Modifier.padding(start = 6.dp)
-                    )
-                }
-            }
+
 
             // ---------- MAIN CONTENT ----------
             Row(
@@ -120,7 +90,9 @@ fun SmsListItem(
 
                 Text(
                     text = "₹${sms.amount.toInt()}",
-                    color = if (sms.type.equals("DEBIT", true)) Color(0xFFD32F2F) else Color(0xFF1B5E20),
+                    color = if (sms.type.equals("DEBIT", true)) Color(0xFFD32F2F) else Color(
+                        0xFF1B5E20
+                    ),
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.Bold,
                     modifier = Modifier.padding(start = 8.dp)
@@ -136,20 +108,9 @@ fun SmsListItem(
                 modifier = Modifier.fillMaxWidth()
             ) {
 
-                TextButton(onClick = { onRequestMerchantFix(sms) }) {
-                    Icon(Icons.Default.Link, contentDescription = null)
-                    Text("Fix Merchant", modifier = Modifier.padding(start = 4.dp))
-                }
-
                 Row(verticalAlignment = Alignment.CenterVertically) {
 
-                    if (!sms.isNetZero) {
-                        Checkbox(
-                            checked = sms.isIgnored,
-                            onCheckedChange = { onMarkNotExpense(sms, it) }
-                        )
-                        Text("Not Expense")
-                    } else {
+                    if (sms.isNetZero) {
                         Text(
                             text = "Internal transfer",
                             style = MaterialTheme.typography.labelSmall,
@@ -157,7 +118,6 @@ fun SmsListItem(
                         )
                     }
                 }
-
             }
         }
     }

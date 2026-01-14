@@ -32,6 +32,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.CompareArrows
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material3.Button
@@ -66,7 +67,6 @@ import androidx.compose.ui.unit.dp
 import androidx.navigation.NavController
 import com.spendwise.app.navigation.Screen
 import com.spendwise.app.ui.dashboard.CategoryPieChart
-import com.spendwise.app.ui.dashboard.FixMerchantDialog
 import com.spendwise.core.extensions.nextQuarter
 import com.spendwise.core.extensions.previousQuarter
 import com.spendwise.domain.com.spendwise.feature.smsimport.data.DashboardMode
@@ -94,7 +94,6 @@ fun RedesignedDashboardScreen(
     val uiState by viewModel.uiState.collectAsState()
     val progress by viewModel.importProgress.collectAsState()
     val categories by viewModel.categoryTotals.collectAsState()
-    var showFixDialog by remember { mutableStateOf<SmsEntity?>(null) }
     var expandedItemId by remember { mutableStateOf<Long?>(null) }
     val onMarkNotExpense: (SmsEntity, Boolean) -> Unit = { id, ignored ->
         viewModel.setIgnoredState(id, ignored)
@@ -150,17 +149,6 @@ fun RedesignedDashboardScreen(
         }
     ) { padding ->
 
-
-        showFixDialog?.let { tx ->
-            FixMerchantDialog(
-                tx = tx,
-                onConfirm = { newName ->
-                    viewModel.fixMerchant(tx, newName)
-                    showFixDialog = null
-                },
-                onDismiss = { showFixDialog = null }
-            )
-        }
         LazyColumn(
             modifier = Modifier
                 .padding(padding)
@@ -366,7 +354,6 @@ fun InsightsScreen(
     LaunchedEffect(Unit) {
         viewModel.clearSelectedType()
     }
-    var showFixDialog by remember { mutableStateOf<SmsEntity?>(null) }
 
     val totalSpend by viewModel.totalSpend.collectAsState()
 
@@ -406,16 +393,6 @@ fun InsightsScreen(
             categoriesFiltered.sortedByDescending { it.total }
         }
 
-        showFixDialog?.let { tx ->
-            FixMerchantDialog(
-                tx = tx,
-                onConfirm = { newName ->
-                    viewModel.fixMerchant(tx, newName)
-                    showFixDialog = null
-                },
-                onDismiss = { showFixDialog = null }
-            )
-        }
         LazyColumn(
             modifier = Modifier
                 .padding(padding)
@@ -549,7 +526,7 @@ fun InsightsScreen(
                             if (expandedItemId == tx.id) null else tx.id
                         viewModel.onMessageClicked(it)
                     },
-                    onRequestMerchantFix = { showFixDialog = it },
+                    onRequestMerchantFix = {  },
                     onMarkNotExpense = { item, checked ->
                         viewModel.setIgnoredState(item, checked)
                     }
@@ -767,19 +744,25 @@ private fun TransactionRowContent(
                     style = MaterialTheme.typography.bodySmall,
                     color = Color.Gray
                 )
-                if (sms.isIgnored) {
-                    Text(
-                        text = "Excluded from spending",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = Color.Gray
-                    )
-                }
-                if (sms.isNetZero && sms.linkType == "INTERNAL_TRANSFER") {
-                    Text(
-                        text = "Self transfer",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.primary
-                    )
+
+                if ( sms.linkType == "INTERNAL_TRANSFER") {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.padding(bottom = 6.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.CompareArrows ,
+                            contentDescription = null,
+                            tint = Color(0xFF2E7D32)
+                        )
+                        Text(
+                            text =  "Internal Transfer" ,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.padding(start = 6.dp)
+                        )
+                    }
+
                 }
             }
             Column(horizontalAlignment = Alignment.End) {
@@ -816,16 +799,7 @@ fun TransactionRow(
     onUndoSelfTransfer: (SmsEntity) -> Unit
 ) {
 
-    val rowBackground = when {
-        sms.isNetZero && sms.linkType == "INTERNAL_TRANSFER" ->
-            MaterialTheme.colorScheme.primary.copy(alpha = 0.08f)
-
-        sms.isIgnored ->
-            MaterialTheme.colorScheme.onSurface.copy(alpha = 0.05f)
-
-        else ->
-            MaterialTheme.colorScheme.surface
-    }
+    val rowBackground = MaterialTheme.colorScheme.surface
 
     Card(
         modifier = Modifier
@@ -833,9 +807,6 @@ fun TransactionRow(
             .animateContentSize() // 🔒 animate height smoothly
             .combinedClickable(
                 onClick = { onClick(sms) },
-                onLongClick = {
-                    if (!sms.isNetZero) onMarkAsSelfTransfer(sms)
-                }
             ),
         colors = CardDefaults.cardColors(containerColor = rowBackground)
     ) {
@@ -858,21 +829,6 @@ fun TransactionRow(
                         .padding(horizontal = 16.dp, vertical = 12.dp),
                     verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text("Exclude from spending")
-                        Switch(
-                            checked = sms.isIgnored,
-                            onCheckedChange = { checked ->
-                                onMarkNotExpense(sms, checked)
-                            }
-                        )
-                    }
-
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
