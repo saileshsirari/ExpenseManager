@@ -27,7 +27,6 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
@@ -98,7 +97,7 @@ fun RedesignedDashboardScreen(
     var showFixDialog by remember { mutableStateOf<SmsEntity?>(null) }
     var expandedItemId by remember { mutableStateOf<Long?>(null) }
     val onMarkNotExpense: (SmsEntity, Boolean) -> Unit = { id, ignored ->
-        viewModel.setIgnoredState (id, ignored)
+        viewModel.setIgnoredState(id, ignored)
     }
     // top-level loading / import handling (assumes app-level permission + import triggers)
     if (!progress.done) {
@@ -320,6 +319,7 @@ fun CategoryHeader(selectedType: String?) {
         modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
     )
 }
+
 @Composable
 fun InternalTransferSectionHeader(
     title: String,
@@ -607,7 +607,6 @@ fun GroupGroupingToggle(
         Spacer(Modifier.width(6.dp))
 
 
-
     }
 }
 
@@ -616,8 +615,7 @@ fun QuickActionsRow(
     showGroupedMerchants: Boolean,
     onOpenInsights: () -> Unit,
     onToggleGroupByMerchant: () -> Unit
-)
- {
+) {
     Column(modifier = Modifier.fillMaxWidth()) {
 
         // Row 1: Primary actions
@@ -663,7 +661,6 @@ fun GroupedMerchantRow(
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .animateContentSize()
             .background(
                 MaterialTheme.colorScheme.surfaceVariant,
                 RoundedCornerShape(12.dp)
@@ -755,10 +752,11 @@ private fun TransactionRowContent(
         // Main row
         Row(
             modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Column(modifier = Modifier.weight(1f)) {
+            Column(modifier = Modifier
+                .weight(1f)
+                .padding(end = 12.dp)) {
                 Text(
                     text = sms.merchant ?: "Unknown",
                     style = MaterialTheme.typography.bodyLarge
@@ -769,24 +767,21 @@ private fun TransactionRowContent(
                     style = MaterialTheme.typography.bodySmall,
                     color = Color.Gray
                 )
+                if (sms.isIgnored) {
+                    Text(
+                        text = "Excluded from spending",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = Color.Gray
+                    )
+                }
+                if (sms.isNetZero && sms.linkType == "INTERNAL_TRANSFER") {
+                    Text(
+                        text = "Self transfer",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                }
             }
-            if (sms.isNetZero && sms.linkType == "INTERNAL_TRANSFER") {
-                Text(
-                    text = "Self transfer",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.primary
-                )
-            }
-
-            if (sms.isIgnored) {
-                Text(
-                    text = "Excluded from spending",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = Color.Gray
-                )
-            }
-
-
             Column(horizontalAlignment = Alignment.End) {
                 Text(
                     text =
@@ -831,80 +826,72 @@ fun TransactionRow(
         else ->
             MaterialTheme.colorScheme.surface
     }
-    Column {
 
-        // 🔹 Main transaction card
-        Card(
-            modifier = Modifier
-                .fillMaxWidth()
-                .wrapContentHeight()
-                .combinedClickable(
-                    onClick = { onClick(sms) },
-                    onLongClick = {
-                        // Power-user shortcut
-                        if (!sms.isNetZero) {
-                            onMarkAsSelfTransfer(sms)
-                        }
-                    }
-                ),
-            colors = CardDefaults.cardColors(
-                containerColor = rowBackground
-            )
-        ) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .animateContentSize() // 🔒 animate height smoothly
+            .combinedClickable(
+                onClick = { onClick(sms) },
+                onLongClick = {
+                    if (!sms.isNetZero) onMarkAsSelfTransfer(sms)
+                }
+            ),
+        colors = CardDefaults.cardColors(containerColor = rowBackground)
+    ) {
+
+        Column {
+
+            // Main content
             TransactionRowContent(
                 sms = sms,
-                isExpanded = isExpanded,
+                isExpanded = isExpanded
             )
-        }
 
-        // 🔹 Expanded controls (both switches)
-        if (isExpanded) {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 8.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
+            // Expanded controls INSIDE same card
+            if (isExpanded) {
+                Divider()
 
-                // Exclude from spending
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 12.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    Text("Exclude from spending")
-                    Switch(
-                        checked = sms.isIgnored,
-                        onCheckedChange = { checked ->
-                            onMarkNotExpense(sms, checked)
-                        }
-                    )
-                }
 
-                // Self transfer
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text("Self transfer")
-                    Switch(
-                        checked = sms.isNetZero && sms.linkType == "INTERNAL_TRANSFER",
-                        onCheckedChange = { checked ->
-                            if (checked) {
-                                onMarkAsSelfTransfer(sms)
-                            } else {
-                                onUndoSelfTransfer(sms)
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text("Exclude from spending")
+                        Switch(
+                            checked = sms.isIgnored,
+                            onCheckedChange = { checked ->
+                                onMarkNotExpense(sms, checked)
                             }
-                        }
-                    )
+                        )
+                    }
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text("Self transfer")
+                        Switch(
+                            checked = sms.isNetZero && sms.linkType == "INTERNAL_TRANSFER",
+                            onCheckedChange = { checked ->
+                                if (checked) onMarkAsSelfTransfer(sms)
+                                else onUndoSelfTransfer(sms)
+                            }
+                        )
+                    }
                 }
             }
         }
     }
 }
-
-
 
 
 /* -----------------------------------------------------------
