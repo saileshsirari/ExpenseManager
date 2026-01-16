@@ -74,3 +74,10 @@ fun SmsEntity.isExpense(): Boolean {
             && !isIgnored
 }
 
+ fun SmsEntity.isWalletTopUp(): Boolean {
+    val m = merchant ?: return false
+    return isNetZero &&
+            linkType == "INTERNAL_TRANSFER" &&
+            m.contains("wallet", ignoreCase = true)
+}
+

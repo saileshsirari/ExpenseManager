@@ -21,6 +21,7 @@ import com.spendwise.domain.com.spendwise.feature.smsimport.ui.InsightBlock
 import com.spendwise.feature.smsimport.data.ImportEvent
 import com.spendwise.feature.smsimport.data.SmsEntity
 import com.spendwise.feature.smsimport.data.isExpense
+import com.spendwise.feature.smsimport.data.isWalletTopUp
 import com.spendwise.feature.smsimport.prefs.SmsImportPrefs
 import com.spendwise.feature.smsimport.repo.SmsRepositoryImpl
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -41,6 +42,7 @@ import java.time.LocalTime
 import java.time.YearMonth
 import java.time.ZoneId
 import javax.inject.Inject
+import kotlin.math.roundToInt
 import com.spendwise.core.Logger as Log
 
 @HiltViewModel
@@ -49,6 +51,13 @@ class SmsImportViewModel @Inject constructor(
     private val prefs: SmsImportPrefs,
     @ApplicationContext private val context: Context
 ) : ViewModel() {
+
+
+    companion object{
+        const val FREE_LIMIT = 5
+        private const val FREE_CATEGORY_LIMIT = 5
+
+    }
     private val _items = MutableStateFlow<List<SmsEntity>>(emptyList())
     val items: StateFlow<List<SmsEntity>> = _items
     private val _selectedExplanation = MutableStateFlow<MlReasonBundle?>(null)
@@ -58,7 +67,7 @@ class SmsImportViewModel @Inject constructor(
     private val _importProgress = MutableStateFlow(ImportProgress())
     val importProgress = _importProgress.asStateFlow()
     private val _categoryTotalsAll = MutableStateFlow(emptyList<CategoryTotal>())
-    private val _isPro = MutableStateFlow(false)
+    private val _isPro = MutableStateFlow(true)
     val isPro: StateFlow<Boolean> = _isPro
     private val _showPaywall = MutableStateFlow(false)
     fun onUpgradeClicked() {
@@ -85,7 +94,8 @@ class SmsImportViewModel @Inject constructor(
 
     val categoryInsight: StateFlow<InsightBlock.CategoryList> =
         combine(categoryTotalsAll, isPro) { categories, pro ->
-            if (pro) {
+            val shouldLock = !pro && categories.size > FREE_CATEGORY_LIMIT
+            if (shouldLock){
                 InsightBlock.CategoryList(
                     items = categories,
                     isLocked = false
@@ -101,18 +111,63 @@ class SmsImportViewModel @Inject constructor(
             SharingStarted.Eagerly,
             InsightBlock.CategoryList(emptyList(), isLocked = false)
         )
+    private fun YearMonth.previous(): YearMonth =
+        this.minusMonths(1)
+
+    /**
+     * Total spend for previous month (expenses only)
+     */
+    val previousMonthTotal: StateFlow<Double> =
+        combine(items, uiInputs) { list, input ->
+
+            val prevMonth = input.period.previous()
+
+            list
+                .filter { tx ->
+                    tx.isExpense() &&
+                            tx.localDate().year == prevMonth.year &&
+                            tx.localDate().monthValue == prevMonth.monthValue
+                }
+                .sumOf { it.amount }
+
+        }.stateIn(
+            viewModelScope,
+            SharingStarted.Eagerly,
+            0.0
+        )
 
     val monthlyComparison: StateFlow<InsightBlock.Comparison> =
-        combine(totalSpend, isPro) { total, pro ->
-            if (pro) {
-                InsightBlock.Comparison(
+        combine(
+            totalSpend,               // current month
+            previousMonthTotal,       // computed elsewhere
+            isPro
+        ) { current, previous, pro ->
+
+            val hasComparisonData = previous > 0.0
+            val deltaPercent =
+                if (hasComparisonData)
+                    ((current - previous) / previous * 100).roundToInt()
+                else 0
+
+            when {
+                // No previous data → nothing to compare
+                !hasComparisonData -> InsightBlock.Comparison(
                     title = "Compared to last month",
-                    value = "₹${total.toInt()}",
-                    delta = "+18%",
+                    value = "No data for last month",
+                    delta = null,
                     isLocked = false
                 )
-            } else {
-                InsightBlock.Comparison(
+
+                // Pro user → full insight
+                pro -> InsightBlock.Comparison(
+                    title = "Compared to last month",
+                    value = "₹${current.toInt()}",
+                    delta = "${if (deltaPercent >= 0) "+" else ""}$deltaPercent%",
+                    isLocked = false
+                )
+
+                // Free user → preview only
+                else -> InsightBlock.Comparison(
                     title = "Compared to last month",
                     value = null,
                     delta = null,
@@ -124,26 +179,57 @@ class SmsImportViewModel @Inject constructor(
             SharingStarted.Eagerly,
             InsightBlock.Comparison("", null, null, false)
         )
+
+    /**
+     * Total amount routed via wallets in current period
+     */
+    val walletRoutedAmount: StateFlow<Double> =
+        combine(items, uiInputs) { list, input ->
+
+            list
+                .filterByPeriod(input.mode, input.period)
+                .filter { it.isWalletTopUp() }
+                .sumOf { it.amount }
+
+        }.stateIn(
+            viewModelScope,
+            SharingStarted.Eagerly,
+            0.0
+        )
+
     val walletInsight: StateFlow<InsightBlock.WalletInsight> =
-        isPro
-            .map { pro ->
-                if (pro) {
-                    InsightBlock.WalletInsight(
-                        summary = "Wallets routed ₹4,200 this month",
-                        isLocked = false
-                    )
-                } else {
-                    InsightBlock.WalletInsight(
-                        summary = null,
-                        isLocked = true
-                    )
-                }
+        combine(
+            walletRoutedAmount,   // total routed via wallets
+            isPro
+        ) { walletAmount, pro ->
+
+            val hasWalletActivity = walletAmount > 0.0
+
+            when {
+                // No wallet usage → show unlocked explanation
+                !hasWalletActivity -> InsightBlock.WalletInsight(
+                    summary = "No wallet activity this period",
+                    isLocked = false
+                )
+
+                // Pro user → full insight
+                pro -> InsightBlock.WalletInsight(
+                    summary = "₹${walletAmount.toInt()} routed via wallets",
+                    isLocked = false
+                )
+
+                // Free user → preview
+                else -> InsightBlock.WalletInsight(
+                    summary = null,
+                    isLocked = true
+                )
             }
-            .stateIn(
-                viewModelScope,
-                SharingStarted.Eagerly,
-                InsightBlock.WalletInsight(null, false)
-            )
+        }.stateIn(
+            viewModelScope,
+            SharingStarted.Eagerly,
+            InsightBlock.WalletInsight(null, false)
+        )
+
 
 
     data class ImportProgress(

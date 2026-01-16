@@ -25,11 +25,9 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
@@ -72,6 +70,8 @@ import com.spendwise.app.ui.dashboard.CategoryPieChart
 import com.spendwise.core.extensions.nextQuarter
 import com.spendwise.core.extensions.previousQuarter
 import com.spendwise.domain.com.spendwise.feature.smsimport.data.DashboardMode
+import com.spendwise.domain.com.spendwise.feature.smsimport.ui.MonthlyComparisonCard
+import com.spendwise.domain.com.spendwise.feature.smsimport.ui.WalletInsightCard
 import com.spendwise.feature.smsimport.data.SmsEntity
 import com.spendwise.feature.smsimport.ui.SmsImportViewModel
 import com.spendwise.feature.smsimport.ui.UiTxnRow
@@ -394,15 +394,6 @@ fun InsightsScreen(
         }
     ) { padding ->
 
-        // Sort ALL categories for list (NOT filtered ones!)
-        val sortedCategoriesAll = remember(categoriesAll) {
-            categoriesAll.sortedByDescending { it.total }
-        }
-
-        // Sort filtered categories for list view
-        val sortedFilteredCategories = remember(categoriesFiltered) {
-            categoriesFiltered.sortedByDescending { it.total }
-        }
 
         LazyColumn(
             modifier = Modifier
@@ -472,44 +463,32 @@ fun InsightsScreen(
                 CATEGORY LIST
             ------------------------------------------------------------- */
             item {
-                Text("Categories", style = MaterialTheme.typography.titleMedium)
-                Spacer(Modifier.height(8.dp))
-            }
-
-
-            // If filtered list is empty, fallback to showing all categories
-            val listToShow = if (categoriesFiltered.isNotEmpty()) {
-                sortedFilteredCategories
-            } else {
-                sortedCategoriesAll
-            }
-
-            items(listToShow) { cat ->
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(vertical = 10.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Box(
-                            modifier = Modifier
-                                .size(16.dp)
-                                .background(cat.color, shape = CircleShape)
-                        )
-                        Spacer(Modifier.width(8.dp))
-                        Text(cat.name, style = MaterialTheme.typography.bodyLarge)
-                    }
-
-                    Text("₹${cat.total.toInt()}", style = MaterialTheme.typography.bodyLarge)
-                }
-
-                Divider()
+                CategoryListCard(
+                    title = "Spending by category",
+                    items = categoryInsight.items,
+                    locked = categoryInsight.isLocked,
+                    onUpgrade = { viewModel.onUpgradeClicked() }
+                )
+                Spacer(Modifier.height(16.dp))
             }
 
             item {
+                MonthlyComparisonCard(
+                    comparison = comparison,
+                    onUpgrade = { viewModel.onUpgradeClicked() }
+                )
                 Spacer(Modifier.height(16.dp))
+            }
+            item {
+                WalletInsightCard(
+                    insight = walletInsight,
+                    onUpgrade = { viewModel.onUpgradeClicked() }
+                )
+                Spacer(Modifier.height(16.dp))
+            }
 
+
+            item {
                 // Sorting
                 Row(
                     modifier = Modifier.fillMaxWidth(),
