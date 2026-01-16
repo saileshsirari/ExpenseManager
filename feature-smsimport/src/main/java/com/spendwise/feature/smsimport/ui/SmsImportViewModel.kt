@@ -67,7 +67,6 @@ class SmsImportViewModel @Inject constructor(
     private val uiInputs = _uiInputs.asStateFlow()
     private val _importProgress = MutableStateFlow(ImportProgress())
     val importProgress = _importProgress.asStateFlow()
-    private val _categoryTotalsForPeriod = MutableStateFlow(emptyList<CategoryTotal>())
     private val _isPro = MutableStateFlow(true)
     val isPro: StateFlow<Boolean> = _isPro
     private val _showPaywall = MutableStateFlow(false)
@@ -75,7 +74,26 @@ class SmsImportViewModel @Inject constructor(
         _showPaywall.value = true
     }
 
-    val categoryTotalsForPeriod = _categoryTotalsForPeriod.asStateFlow()
+    val categoryTotalsForPeriod: StateFlow<List<CategoryTotal>> =
+        combine(items, uiInputs) { list, input ->
+            list
+                .filterByPeriod(input.mode, input.period)
+                .filter { it.isCountedAsExpense() }
+                .groupBy { it.category ?: "Uncategorized" }
+                .map { (cat, txs) ->
+                    CategoryTotal(
+                        name = cat,
+                        total = txs.sumOf { it.amount },
+                        color = categoryColorProvider(cat)
+                    )
+                }
+                .sortedByDescending { it.total }
+        }.stateIn(
+            viewModelScope,
+            SharingStarted.Eagerly,
+            emptyList()
+        )
+
     val totalSpend = categoryTotalsForPeriod
         .map { list -> list.sumOf { it.total } }
         .stateIn(
@@ -316,101 +334,110 @@ class SmsImportViewModel @Inject constructor(
 
             android.util.Log.d("expense", "input.mode ${input.mode}")
 
-            // -----------------------------
-            // 1) Base list — ALL items
+            // -------------------------------------------------
+            // 1) Base list — ALL transactions from DB
+            // -------------------------------------------------
             val baseAll = list
 
-// 2) Period filter
-            val periodFiltered = baseAll.filterByPeriod(input.mode, input.period)
+            // -------------------------------------------------
+            // 2) Period filter (GLOBAL time context)
+            // -------------------------------------------------
+            val periodFiltered =
+                baseAll.filterByPeriod(input.mode, input.period)
 
-
-// 4) Ignored visibility toggle (NEW)
-            // 4) UI list — ALWAYS show ignored items
+            // -------------------------------------------------
+            // 3) Ignored visibility (ALWAYS visible per philosophy)
+            //     (Hook kept for future toggle, but no filtering)
+            // -------------------------------------------------
             val visibleList = periodFiltered
 
-
-// 5) Category filter
+            // -------------------------------------------------
+            // 4) Category lens (analysis only, NOT hiding money)
+            //     This affects transaction list + expense math
+            // -------------------------------------------------
             val finalList =
-                if (input.selectedType == null) visibleList
-                else visibleList.filter { it.category == input.selectedType }
+                if (input.selectedType == null)
+                    visibleList
+                else
+                    visibleList.filter { it.category == input.selectedType }
 
-// 6) Expense list (math-only)
-            val expenseList = finalList.filter { it.isExpense() }
+            // -------------------------------------------------
+            // 5) Expense list (math-only, derived from finalList)
+            // -------------------------------------------------
+            val expenseList =
+                finalList.filter { it.isExpense() }
 
+            // -------------------------------------------------
+            // 6) Recalculate category totals
+            //     PIE  = period-wide (visibleList)
+            //     LIST = lens-applied (expenseList)
+            // -------------------------------------------------
 
-            // -----------------------------
-            // 5) Recalculate category totals
-            // -----------------------------
-            recalcCategoryTotalsAll(visibleList)   // PIE
-            recalcCategoryTotals(expenseList)     // LIST
-
-            // -----------------------------
-            // 6) Compute totals (Debit / Credit)
-            // -----------------------------
+            // -------------------------------------------------
+            // 7) Totals (Debit / Credit)
+            // -------------------------------------------------
             val totalDebit = expenseList.sumOf { it.amount }
 
+            val totalCredit =
+                finalList
+                    .filter { it.type.equals("CREDIT", true) && !it.isNetZero }
+                    .sumOf { it.amount }
 
-            // Optional: credits usually informational only
-            val totalCredit = finalList
-                .filter { it.type.equals("CREDIT", true) && !it.isNetZero }
-                .sumOf { it.amount }
+            val debitCreditTotals =
+                mapOf(
+                    "DEBIT" to totalDebit,
+                    "CREDIT" to totalCredit
+                ).filter { it.value > 0 }
 
-            val debitCreditTotals = mapOf(
-                "DEBIT" to totalDebit,
-                "CREDIT" to totalCredit
-            ).filter { it.value > 0 }
-
-            // -----------------------------
-            // 7) Compute bar chart
-            // -----------------------------
+            // -------------------------------------------------
+            // 8) Bar chart data
+            // -------------------------------------------------
             val barData = when (input.mode) {
                 DashboardMode.MONTH ->
-                    expenseList.groupBy { it.localDate().dayOfMonth }
+                    expenseList
+                        .groupBy { it.localDate().dayOfMonth }
                         .mapValues { it.value.sumOf { tx -> tx.amount } }
 
                 DashboardMode.QUARTER,
                 DashboardMode.YEAR ->
-                    expenseList.groupBy { it.localDate().monthValue }
+                    expenseList
+                        .groupBy { it.localDate().monthValue }
                         .mapValues { it.value.sumOf { tx -> tx.amount } }
             }
 
+            // -------------------------------------------------
+            // 9) Sorting (semantic split happens AFTER this)
+            // -------------------------------------------------
+            val sortedTxs =
+                sortTransactions(finalList, input.sortConfig)
 
-            // -----------------------------
-            // 8) Sorting
-            // -----------------------------
-
-            // -----------------------------
-// 8) Sorting (base, semantic split happens AFTER this)
-// -----------------------------
-            val sortedTxs = sortTransactions(finalList, input.sortConfig)
-
-// 🔒 Split by semantic meaning
+            // 🔒 Semantic meaning split
             val (internalTxs, normalTxs) =
                 sortedTxs.partition { it.isNetZero }
 
-// -----------------------------
-// 9) MAIN rows (expenses + income)
-// -----------------------------
-            val mainRows = buildUiRows(
-                txs = normalTxs,
-                sortConfig = input.sortConfig,
-                groupByMerchant = input.showGroupedMerchants
-            )
+            // -------------------------------------------------
+            // 10) MAIN rows (expenses + credits)
+            // -------------------------------------------------
+            val mainRows =
+                buildUiRows(
+                    txs = normalTxs,
+                    sortConfig = input.sortConfig,
+                    groupByMerchant = input.showGroupedMerchants
+                )
 
-            val sortedMainRows = mainRows
-
-// -----------------------------
-// 10) INTERNAL TRANSFER section
-// -----------------------------
+            // -------------------------------------------------
+            // 11) INTERNAL TRANSFER section
+            // -------------------------------------------------
             val internalSectionRows =
                 if (internalTxs.isEmpty()) {
                     emptyList()
                 } else {
-                    val internalGrouped = buildUiRows(
-                        txs = internalTxs,
-                        sortConfig = input.sortConfig,
-                        groupByMerchant = input.showGroupedMerchants
-                    )
+                    val internalGrouped =
+                        buildUiRows(
+                            txs = internalTxs,
+                            sortConfig = input.sortConfig,
+                            groupByMerchant = input.showGroupedMerchants
+                        )
 
                     val sortedInternal =
                         if (input.showGroupedMerchants)
@@ -428,23 +455,19 @@ class SmsImportViewModel @Inject constructor(
                     ) + sortedInternal
                 }
 
-// -----------------------------
-// 11) FINAL rows
-// -----------------------------
-            val finalRows = sortedMainRows + internalSectionRows
+            // -------------------------------------------------
+            // 12) FINAL rows (main + internal section)
+            // -------------------------------------------------
+            val finalRows =
+                mainRows + internalSectionRows
 
-
-// -----------------------------
-// 9) UI grouping (wallet merchant spends)
-// -----------------------------
-
-            // -----------------------------
-            // 9) UI State
-            // -----------------------------
+            // -------------------------------------------------
+            // 13) UI State
+            // -------------------------------------------------
             DashboardUiState(
                 mode = input.mode,
                 period = input.period,
-                rows = finalRows,              // 👈 NEW
+                rows = finalRows,
                 selectedType = input.selectedType,
                 selectedDay = input.selectedDay,
                 selectedMonth = input.selectedMonth,
@@ -466,6 +489,7 @@ class SmsImportViewModel @Inject constructor(
                 SharingStarted.Eagerly,
                 DashboardUiState()
             )
+
 
     private fun sortUiRows(
         rows: List<UiTxnRow>,
@@ -941,8 +965,6 @@ class SmsImportViewModel @Inject constructor(
     }
 
 
-    private val _categoryTotals = MutableStateFlow(emptyList<CategoryTotal>())
-    val categoryTotals = _categoryTotals.asStateFlow()
 
     // --- Convenience helpers to clear or set selected filter (if needed) ---
     fun clearSelectedType() {
@@ -953,36 +975,6 @@ class SmsImportViewModel @Inject constructor(
     fun setSelectedTypeSafe(type: String?) {
         update { it.copy(selectedType = type) }
         // The combine block should react to uiInputs.selectedType and recompute finalList / totals
-    }
-
-    private fun recalcCategoryTotalsAll(list: List<SmsEntity>) {
-
-        val expenseList = list.filter { it.isCountedAsExpense() }
-
-        _categoryTotalsForPeriod.value =
-            expenseList
-                .groupBy { it.category ?: "Uncategorized" }
-                .map { (cat, txs) ->
-                    CategoryTotal(
-                        name = cat,
-                        total = txs.sumOf { it.amount },
-                        color = categoryColorProvider(cat)
-                    )
-                }
-                .sortedByDescending { it.total }
-    }
-
-    private fun recalcCategoryTotals(list: List<SmsEntity>) {
-        _categoryTotals.value =
-            list.groupBy { it.category ?: "Other" }
-                .map { (cat, items) ->
-                    CategoryTotal(
-                        name = cat,
-                        total = items.sumOf { it.amount },
-                        color = categoryColorProvider(cat)
-                    )
-                }
-                .sortedByDescending { it.total }
     }
 
     fun markAsSelfTransfer(tx: SmsEntity) {

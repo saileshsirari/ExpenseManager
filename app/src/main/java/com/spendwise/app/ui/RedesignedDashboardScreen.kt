@@ -96,7 +96,6 @@ fun RedesignedDashboardScreen(
 ) {
     val uiState by viewModel.uiState.collectAsState()
     val progress by viewModel.importProgress.collectAsState()
-    val categories by viewModel.categoryTotals.collectAsState()
     var expandedItemId by remember { mutableStateOf<Long?>(null) }
     val onMarkNotExpense: (SmsEntity, Boolean) -> Unit = { id, ignored ->
         viewModel.setIgnoredState(id, ignored)
@@ -377,7 +376,6 @@ fun InsightsScreen(
     val categoriesAll by viewModel.categoryTotalsForPeriod.collectAsState()
 
     // Filtered categories (if selectedType is applied)
-    val categoriesFiltered by viewModel.categoryTotals.collectAsState()
     val categoryInsight by viewModel.categoryInsight.collectAsState()
     val comparison by viewModel.periodComparison.collectAsState()
     val walletInsight by viewModel.walletInsight.collectAsState()
@@ -507,28 +505,58 @@ fun InsightsScreen(
                 Spacer(Modifier.height(12.dp))
             }
 
-
             items(
-                items = uiState.sortedList,
-                key = { it.id }
-            ) { tx ->
-                SmsListItem(
-                    sms = tx,
-                    isExpanded = expandedItemId == tx.id,
-                    onClick = {
-                        expandedItemId =
-                            if (expandedItemId == tx.id) null else tx.id
-                        viewModel.onMessageClicked(it)
-                    },
-                    onRequestMerchantFix = {  },
-                    onMarkNotExpense = { item, checked ->
-                        viewModel.setIgnoredState(item, checked)
+                items = uiState.rows,
+                key = { row ->
+                    when (row) {
+                        is UiTxnRow.Normal -> "tx-${row.tx.id}"
+                        is UiTxnRow.Grouped -> "group-${row.groupId}"
+                        is UiTxnRow.Section -> "section-${row.id}"
                     }
-                )
-                Spacer(Modifier.height(8.dp))
+                }
+            ) { row ->
+                when (row) {
+
+                    is UiTxnRow.Section -> {
+                        InternalTransferSectionHeader(
+                            title = row.title,
+                            count = row.count,
+                            collapsed = row.collapsed,
+                            onToggle = { viewModel.toggleInternalSection() }
+                        )
+                        Spacer(Modifier.height(8.dp))
+                    }
+
+                    is UiTxnRow.Normal -> {
+                        TransactionRow(
+                            sms = row.tx,
+                            isExpanded = expandedItemId == row.tx.id,
+                            onClick = {
+                                expandedItemId =
+                                    if (expandedItemId == row.tx.id) null else row.tx.id
+                                viewModel.onMessageClicked(it)
+                            },
+                            onMarkNotExpense = { sms, ignored ->
+                                viewModel.setIgnoredState(sms, ignored)
+                            },
+                            onMarkAsSelfTransfer = { viewModel.markAsSelfTransfer(it) },
+                            onUndoSelfTransfer = { viewModel.undoSelfTransfer(it) }
+                        )
+                        Spacer(Modifier.height(8.dp))
+                    }
+
+                    is UiTxnRow.Grouped -> {
+                        GroupedMerchantRow(
+                            group = row,
+                            viewModel = viewModel,
+                            onMarkNotExpense = { sms, ignored ->
+                                viewModel.setIgnoredState(sms, ignored)
+                            }
+                        )
+                        Spacer(Modifier.height(8.dp))
+                    }
+                }
             }
-
-
         }
     }
 }
