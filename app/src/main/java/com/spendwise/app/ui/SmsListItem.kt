@@ -10,8 +10,11 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.CompareArrows
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ElevatedCard
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -108,15 +111,23 @@ fun SmsListItem(
                 modifier = Modifier.fillMaxWidth()
             ) {
 
-                Row(verticalAlignment = Alignment.CenterVertically) {
-
-                    if (sms.isNetZero) {
-                        Text(
-                            text = "Internal transfer",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = Color.Gray
-                        )
-                    }
+                    if ( sms.linkType == "INTERNAL_TRANSFER") {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.padding(bottom = 6.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.CompareArrows ,
+                                contentDescription = null,
+                                tint = Color(0xFF2E7D32)
+                            )
+                            Text(
+                                text =  "Internal Transfer" ,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.padding(start = 6.dp)
+                            )
+                        }
                 }
             }
         }

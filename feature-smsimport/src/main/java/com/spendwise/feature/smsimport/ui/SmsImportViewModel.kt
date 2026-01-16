@@ -17,6 +17,7 @@ import com.spendwise.domain.com.spendwise.feature.smsimport.data.SortField
 import com.spendwise.domain.com.spendwise.feature.smsimport.data.SortOrder
 import com.spendwise.domain.com.spendwise.feature.smsimport.data.categoryColorProvider
 import com.spendwise.domain.com.spendwise.feature.smsimport.data.localDate
+import com.spendwise.domain.com.spendwise.feature.smsimport.ui.InsightBlock
 import com.spendwise.feature.smsimport.data.ImportEvent
 import com.spendwise.feature.smsimport.data.SmsEntity
 import com.spendwise.feature.smsimport.data.isExpense
@@ -57,6 +58,13 @@ class SmsImportViewModel @Inject constructor(
     private val _importProgress = MutableStateFlow(ImportProgress())
     val importProgress = _importProgress.asStateFlow()
     private val _categoryTotalsAll = MutableStateFlow(emptyList<CategoryTotal>())
+    private val _isPro = MutableStateFlow(false)
+    val isPro: StateFlow<Boolean> = _isPro
+    private val _showPaywall = MutableStateFlow(false)
+    fun onUpgradeClicked() {
+        _showPaywall.value = true
+    }
+
     val categoryTotalsAll = _categoryTotalsAll.asStateFlow()
     val totalSpend = categoryTotalsAll
         .map { list -> list.sumOf { it.total } }
@@ -65,6 +73,77 @@ class SmsImportViewModel @Inject constructor(
             SharingStarted.Eagerly,
             0.0
         )
+
+    val topCategoriesFree: StateFlow<List<CategoryTotal>> =
+        categoryTotalsAll
+            .map { it.take(5) }
+            .stateIn(
+                viewModelScope,
+                SharingStarted.Eagerly,
+                emptyList()
+            )
+
+    val categoryInsight: StateFlow<InsightBlock.CategoryList> =
+        combine(categoryTotalsAll, isPro) { categories, pro ->
+            if (pro) {
+                InsightBlock.CategoryList(
+                    items = categories,
+                    isLocked = false
+                )
+            } else {
+                InsightBlock.CategoryList(
+                    items = categories.take(5),
+                    isLocked = true
+                )
+            }
+        }.stateIn(
+            viewModelScope,
+            SharingStarted.Eagerly,
+            InsightBlock.CategoryList(emptyList(), isLocked = false)
+        )
+
+    val monthlyComparison: StateFlow<InsightBlock.Comparison> =
+        combine(totalSpend, isPro) { total, pro ->
+            if (pro) {
+                InsightBlock.Comparison(
+                    title = "Compared to last month",
+                    value = "₹${total.toInt()}",
+                    delta = "+18%",
+                    isLocked = false
+                )
+            } else {
+                InsightBlock.Comparison(
+                    title = "Compared to last month",
+                    value = null,
+                    delta = null,
+                    isLocked = true
+                )
+            }
+        }.stateIn(
+            viewModelScope,
+            SharingStarted.Eagerly,
+            InsightBlock.Comparison("", null, null, false)
+        )
+    val walletInsight: StateFlow<InsightBlock.WalletInsight> =
+        isPro
+            .map { pro ->
+                if (pro) {
+                    InsightBlock.WalletInsight(
+                        summary = "Wallets routed ₹4,200 this month",
+                        isLocked = false
+                    )
+                } else {
+                    InsightBlock.WalletInsight(
+                        summary = null,
+                        isLocked = true
+                    )
+                }
+            }
+            .stateIn(
+                viewModelScope,
+                SharingStarted.Eagerly,
+                InsightBlock.WalletInsight(null, false)
+            )
 
 
     data class ImportProgress(
@@ -86,6 +165,15 @@ class SmsImportViewModel @Inject constructor(
         val showIgnored: Boolean = false,
         val internalSectionCollapsed: Boolean = true
     )
+
+    init {
+        viewModelScope.launch {
+            repo.getAll().collect { list ->
+                Log.e("DB_FLOW", "Room emitted ${list.size} rows")
+                _items.value = list
+            }
+        }
+    }
 
     // FINAL UI STATE (all expensive computation happens here)
     val uiState: StateFlow<DashboardUiState> =
@@ -438,34 +526,29 @@ class SmsImportViewModel @Inject constructor(
         _uiInputs.value = block(_uiInputs.value)
     }
 
-    fun importAll(resolverProvider: () -> ContentResolver) {
-        viewModelScope.launch(Dispatchers.IO) {
+    suspend fun importAll(resolverProvider: () -> ContentResolver) {
 
-            repo.importAll(resolverProvider).collect { event ->
+        repo.importAll(resolverProvider).collect { event ->
 
-                when (event) {
+            when (event) {
 
-                    is ImportEvent.Progress -> {
-                        _importProgress.value = ImportProgress(
-                            total = event.total,
-                            processed = event.processed,
-                            message = event.message,
-                            done = false
-                        )
-                    }
-
-                    is ImportEvent.Finished -> {
-                        _items.value = event.list
-                        prefs.importCompleted = true
-
-                        update { it.copy(isLoading = false) }
-
-                        // 🚀 THE CRITICAL FIX
-                        _importProgress.value = _importProgress.value.copy(done = true)
-                    }
-
-
+                is ImportEvent.Progress -> {
+                    _importProgress.value = ImportProgress(
+                        total = event.total,
+                        processed = event.processed,
+                        message = event.message,
+                        done = false
+                    )
                 }
+
+                is ImportEvent.Finished -> {
+                    _items.value = event.list
+                    prefs.importCompleted = true
+                    update { it.copy(isLoading = false) }
+                    _importProgress.value = _importProgress.value.copy(done = true)
+                }
+
+
             }
         }
     }
@@ -616,16 +699,17 @@ class SmsImportViewModel @Inject constructor(
         note: String
     ) {
         viewModelScope.launch {
-            repo.saveManualExpense(
-                amount = amount,
-                merchant = merchant,
-                category = category,
-                date = date,
-                note = note
-            )
-            refresh()
+            repo.saveManualExpense(amount, merchant, category, date, note)
+            // 🔥 CRITICAL FIX
+            update {
+                it.copy(
+                    mode = DashboardMode.MONTH,
+                    period = YearMonth.from(date)
+                )
+            }
         }
     }
+
 
     fun SmsEntity.isCountedAsExpense(): Boolean {
         return type == "DEBIT" &&
@@ -650,7 +734,7 @@ class SmsImportViewModel @Inject constructor(
     }
 
 
-    fun startImportIfNeeded(resolverProvider: () -> ContentResolver) {
+    fun startImportIfNeeded1(resolverProvider: () -> ContentResolver) {
         viewModelScope.launch(Dispatchers.Default) {
 
             if (!prefs.importCompleted) {
@@ -669,6 +753,42 @@ class SmsImportViewModel @Inject constructor(
                 // 2) Start import
                 loadExistingData()
             }
+        }
+    }
+
+    fun startImportIfNeeded(resolverProvider: () -> ContentResolver) {
+        viewModelScope.launch {
+
+            update { it.copy(isLoading = true) }
+
+            if (!prefs.importCompleted) {
+                _importProgress.value = ImportProgress(done = false)
+
+                importAll(resolverProvider)   // ← SUSPEND, awaited
+
+            } else {
+                repo.importIncremental(resolverProvider).collect { event ->
+                    when (event) {
+                        is ImportEvent.Progress -> {
+                            _importProgress.value = ImportProgress(
+                                total = event.total,
+                                processed = event.processed,
+                                message = event.message,
+                                done = false
+                            )
+                        }
+
+                        is ImportEvent.Finished -> {
+                            _items.value = event.list
+                            _importProgress.value =
+                                _importProgress.value.copy(done = true)
+                        }
+                    }
+                }
+
+            }
+
+            update { it.copy(isLoading = false) }
         }
     }
 

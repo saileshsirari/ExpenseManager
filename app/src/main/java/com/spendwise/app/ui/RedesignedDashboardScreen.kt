@@ -32,6 +32,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.CompareArrows
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
@@ -44,6 +45,7 @@ import androidx.compose.material3.Divider
 import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -123,6 +125,11 @@ fun RedesignedDashboardScreen(
     }
 
     Scaffold(
+        floatingActionButton = {
+            FloatingActionButton(onClick = { navController.navigate(Screen.AddExpense.route) }) {
+                Icon(Icons.Default.Add, contentDescription = "Add Expense")
+            }
+        },
         topBar = {
             CenterAlignedTopAppBar(
                 title = {
@@ -360,12 +367,16 @@ fun InsightsScreen(
     val uiState by viewModel.uiState.collectAsState()
     var expandedItemId by remember { mutableStateOf<Long?>(null) }
 
+    val topCategories by viewModel.topCategoriesFree.collectAsState()
 
     // Full categories for pie chart
     val categoriesAll by viewModel.categoryTotalsAll.collectAsState()
 
     // Filtered categories (if selectedType is applied)
     val categoriesFiltered by viewModel.categoryTotals.collectAsState()
+    val categoryInsight by viewModel.categoryInsight.collectAsState()
+    val comparison by viewModel.monthlyComparison.collectAsState()
+    val walletInsight by viewModel.walletInsight.collectAsState()
 
     Scaffold(
         topBar = {

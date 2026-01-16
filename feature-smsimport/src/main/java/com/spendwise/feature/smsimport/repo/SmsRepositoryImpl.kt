@@ -2,8 +2,6 @@ package com.spendwise.feature.smsimport.repo
 
 import SmsMlPipeline
 import android.content.ContentResolver
-import android.os.Build
-import androidx.annotation.RequiresApi
 import com.spendwise.core.linked.LinkedTransactionDetector
 import com.spendwise.core.ml.CategoryType
 import com.spendwise.core.ml.IgnorePatternBuilder
@@ -19,11 +17,13 @@ import com.spendwise.feature.smsimport.data.ImportEvent
 import com.spendwise.feature.smsimport.data.SmsDao.SelfRecipientEntity
 import com.spendwise.feature.smsimport.data.SmsEntity
 import com.spendwise.feature.smsimport.data.UserMlOverride
+import com.spendwise.feature.smsimport.data.isWalletMerchantSpend
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.withContext
 import java.time.LocalDate
+import java.time.LocalTime
 import java.time.ZoneId
 import javax.inject.Inject
 import com.spendwise.core.Logger as Log
@@ -34,13 +34,85 @@ class SmsRepositoryImpl @Inject constructor(
 ) : SmsRepository {
 
 
+    suspend fun importIncremental(
+        resolverProvider: () -> ContentResolver
+    ): Flow<ImportEvent> = flow {
+
+        val lastTs = db.smsDao().getLastTimestamp() ?: 0L
+        val resolver = resolverProvider()
+
+        Log.d("expense", "Incremental import since $lastTs")
+
+        val rawList = withContext(Dispatchers.IO) {
+            SmsReaderImpl(resolver).readSince(lastTs + 1000)
+        }
+
+        if (rawList.isEmpty()) {
+            emit(ImportEvent.Finished(db.smsDao().getAllOnce()))
+            return@flow
+        }
+
+        for (sms in rawList) {
+            val amount = SmsParser.parseAmount(sms.body) ?: continue
+
+            val result = SmsMlPipeline.classify(
+                raw = RawSms(sms.sender, sms.body, sms.timestamp),
+                parsedAmount = amount,
+                overrideProvider = { key ->
+                    db.userMlOverrideDao().getValue(key)
+                },
+                selfRecipientProvider = {
+                    getSelfRecipients()
+                }
+            ) ?: continue
+
+            val isWalletSpend =
+                sms.body.contains("wallet", true) &&
+                        sms.body.contains("paid", true)
+
+            val entity = SmsEntity(
+                sender = sms.sender,
+                body = sms.body,
+                timestamp = sms.timestamp,
+                amount = result.amount,
+                merchant = result.merchant,
+                type = if (result.isCredit) "CREDIT" else "DEBIT",
+                category = result.category.name,
+                isNetZero =
+                    if (isWalletSpend) false else result.isSingleSmsInternal,
+                linkType =
+                    if (isWalletSpend) null
+                    else if (result.isSingleSmsInternal) "INTERNAL_TRANSFER"
+                    else null,
+                linkId =
+                    if (isWalletSpend) null
+                    else if (result.isSingleSmsInternal) "single:${sms.timestamp}"
+                    else null,
+                linkConfidence =
+                    if (isWalletSpend) 0
+                    else if (result.isSingleSmsInternal) 2
+                    else 0
+            )
+
+            val id = db.smsDao().insert(entity)
+            if (id <= 0) continue
+
+            val saved = db.smsDao().getById(id) ?: continue
+
+            // 🔒 NEVER run linker for wallet spends
+            if (!saved.isNetZero && !saved.isWalletMerchantSpend()) {
+                linkedDetector.process(saved.toDomain())
+            }
+        }
+
+        emit(ImportEvent.Finished(db.smsDao().getAllOnce()))
+    }
+
     // ------------------------------------------------------------
     // IMPORT ALL
     // ------------------------------------------------------------
     override suspend fun importAll(resolverProvider: () -> ContentResolver): Flow<ImportEvent> =
         flow {
-            db.smsDao().deleteAll()
-
             val resolver = resolverProvider()
 
             // -----------------------------
@@ -89,28 +161,18 @@ class SmsRepositoryImpl @Inject constructor(
                         message = "Processing $processed of $total messages"
                     )
                 )
-
                 // ---- ignore patterns ----
                 val bodyLower = sms.body.lowercase()
 
-
-// 🔥 HARD IGNORE — credit card spends
-              /*  if (isCreditCardSpend(bodyLower)) {
-                    Log.d("expense", "IMPORT SKIP — Credit card spend")
-                    continue
-                }*/
-
-// User-defined ignore patterns
-                if(bodyLower.contains("olamoney")) {
-                    Log.d("expense", "here import $bodyLower")
-                }
                 if (ignorePatterns.any { it.containsMatchIn(bodyLower) }) {
                     continue
                 }
 
-
                 val amount = SmsParser.parseAmount(sms.body)
                 if (amount == null || amount <= 0) continue
+                if(amount.toInt() ==1111){
+                    Log.d("expense", "here import $bodyLower")
+                }
 
                 val result = SmsMlPipeline.classify(
                     raw = RawSms(sms.sender, sms.body, sms.timestamp),
@@ -350,7 +412,6 @@ class SmsRepositoryImpl @Inject constructor(
         return db.smsDao().getAll()
     }
 
-    @RequiresApi(Build.VERSION_CODES.O)
     suspend fun saveManualExpense(
         amount: Double,
         merchant: String,
@@ -360,16 +421,36 @@ class SmsRepositoryImpl @Inject constructor(
     ) {
         db.smsDao().insert(
             SmsEntity(
-                sender = "MANUAL",
+                sender = "MANUAL", // source
                 body = note,
-                timestamp = date.atStartOfDay(ZoneId.systemDefault()).toEpochSecond() * 1000,
+                timestamp = date
+                    .atTime(LocalTime.now())   // 👈 NOT startOfDay
+                    .atZone(ZoneId.systemDefault())
+                    .toInstant()
+                    .toEpochMilli(),
+
                 amount = amount,
                 merchant = merchant,
+
+                // 🔒 Direction, not source
                 type = "DEBIT",
-                category = category.name
+                category = category.name,
+
+                // 🔒 Explicit safety
+                isNetZero = false,
+                linkType = null,
+                linkId = null,
+                linkConfidence = 0,
+                isIgnored = false,
+
+                updatedAt = System.currentTimeMillis()
             )
         )
+        val count = db.smsDao().getAllOnce().size
+        Log.e("MANUAL_EXPENSE", "DB size after manual insert = $count")
+
     }
+
 
     override suspend fun markIgnored(tx: SmsEntity) {
         val updated = tx.copy(isIgnored = true)
