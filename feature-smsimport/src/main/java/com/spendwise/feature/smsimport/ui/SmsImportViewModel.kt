@@ -53,11 +53,12 @@ class SmsImportViewModel @Inject constructor(
 ) : ViewModel() {
 
 
-    companion object{
+    companion object {
         const val FREE_LIMIT = 5
         private const val FREE_CATEGORY_LIMIT = 5
 
     }
+
     private val _items = MutableStateFlow<List<SmsEntity>>(emptyList())
     val items: StateFlow<List<SmsEntity>> = _items
     private val _selectedExplanation = MutableStateFlow<MlReasonBundle?>(null)
@@ -66,7 +67,7 @@ class SmsImportViewModel @Inject constructor(
     private val uiInputs = _uiInputs.asStateFlow()
     private val _importProgress = MutableStateFlow(ImportProgress())
     val importProgress = _importProgress.asStateFlow()
-    private val _categoryTotalsAll = MutableStateFlow(emptyList<CategoryTotal>())
+    private val _categoryTotalsForPeriod = MutableStateFlow(emptyList<CategoryTotal>())
     private val _isPro = MutableStateFlow(true)
     val isPro: StateFlow<Boolean> = _isPro
     private val _showPaywall = MutableStateFlow(false)
@@ -74,8 +75,8 @@ class SmsImportViewModel @Inject constructor(
         _showPaywall.value = true
     }
 
-    val categoryTotalsAll = _categoryTotalsAll.asStateFlow()
-    val totalSpend = categoryTotalsAll
+    val categoryTotalsForPeriod = _categoryTotalsForPeriod.asStateFlow()
+    val totalSpend = categoryTotalsForPeriod
         .map { list -> list.sumOf { it.total } }
         .stateIn(
             viewModelScope,
@@ -84,50 +85,98 @@ class SmsImportViewModel @Inject constructor(
         )
 
     val topCategoriesFree: StateFlow<List<CategoryTotal>> =
-        categoryTotalsAll
+        categoryTotalsForPeriod
             .map { it.take(5) }
             .stateIn(
                 viewModelScope,
                 SharingStarted.Eagerly,
                 emptyList()
             )
+    private fun previousPeriod(
+        mode: DashboardMode,
+        period: YearMonth
+    ): YearMonth =
+        when (mode) {
+            DashboardMode.MONTH -> period.minusMonths(1)
+            DashboardMode.QUARTER -> period.minusMonths(3)
+            DashboardMode.YEAR -> period.minusYears(1)
+        }
 
     val categoryInsight: StateFlow<InsightBlock.CategoryList> =
-        combine(categoryTotalsAll, isPro) { categories, pro ->
+        combine(categoryTotalsForPeriod, isPro) { categories, pro ->
             val shouldLock = !pro && categories.size > FREE_CATEGORY_LIMIT
-            if (shouldLock){
-                InsightBlock.CategoryList(
-                    items = categories,
-                    isLocked = false
-                )
-            } else {
-                InsightBlock.CategoryList(
-                    items = categories.take(5),
-                    isLocked = true
-                )
-            }
+            InsightBlock.CategoryList(
+                items =
+                    if (shouldLock) categories.take(FREE_CATEGORY_LIMIT)
+                    else categories,
+                isLocked = shouldLock
+            )
         }.stateIn(
             viewModelScope,
             SharingStarted.Eagerly,
             InsightBlock.CategoryList(emptyList(), isLocked = false)
         )
+    fun prevPeriod() {
+        update {
+            it.copy(
+                period = when (it.mode) {
+                    DashboardMode.MONTH -> it.period.minusMonths(1)
+                    DashboardMode.QUARTER -> it.period.minusMonths(3)
+                    DashboardMode.YEAR -> it.period.minusYears(1)
+                },
+                selectedType = null,
+                selectedDay = null,
+                selectedMonth = null
+            )
+        }
+    }
+
+    fun nextPeriod() {
+        update {
+            it.copy(
+                period = when (it.mode) {
+                    DashboardMode.MONTH -> it.period.plusMonths(1)
+                    DashboardMode.QUARTER -> it.period.plusMonths(3)
+                    DashboardMode.YEAR -> it.period.plusYears(1)
+                },
+                selectedType = null,
+                selectedDay = null,
+                selectedMonth = null
+            )
+        }
+    }
+    fun resetToCurrentMonth() {
+        val now = YearMonth.now()
+
+        update {
+            if (
+                it.mode == DashboardMode.MONTH &&
+                it.period == now
+            ) it
+            else it.copy(
+                mode = DashboardMode.MONTH,
+                period = now,
+                selectedType = null,
+                selectedDay = null,
+                selectedMonth = null
+            )
+        }
+    }
+
     private fun YearMonth.previous(): YearMonth =
         this.minusMonths(1)
 
     /**
      * Total spend for previous month (expenses only)
      */
-    val previousMonthTotal: StateFlow<Double> =
+    val previousPeriodTotal: StateFlow<Double> =
         combine(items, uiInputs) { list, input ->
 
-            val prevMonth = input.period.previous()
+            val prev = previousPeriod(input.mode, input.period)
 
             list
-                .filter { tx ->
-                    tx.isExpense() &&
-                            tx.localDate().year == prevMonth.year &&
-                            tx.localDate().monthValue == prevMonth.monthValue
-                }
+                .filterByPeriod(input.mode, prev)
+                .filter { it.isExpense() }
                 .sumOf { it.amount }
 
         }.stateIn(
@@ -136,39 +185,39 @@ class SmsImportViewModel @Inject constructor(
             0.0
         )
 
-    val monthlyComparison: StateFlow<InsightBlock.Comparison> =
-        combine(
-            totalSpend,               // current month
-            previousMonthTotal,       // computed elsewhere
-            isPro
-        ) { current, previous, pro ->
 
-            val hasComparisonData = previous > 0.0
-            val deltaPercent =
-                if (hasComparisonData)
-                    ((current - previous) / previous * 100).roundToInt()
+    val periodComparison: StateFlow<InsightBlock.Comparison> =
+        combine(totalSpend, previousPeriodTotal, isPro, uiInputs) {
+                current, previous, pro, input ->
+
+            val hasData = previous > 0.0
+            val delta =
+                if (hasData) ((current - previous) / previous * 100).roundToInt()
                 else 0
 
+            val title = when (input.mode) {
+                DashboardMode.MONTH -> "Compared to last month"
+                DashboardMode.QUARTER -> "Compared to last quarter"
+                DashboardMode.YEAR -> "Compared to last year"
+            }
+
             when {
-                // No previous data → nothing to compare
-                !hasComparisonData -> InsightBlock.Comparison(
-                    title = "Compared to last month",
-                    value = "No data for last month",
+                !hasData -> InsightBlock.Comparison(
+                    title = title,
+                    value = "No previous data",
                     delta = null,
                     isLocked = false
                 )
 
-                // Pro user → full insight
                 pro -> InsightBlock.Comparison(
-                    title = "Compared to last month",
+                    title = title,
                     value = "₹${current.toInt()}",
-                    delta = "${if (deltaPercent >= 0) "+" else ""}$deltaPercent%",
+                    delta = "${if (delta >= 0) "+" else ""}$delta%",
                     isLocked = false
                 )
 
-                // Free user → preview only
                 else -> InsightBlock.Comparison(
-                    title = "Compared to last month",
+                    title = title,
                     value = null,
                     delta = null,
                     isLocked = true
@@ -179,6 +228,7 @@ class SmsImportViewModel @Inject constructor(
             SharingStarted.Eagerly,
             InsightBlock.Comparison("", null, null, false)
         )
+
 
     /**
      * Total amount routed via wallets in current period
@@ -229,7 +279,6 @@ class SmsImportViewModel @Inject constructor(
             SharingStarted.Eagerly,
             InsightBlock.WalletInsight(null, false)
         )
-
 
 
     data class ImportProgress(
@@ -910,7 +959,7 @@ class SmsImportViewModel @Inject constructor(
 
         val expenseList = list.filter { it.isCountedAsExpense() }
 
-        _categoryTotalsAll.value =
+        _categoryTotalsForPeriod.value =
             expenseList
                 .groupBy { it.category ?: "Uncategorized" }
                 .map { (cat, txs) ->

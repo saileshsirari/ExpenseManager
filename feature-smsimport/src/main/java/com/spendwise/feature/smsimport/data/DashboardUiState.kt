@@ -26,3 +26,15 @@ data class DashboardUiState(
     val barData: Map<Int, Double> = emptyMap(),
     val isLoading: Boolean = true
 )
+fun DashboardUiState.periodLabel(): String =
+    when (mode) {
+        DashboardMode.MONTH ->
+            period.month.name.lowercase().replaceFirstChar { it.uppercase() } +
+                    " ${period.year}"
+
+        DashboardMode.QUARTER ->
+            "Q${((period.monthValue - 1) / 3) + 1} ${period.year}"
+
+        DashboardMode.YEAR ->
+            period.year.toString()
+    }

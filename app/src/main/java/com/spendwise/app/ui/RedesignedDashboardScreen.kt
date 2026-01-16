@@ -67,6 +67,7 @@ import androidx.compose.ui.unit.dp
 import androidx.navigation.NavController
 import com.spendwise.app.navigation.Screen
 import com.spendwise.app.ui.dashboard.CategoryPieChart
+import com.spendwise.app.ui.dashboard.DashboardModeSelector
 import com.spendwise.core.extensions.nextQuarter
 import com.spendwise.core.extensions.previousQuarter
 import com.spendwise.domain.com.spendwise.feature.smsimport.data.DashboardMode
@@ -99,6 +100,9 @@ fun RedesignedDashboardScreen(
     var expandedItemId by remember { mutableStateOf<Long?>(null) }
     val onMarkNotExpense: (SmsEntity, Boolean) -> Unit = { id, ignored ->
         viewModel.setIgnoredState(id, ignored)
+    }
+    LaunchedEffect(Unit) {
+        viewModel.resetToCurrentMonth()
     }
     // top-level loading / import handling (assumes app-level permission + import triggers)
     if (!progress.done) {
@@ -370,12 +374,12 @@ fun InsightsScreen(
     val topCategories by viewModel.topCategoriesFree.collectAsState()
 
     // Full categories for pie chart
-    val categoriesAll by viewModel.categoryTotalsAll.collectAsState()
+    val categoriesAll by viewModel.categoryTotalsForPeriod.collectAsState()
 
     // Filtered categories (if selectedType is applied)
     val categoriesFiltered by viewModel.categoryTotals.collectAsState()
     val categoryInsight by viewModel.categoryInsight.collectAsState()
-    val comparison by viewModel.monthlyComparison.collectAsState()
+    val comparison by viewModel.periodComparison.collectAsState()
     val walletInsight by viewModel.walletInsight.collectAsState()
 
     Scaffold(
@@ -400,6 +404,22 @@ fun InsightsScreen(
                 .padding(padding)
                 .padding(16.dp)
         ) {
+
+            item {
+                DashboardModeSelector(
+                    mode = uiState.mode,
+                    onModeChange = viewModel::setMode
+                )
+            }
+            item {
+                PeriodNavigator(
+                    mode = uiState.mode,
+                    period = uiState.period,
+                    onPrev = viewModel::prevPeriod,
+                    onNext = viewModel::nextPeriod
+                )
+            }
+
 
             /* -------------------------------------------------------------
                 CATEGORY PIE CHART
@@ -439,22 +459,6 @@ fun InsightsScreen(
                             )
                         }
                     }
-                }
-                Spacer(Modifier.height(16.dp))
-            }
-
-
-            /* -------------------------------------------------------------
-                TIMEFRAME SWITCH
-            ------------------------------------------------------------- */
-            item {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
-                    Button(onClick = { viewModel.setMode(DashboardMode.MONTH) }) { Text("Month") }
-                    Button(onClick = { viewModel.setMode(DashboardMode.QUARTER) }) { Text("Quarter") }
-                    Button(onClick = { viewModel.setMode(DashboardMode.YEAR) }) { Text("Year") }
                 }
                 Spacer(Modifier.height(16.dp))
             }
