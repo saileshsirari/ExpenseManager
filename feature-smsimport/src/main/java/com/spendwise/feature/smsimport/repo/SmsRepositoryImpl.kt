@@ -8,6 +8,8 @@ import com.spendwise.core.ml.IgnorePatternBuilder
 import com.spendwise.core.ml.MerchantExtractorMl
 import com.spendwise.core.ml.MlReasonBundle
 import com.spendwise.core.ml.RawSms
+import com.spendwise.core.ml.SenderType
+import com.spendwise.core.transfer.InternalTransferDetector
 import com.spendwise.domain.SmsRepository
 import com.spendwise.domain.com.spendwise.feature.smsimport.data.mapper.toDomain
 import com.spendwise.feature.smsimport.SmsParser
@@ -33,6 +35,18 @@ class SmsRepositoryImpl @Inject constructor(
     private val linkedDetector: LinkedTransactionDetector
 ) : SmsRepository {
 
+    private fun resolveMerchant(
+        detectedMerchant: String?,
+        category: CategoryType
+    ): String? {
+        return when {
+            detectedMerchant.isNullOrBlank() &&
+                    category == CategoryType.TRANSFER ->
+                "Account Transfer"
+
+            else -> detectedMerchant
+        }
+    }
 
     suspend fun importIncremental(
         resolverProvider: () -> ContentResolver
@@ -75,7 +89,11 @@ class SmsRepositoryImpl @Inject constructor(
                 body = sms.body,
                 timestamp = sms.timestamp,
                 amount = result.amount,
-                merchant = result.merchant,
+                merchant = resolveMerchant(
+                    detectedMerchant = result.merchant,
+                    category = result.category
+                ),
+
                 type = if (result.isCredit) "CREDIT" else "DEBIT",
                 category = result.category.name,
                 isNetZero =
@@ -193,7 +211,10 @@ class SmsRepositoryImpl @Inject constructor(
                     body = result.rawSms.body,
                     timestamp = result.rawSms.timestamp,
                     amount = result.amount,
-                    merchant = result.merchant,
+                    merchant = resolveMerchant(
+                        detectedMerchant = result.merchant,
+                        category = result.category
+                    ),
                     type = if (result.isCredit) "CREDIT" else "DEBIT",
                     category = result.category.name,
 
@@ -337,12 +358,28 @@ class SmsRepositoryImpl @Inject constructor(
         )?.explanation
     }
 
+    suspend fun reclassifyAllWithProgress(
+        onProgress: (done: Int, total: Int) -> Unit
+    ) {
+        val all = db.smsDao().getAllOnce()
+        val total = all.size
+
+        all.forEachIndexed { index, tx ->
+            reclassifySingle(tx.id)   // ✅ FIX: pass ID
+            onProgress(index + 1, total)
+        }
+    }
+
 
     // ------------------------------------------------------------
     // RECLASSIFY SINGLE  (FULLY FIXED)
     // ------------------------------------------------------------
     override suspend fun reclassifySingle(id: Long): SmsEntity? {
         val tx = db.smsDao().getById(id) ?: return null
+
+        // 🔒 Preserve user-declared self transfer
+        val isUserSelfTransfer =
+            tx.isNetZero && tx.linkType == "USER_SELF"
 
         val parsedAmount = SmsParser.parseAmount(tx.body) ?: return null
 
@@ -355,54 +392,69 @@ class SmsRepositoryImpl @Inject constructor(
             raw = RawSms(tx.sender, tx.body, tx.timestamp),
             parsedAmount = parsedAmount,
             overrideProvider = { key ->
-
-                // 1) Exact key
-                db.userMlOverrideDao().getValue(key)?.also {
-                    Log.d("expense", "match key=$key => $it")
-                    return@classify it
-                }
-
-                // 2) merchant:<normalizedMerchant>
-                db.userMlOverrideDao().getValue("merchant:$normMerchant")?.also {
-                    Log.d("expense", "match merchant:$normMerchant => $it")
-                    return@classify it
-                }
-
-                // 3) merchant:<normalizedSender>
-                db.userMlOverrideDao().getValue("merchant:$normSender")?.also {
-                    Log.d("expense", "match merchant:$normSender => $it")
-                    return@classify it
-                }
-
-                Log.d("expense", "NO MATCH for key=$key")
-                null
+                db.userMlOverrideDao().getValue(key)
+                    ?: db.userMlOverrideDao().getValue("merchant:$normMerchant")
+                    ?: db.userMlOverrideDao().getValue("merchant:$normSender")
             },
             selfRecipientProvider = {
                 getSelfRecipients()
             }
         ) ?: return null
 
+        // 🔒 Re-run INTERNAL TRANSFER detection (system truth)
+        val internalResult =
+            InternalTransferDetector.detect(
+                senderType = SenderType.BANK,   // tx.sender is BANK SMS here
+                body = tx.body,
+                amount = parsedAmount,
+                selfRecipientProvider = { getSelfRecipients() }
+            )
+
         val updated = tx.copy(
-            merchant = result.merchant,
+            merchant = resolveMerchant(
+                detectedMerchant = result.merchant,
+                category = result.category
+            ),
+
             category = result.category.name,
             type = if (result.isCredit) "CREDIT" else "DEBIT",
 
-            // 🔒 FIX: preserve / re-apply internal transfer truth
-            // 🔒 Preserve existing internal-transfer truth ONLY
-            isNetZero = tx.isNetZero,
-            linkType = tx.linkType,
-            linkId = tx.linkId,
-            linkConfidence = tx.linkConfidence
+            // 🔒 INTERNAL TRANSFER MERGE (FINAL)
+            isNetZero =
+                if (isUserSelfTransfer)
+                    true
+                else
+                    internalResult != null,
+
+            linkType =
+                if (isUserSelfTransfer)
+                    tx.linkType
+                else if (internalResult != null)
+                    "INTERNAL_TRANSFER"
+                else
+                    null,
+
+            linkId =
+                if (isUserSelfTransfer)
+                    tx.linkId
+                else
+                    null,
+
+            linkConfidence =
+                if (isUserSelfTransfer)
+                    tx.linkConfidence
+                else if (internalResult != null)
+                    2
+                else
+                    0
         )
 
         db.smsDao().update(updated)
+        Log.d("expense", "Reclassified tx=$id merchant=${updated.merchant}")
 
-
-        Log.d("expense", "Updated merchant=${updated.merchant}")
-
-        db.smsDao().update(updated)
         return updated
     }
+
 
 
     // ------------------------------------------------------------
@@ -478,25 +530,26 @@ class SmsRepositoryImpl @Inject constructor(
 
     suspend fun markAsSelfTransfer(tx: SmsEntity) {
 
-        // 1️⃣ Normalize person name
-        val person = MerchantExtractorMl.normalize(tx.merchant ?: return)
+        // 🔒 1️⃣ Save self-recipient ONLY if merchant exists
+        tx.merchant?.let {
+            val person = MerchantExtractorMl.normalize(it)
+            db.smsDao().insertSelfRecipient(
+                SelfRecipientEntity(person)
+            )
+        }
 
-        // 2️⃣ Save self-recipient rule
-        db.smsDao().insertSelfRecipient(
-            SelfRecipientEntity(person)
-        )
-
-        // 3️⃣ Update THIS transaction immediately
+        // 🔒 2️⃣ Always update THIS transaction
         val updated = tx.copy(
             category = CategoryType.TRANSFER.name,
             isNetZero = true,
-            linkType = "INTERNAL_TRANSFER",
+            linkType = "USER_SELF",          // IMPORTANT: distinguish from auto
             linkId = tx.id.toString(),
             linkConfidence = 1
         )
 
         db.smsDao().update(updated)
     }
+
     suspend fun getSelfRecipients(): Set<String> {
         return db.smsDao()
             .getAllSelfRecipients()

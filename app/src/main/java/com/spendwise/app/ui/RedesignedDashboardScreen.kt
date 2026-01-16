@@ -46,6 +46,7 @@ import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Switch
@@ -100,6 +101,11 @@ fun RedesignedDashboardScreen(
     val onMarkNotExpense: (SmsEntity, Boolean) -> Unit = { id, ignored ->
         viewModel.setIgnoredState(id, ignored)
     }
+
+    val progressReclassify by viewModel.reclassifyProgress.collectAsState()
+
+
+
     LaunchedEffect(Unit) {
         viewModel.resetToCurrentMonth()
     }
@@ -116,6 +122,7 @@ fun RedesignedDashboardScreen(
         return
     }
 
+
     if (uiState.isLoading) {
         Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
@@ -126,6 +133,8 @@ fun RedesignedDashboardScreen(
         }
         return
     }
+
+
 
     Scaffold(
         floatingActionButton = {
@@ -166,6 +175,51 @@ fun RedesignedDashboardScreen(
                 .fillMaxSize(),
             contentPadding = PaddingValues(bottom = 56.dp)
         ) {
+            // 🔒 RECLASSIFY PROGRESS (VISIBLE & SAFE)
+            progressReclassify?.let { (done, total) ->
+                item {
+                    Card(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(bottom = 12.dp),
+                        colors = CardDefaults.cardColors(
+                            containerColor = MaterialTheme.colorScheme.surfaceVariant
+                        )
+                    ) {
+                        Column(modifier = Modifier.padding(12.dp)) {
+                            Text(
+                                "Improving transaction classification",
+                                style = MaterialTheme.typography.bodyMedium
+                            )
+
+                            Spacer(Modifier.height(6.dp))
+
+                            LinearProgressIndicator(
+                                progress =
+                                    if (total > 0) done.toFloat() / total else 0f,
+                                modifier = Modifier.fillMaxWidth()
+                            )
+
+                            Spacer(Modifier.height(4.dp))
+
+                            Text(
+                                if (total > 0) "$done of $total transactions"
+                                else "Starting…",
+                                style = MaterialTheme.typography.bodySmall
+                            )
+                        }
+                    }
+                }
+            }
+
+            item {
+                Button(
+                    onClick = { viewModel.triggerReclassification() },
+                    modifier = Modifier.padding(12.dp)
+                ) {
+                    Text("Reclassify Transactions (Debug)")
+                }
+            }
             item {
                 PeriodNavigator(
                     mode = uiState.mode,

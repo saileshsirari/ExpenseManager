@@ -68,6 +68,8 @@ class SmsImportViewModel @Inject constructor(
     private val uiInputs = _uiInputs.asStateFlow()
     private val _importProgress = MutableStateFlow(ImportProgress())
     val importProgress = _importProgress.asStateFlow()
+
+
     private val _isPro = MutableStateFlow(true)
     val isPro: StateFlow<Boolean> = _isPro
     private val _showPaywall = MutableStateFlow(false)
@@ -135,6 +137,36 @@ class SmsImportViewModel @Inject constructor(
             SharingStarted.Eagerly,
             InsightBlock.CategoryList(emptyList(), isLocked = false)
         )
+    private val _reclassifyProgress =
+        MutableStateFlow<Pair<Int, Int>?>(null)
+
+    val reclassifyProgress: StateFlow<Pair<Int, Int>?> =
+        _reclassifyProgress.asStateFlow()
+
+    fun triggerReclassification() {
+        viewModelScope.launch(Dispatchers.Default) {
+
+            // Force UI to show progress immediately
+            viewModelScope.launch(Dispatchers.Main) {
+                _reclassifyProgress.value = 0 to 0
+            }
+
+            repo.reclassifyAllWithProgress { done, total ->
+                // Hop to Main safely from callback
+                viewModelScope.launch(Dispatchers.Main) {
+                    _reclassifyProgress.value = done to total
+                }
+            }
+
+            // Clear progress at the end
+            viewModelScope.launch(Dispatchers.Main) {
+                _reclassifyProgress.value = null
+            }
+        }
+    }
+
+
+
     fun prevPeriod() {
         update {
             it.copy(
@@ -790,6 +822,15 @@ class SmsImportViewModel @Inject constructor(
         }
     }
 
+    fun forceReclassify() {
+        viewModelScope.launch(Dispatchers.Default) {
+            repo.reclassifyAllWithProgress { done, total ->
+                _reclassifyProgress.value = done to total
+            }
+        }
+    }
+
+
     fun fixMerchant(tx: SmsEntity, newMerchant: String) {
         viewModelScope.launch {
 
@@ -1013,6 +1054,7 @@ class SmsImportViewModel @Inject constructor(
         update { it.copy(selectedType = null) } // use your existing update(...) method
         // optionally trigger recompute if you don't recompute from combine automatically
     }
+
 
     fun setSelectedTypeSafe(type: String?) {
         update { it.copy(selectedType = type) }

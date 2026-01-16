@@ -27,15 +27,22 @@ object InternalTransferDetector {
     // 🔒 STRICT account-based debit
     private val debitAccountRegex =
         Regex(
-            "(acct|a/c|account)\\s*(xx|\\*+)\\d{2,4}.*debited",
+            "(acct|a/c|account)\\s*(no\\.)?\\s*[x\\*]{2,}\\d{2,6}.*debited",
             RegexOption.IGNORE_CASE
         )
 
     private val creditAccountRegex =
         Regex(
-            "(acct|a/c|account)\\s*(xx|\\*+)\\d{2,4}.*credited",
+            "(acct|a/c|account)\\s*(no\\.)?\\s*[x\\*]{2,}\\d{2,6}.*credited",
             RegexOption.IGNORE_CASE
         )
+
+    private val internalMarkers = listOf(
+        "infobil",
+        "infoach",
+        "infoimps",
+        "infortgs"
+    )
 
 
     private val refRegex = Regex(
@@ -137,6 +144,21 @@ object InternalTransferDetector {
             Log.e("ITD", "UPI PERSON → NOT internal")
             return null
         }
+
+        internalMarkers.forEach { marker ->
+            if (lower.contains(marker)) {
+                Log.e("ITD", "Marker-based internal transfer detected → $marker")
+
+                return TransferInfo(
+                    ref = marker.uppercase(),
+                    amount = amount,
+                    hasDebitAccount = true,
+                    hasCreditAccount = false, // single-sided SMS
+                    method = marker.uppercase()
+                )
+            }
+        }
+
 
 // ✅ TRUE internal only when BOTH sides are accounts AND not UPI-person
         if (hasDebitAccount && hasCreditAccount) {
