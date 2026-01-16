@@ -63,6 +63,7 @@ class SmsImportViewModel @Inject constructor(
     val items: StateFlow<List<SmsEntity>> = _items
     private val _selectedExplanation = MutableStateFlow<MlReasonBundle?>(null)
     val selectedExplanation = _selectedExplanation
+    val mainSectionCollapsed: Boolean = false
     private val _uiInputs = MutableStateFlow(UiInputs())
     private val uiInputs = _uiInputs.asStateFlow()
     private val _importProgress = MutableStateFlow(ImportProgress())
@@ -146,6 +147,17 @@ class SmsImportViewModel @Inject constructor(
                 selectedDay = null,
                 selectedMonth = null
             )
+        }
+    }
+    fun toggleMainSection() {
+        update {
+            it.copy(mainSectionCollapsed = !it.mainSectionCollapsed)
+        }
+    }
+
+    fun toggleInternalSection() {
+        update {
+            it.copy(internalSectionCollapsed = !it.internalSectionCollapsed)
         }
     }
 
@@ -316,7 +328,8 @@ class SmsImportViewModel @Inject constructor(
         val selectedMonth: Int? = null,
         val isLoading: Boolean = true,
         val showIgnored: Boolean = false,
-        val internalSectionCollapsed: Boolean = true
+        val internalSectionCollapsed: Boolean = true,
+        val mainSectionCollapsed: Boolean = false
     )
 
     init {
@@ -428,7 +441,19 @@ class SmsImportViewModel @Inject constructor(
             // -------------------------------------------------
             // 11) INTERNAL TRANSFER section
             // -------------------------------------------------
-            val internalSectionRows =
+            // -------------------------------------------------
+// INTERNAL TRANSFER section (SAFE)
+// -------------------------------------------------
+            val internalSectionHeader: UiTxnRow.Section? =
+                if (internalTxs.isEmpty()) null
+                else UiTxnRow.Section(
+                    id = "internal_transfers",
+                    title = "Internal transfers",
+                    count = internalTxs.size,
+                    collapsed = input.internalSectionCollapsed
+                )
+
+            val internalSectionBody: List<UiTxnRow> =
                 if (internalTxs.isEmpty()) {
                     emptyList()
                 } else {
@@ -439,27 +464,52 @@ class SmsImportViewModel @Inject constructor(
                             groupByMerchant = input.showGroupedMerchants
                         )
 
-                    val sortedInternal =
-                        if (input.showGroupedMerchants)
-                            sortUiRows(internalGrouped, input.sortConfig)
-                        else
-                            internalGrouped
-
-                    listOf(
-                        UiTxnRow.Section(
-                            id = "internal_transfers",
-                            title = "Internal transfers",
-                            count = internalTxs.size,
-                            collapsed = input.internalSectionCollapsed
-                        )
-                    ) + sortedInternal
+                    if (input.showGroupedMerchants)
+                        sortUiRows(internalGrouped, input.sortConfig)
+                    else
+                        internalGrouped
                 }
+
+            val visibleInternalRows: List<UiTxnRow> =
+                when {
+                    internalSectionHeader == null -> emptyList()
+                    input.internalSectionCollapsed -> listOf(internalSectionHeader)
+                    else -> listOf(internalSectionHeader) + internalSectionBody
+                }
+
+
 
             // -------------------------------------------------
             // 12) FINAL rows (main + internal section)
             // -------------------------------------------------
+            // -----------------------------
+// MAIN section header
+// -----------------------------
+            val mainSectionHeader =
+                UiTxnRow.Section(
+                    id = "main_transactions",
+                    title = "Transactions",
+                    count = normalTxs.size,
+                    collapsed = input.mainSectionCollapsed
+                )
+
+            val visibleMainRows =
+                if (input.mainSectionCollapsed) emptyList()
+                else mainRows
+
+// -----------------------------
+// INTERNAL section (already exists)
+// -----------------------------
+
+
+// -----------------------------
+// FINAL rows
+// -----------------------------
             val finalRows =
-                mainRows + internalSectionRows
+                listOf(mainSectionHeader) +
+                        visibleMainRows +
+                        visibleInternalRows
+
 
             // -------------------------------------------------
             // 13) UI State
@@ -563,14 +613,6 @@ class SmsImportViewModel @Inject constructor(
             val primary = compare(a, b, config.primary, config.primaryOrder)
             if (primary != 0) primary
             else compare(a, b, config.secondary, config.secondaryOrder)
-        }
-    }
-
-    fun toggleInternalSection() {
-        update { state ->
-            state.copy(
-                internalSectionCollapsed = !state.internalSectionCollapsed
-            )
         }
     }
 

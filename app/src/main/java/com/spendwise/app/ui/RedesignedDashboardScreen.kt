@@ -249,8 +249,15 @@ fun RedesignedDashboardScreen(
                             count = row.count,
                             collapsed = row.collapsed,
                             onToggle = {
-                                viewModel.toggleInternalSection()
+                                when (row.id) {
+                                    "main_transactions" ->
+                                        viewModel.toggleMainSection()
+
+                                    "internal_transfers" ->
+                                        viewModel.toggleInternalSection()
+                                }
                             }
+
                         )
                         Spacer(Modifier.height(8.dp))
                     }
@@ -522,7 +529,15 @@ fun InsightsScreen(
                             title = row.title,
                             count = row.count,
                             collapsed = row.collapsed,
-                            onToggle = { viewModel.toggleInternalSection() }
+                            onToggle = {
+                                when (row.id) {
+                                    "main_transactions" ->
+                                        viewModel.toggleMainSection()
+
+                                    "internal_transfers" ->
+                                        viewModel.toggleInternalSection()
+                                }
+                            }
                         )
                         Spacer(Modifier.height(8.dp))
                     }
