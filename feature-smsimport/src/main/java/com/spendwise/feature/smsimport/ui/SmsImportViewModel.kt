@@ -372,7 +372,7 @@ class SmsImportViewModel @Inject constructor(
             }
         }
     }
-
+    var groupIndex = 0
     // FINAL UI STATE (all expensive computation happens here)
     val uiState: StateFlow<DashboardUiState> =
         combine(items, uiInputs) { list, input ->
@@ -463,6 +463,7 @@ class SmsImportViewModel @Inject constructor(
             // -------------------------------------------------
             // 10) MAIN rows (expenses + credits)
             // -------------------------------------------------
+            groupIndex =0
             val mainRows =
                 buildUiRows(
                     txs = normalTxs,
@@ -689,7 +690,7 @@ class SmsImportViewModel @Inject constructor(
                 val netAmount = totalCredit - totalDebit
 
                 result += UiTxnRow.Grouped(
-                    groupId = "${first.merchant}-${first.timestamp}",
+                    groupId = "merchant:${first.merchant}:${groupIndex++}",  // ✅ UNIQUE + STABLE
                     title = first.merchant,   // ✅ safe now
                     count = buffer.size,
                     netAmount = netAmount,
@@ -1064,14 +1065,12 @@ class SmsImportViewModel @Inject constructor(
     fun markAsSelfTransfer(tx: SmsEntity) {
         viewModelScope.launch {
             repo.markAsSelfTransfer(tx)
-            refresh()   // reload list + recompute UI state
         }
     }
 
     fun undoSelfTransfer(tx: SmsEntity) {
         viewModelScope.launch {
             repo.undoSelfTransfer(tx)
-            refresh()
         }
     }
 
