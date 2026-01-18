@@ -6,6 +6,7 @@ import android.os.Build
 import androidx.annotation.RequiresApi
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.spendwise.core.com.spendwise.core.ExpenseFrequency
 import com.spendwise.core.ml.CategoryType
 import com.spendwise.core.ml.MerchantExtractorMl
 import com.spendwise.core.ml.MlReasonBundle
@@ -409,11 +410,17 @@ class SmsImportViewModel @Inject constructor(
                 else
                     visibleList.filter { it.category == input.selectedType }
 
+
+
+
             // -------------------------------------------------
             // 5) Expense list (math-only, derived from finalList)
             // -------------------------------------------------
             val expenseList =
-                finalList.filter { it.isExpense() }
+                finalList.filter {
+                    it.isExpense() &&
+                            it.expenseFrequency == ExpenseFrequency.MONTHLY.name
+                }
 
             // -------------------------------------------------
             // 6) Recalculate category totals
@@ -790,6 +797,14 @@ class SmsImportViewModel @Inject constructor(
         }
     }
 
+    fun setExpenseFrequency(
+        tx: SmsEntity,
+        frequency: ExpenseFrequency
+    ) {
+        viewModelScope.launch {
+            repo.setExpenseFrequency(tx, frequency)
+        }
+    }
 
     fun onMessageClicked(tx: SmsEntity) {
         viewModelScope.launch {

@@ -2,6 +2,7 @@ package com.spendwise.feature.smsimport.repo
 
 import SmsMlPipeline
 import android.content.ContentResolver
+import com.spendwise.core.com.spendwise.core.ExpenseFrequency
 import com.spendwise.core.com.spendwise.core.isCardBillPayment
 import com.spendwise.core.com.spendwise.core.isSingleSmsInternalTransfer
 import com.spendwise.core.com.spendwise.core.isSystemInfoDebit
@@ -823,6 +824,23 @@ class SmsRepositoryImpl @Inject constructor(
         if (person != null) {
             db.smsDao().deleteSelfRecipient(person)
         }
+    }
+    suspend fun setExpenseFrequency(
+        tx: SmsEntity,
+        frequency: ExpenseFrequency
+    ) {
+        val anchorYear =
+            when (frequency) {
+                ExpenseFrequency.YEARLY ->
+                    tx.localDate().year
+                else -> null
+            }
+
+        db.smsDao().updateExpenseFrequency(
+            id = tx.id,
+            frequency = frequency.name,
+            anchorYear = anchorYear
+        )
     }
 
 

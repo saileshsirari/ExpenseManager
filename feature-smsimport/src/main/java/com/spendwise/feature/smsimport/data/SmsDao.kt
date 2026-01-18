@@ -162,5 +162,17 @@ interface SmsDao {
     @Query("DELETE FROM self_recipients WHERE normalizedName = :name")
     suspend fun deleteSelfRecipient(name: String)
 
+    @Query("""
+    UPDATE sms
+    SET expenseFrequency = :frequency,
+        frequencyAnchorYear = :anchorYear,
+        updatedAt = strftime('%s','now') * 1000
+    WHERE id = :id
+""")
+    suspend fun updateExpenseFrequency(
+        id: Long,
+        frequency: String,
+        anchorYear: Int?
+    )
 
 }

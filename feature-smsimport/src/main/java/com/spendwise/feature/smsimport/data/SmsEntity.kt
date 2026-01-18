@@ -5,6 +5,7 @@ import android.util.Log
 import androidx.room.Entity
 import androidx.room.Index
 import androidx.room.PrimaryKey
+import com.spendwise.core.com.spendwise.core.ExpenseFrequency
 
 @Entity(
     tableName = "sms",
@@ -17,6 +18,8 @@ data class SmsEntity(
     val sender: String,
     val body: String,
     val timestamp: Long,
+    val expenseFrequency: String = ExpenseFrequency.MONTHLY.name,
+    val frequencyAnchorYear: Int? = null,   // for yearly grouping (e.g. 2025)
 
     // Extracted data
     val amount: Double,

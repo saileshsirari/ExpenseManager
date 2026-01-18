@@ -70,6 +70,7 @@ import androidx.navigation.NavController
 import com.spendwise.app.navigation.Screen
 import com.spendwise.app.ui.dashboard.CategoryPieChart
 import com.spendwise.app.ui.dashboard.DashboardModeSelector
+import com.spendwise.core.com.spendwise.core.ExpenseFrequency
 import com.spendwise.core.extensions.nextQuarter
 import com.spendwise.core.extensions.previousQuarter
 import com.spendwise.domain.com.spendwise.feature.smsimport.data.DashboardMode
@@ -102,6 +103,7 @@ fun RedesignedDashboardScreen(
     val onMarkNotExpense: (SmsEntity, Boolean) -> Unit = { id, ignored ->
         viewModel.setIgnoredState(id, ignored)
     }
+
 
     val progressReclassify by viewModel.reclassifyProgress.collectAsState()
 
@@ -328,9 +330,10 @@ fun RedesignedDashboardScreen(
                                     if (expandedItemId == row.tx.id) null else row.tx.id
                                 viewModel.onMessageClicked(it)
                             },
-                            onMarkNotExpense = { sms, ignored ->
-                                onMarkNotExpense(sms, ignored)
+                            onChange =  { freq ->
+                                viewModel.setExpenseFrequency(row.tx, freq)
                             },
+
                             onMarkAsSelfTransfer = {
                                 viewModel.markAsSelfTransfer(it)
                             },
@@ -617,8 +620,8 @@ fun InsightsScreen(
                                     if (expandedItemId == row.tx.id) null else row.tx.id
                                 viewModel.onMessageClicked(it)
                             },
-                            onMarkNotExpense = { sms, ignored ->
-                                viewModel.setIgnoredState(sms, ignored)
+                            onChange =  { freq ->
+                                viewModel.setExpenseFrequency(row.tx, freq)
                             },
                             onMarkAsSelfTransfer = { viewModel.markAsSelfTransfer(it) },
                             onUndoSelfTransfer = { viewModel.undoSelfTransfer(it) }
@@ -797,7 +800,9 @@ fun GroupedMerchantRow(
                             viewModel.debugReprocessSms(tx.id)
                             viewModel.onMessageClicked(it)
                         },
-                        onMarkNotExpense = onMarkNotExpense,
+                        onChange =  { freq ->
+                            viewModel.setExpenseFrequency(tx, freq)
+                        },
                         onMarkAsSelfTransfer = { viewModel.markAsSelfTransfer(it) },
                         onUndoSelfTransfer = { viewModel.undoSelfTransfer(it) }
                     )
@@ -891,6 +896,30 @@ private fun TransactionRowContent(
         }
     }
 }
+@Composable
+fun ExpenseFrequencySelector(
+    current: String,
+    onChange: (ExpenseFrequency) -> Unit
+) {
+    Column {
+        Text(
+            "Expense frequency",
+            style = MaterialTheme.typography.labelMedium
+        )
+
+        Spacer(Modifier.height(6.dp))
+
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            ExpenseFrequency.values().forEach { freq ->
+                FilterChip(
+                    selected = current == freq.name,
+                    onClick = { onChange(freq) },
+                    label = { Text(freq.name.lowercase().replaceFirstChar { it.uppercase() }) }
+                )
+            }
+        }
+    }
+}
 
 
 @Composable
@@ -898,7 +927,7 @@ fun TransactionRow(
     sms: SmsEntity,
     isExpanded: Boolean,
     onClick: (SmsEntity) -> Unit,
-    onMarkNotExpense: (SmsEntity, Boolean) -> Unit,
+    onChange: (ExpenseFrequency) -> Unit,
     onMarkAsSelfTransfer: (SmsEntity) -> Unit,
     onUndoSelfTransfer: (SmsEntity) -> Unit
 ) {
@@ -949,6 +978,27 @@ fun TransactionRow(
                             }
                         )
                     }
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+
+                        if (sms.expenseFrequency != ExpenseFrequency.MONTHLY.name) {
+                            Text(
+                                text = sms.expenseFrequency.lowercase()
+                                    .replaceFirstChar { it.uppercase() },
+                                style = MaterialTheme.typography.labelSmall,
+                                color = Color.Gray
+                            )
+                        }
+                    }
+
+                    ExpenseFrequencySelector(
+                        current = sms.expenseFrequency,
+                        onChange = onChange
+                    )
+
                 }
             }
         }
