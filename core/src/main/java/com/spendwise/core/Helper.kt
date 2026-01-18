@@ -122,47 +122,6 @@ fun isCreditCardSpend(text: String?): Boolean {
             billIndicators.none { it in b }
 }
 
-fun isCreditCardSpend1(text: String?): Boolean {
-    if (text == null) return false
-    val b = text.lowercase()
-
-    // Generic card identifiers (bank-agnostic)
-    val cardIndicators = listOf(
-        " bank card",
-        " credit card",
-        " debit card",
-        " card x",
-        " card xx",
-        " card ending",
-        " card *",
-        " card ****"
-    )
-
-    // Spend indicators
-    val spendIndicators = listOf(
-        "spent",
-        "purchase",
-        "txn",
-        "transaction",
-        "used at",
-        " at "
-    )
-
-    // Explicit exclusions (bill payments must stay)
-    val billIndicators = listOf(
-        "card bill",
-        "credit card bill",
-        "cc bill",
-        "statement",
-        "payment received",
-        "autopay"
-    )
-
-    return cardIndicators.any { it in b } &&
-            spendIndicators.any { it in b } &&
-            billIndicators.none { it in b }
-}
-
 fun isWalletDeduction(text: String?): Boolean {
     if (text == null) return false
     val b = text.lowercase()
@@ -207,6 +166,68 @@ fun isWalletDeduction(text: String?): Boolean {
     return false
 }
 
+fun isSingleSmsInternalTransfer(body: String?): Boolean {
+    if (body == null) return false
+
+    val b = body.lowercase()
+
+    // Must explicitly say both debit and credit
+    val hasDebit = b.contains("debited") || b.contains("debit")
+    val hasCredit = b.contains("credited") || b.contains("credit")
+
+    if (!hasDebit || !hasCredit) return false
+
+    // Exclude obvious merchant / wallet cases
+    val excluded = listOf(
+        "amazon",
+        "flipkart",
+        "swiggy",
+        "zomato",
+        "paytm",
+        "phonepe",
+        "google pay",
+        "gpay",
+        "wallet",
+        "merchant"
+    )
+
+    return excluded.none { it in b }
+}
+
+fun isSystemInfoDebit(body: String?): Boolean {
+    if (body == null) return false
+
+    // Normalize aggressively (critical)
+    val normalized = body
+        .lowercase()
+        .replace("[^a-z0-9]".toRegex(), "")
+
+    // 1️⃣ Strong system routing markers (bank generated)
+    val systemMarkers = listOf(
+        "infobil",     // Info:BIL*
+        "infoimps",    // Info:IMPS*
+        "infoach",     // Info:ACH*
+        "infortgs",    // Info:RTGS*
+        "infoneft",    // Info:NEFT*
+        "systemdebit",
+        "autodebit"
+    )
+
+    if (systemMarkers.any { normalized.contains(it) }) {
+        return true
+    }
+
+    // 2️⃣ Generic bank "info debit" pattern
+    val hasInfo = normalized.contains("info")
+    val hasDebit = normalized.contains("debit")
+    val hasNoMerchant =
+        !normalized.contains("paidto") &&
+                !normalized.contains("merchant") &&
+                !normalized.contains("purchase") &&
+                !normalized.contains("order")
+
+    return hasInfo && hasDebit && hasNoMerchant
+}
 
 
 fun isPaymentReceiptInfo(body: String?): Boolean {

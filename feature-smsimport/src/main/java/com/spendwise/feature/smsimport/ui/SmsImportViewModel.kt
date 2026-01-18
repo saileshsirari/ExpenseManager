@@ -144,6 +144,7 @@ class SmsImportViewModel @Inject constructor(
         _reclassifyProgress.asStateFlow()
 
     fun triggerReclassification() {
+
         viewModelScope.launch(Dispatchers.Default) {
 
             // Force UI to show progress immediately
@@ -162,6 +163,8 @@ class SmsImportViewModel @Inject constructor(
             viewModelScope.launch(Dispatchers.Main) {
                 _reclassifyProgress.value = null
             }
+
+
         }
     }
 
@@ -831,6 +834,11 @@ class SmsImportViewModel @Inject constructor(
         }
     }
 
+    fun debugReprocessSms(id: Long) {
+        viewModelScope.launch(Dispatchers.IO) {
+            repo.reprocessSingleSms(id)
+        }
+    }
 
     fun fixMerchant(tx: SmsEntity, newMerchant: String) {
         viewModelScope.launch {

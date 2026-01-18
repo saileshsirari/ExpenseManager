@@ -51,6 +51,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberTooltipState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -212,6 +213,7 @@ fun RedesignedDashboardScreen(
                 }
             }
 
+
             item {
                 Button(
                     onClick = { viewModel.triggerReclassification() },
@@ -317,6 +319,7 @@ fun RedesignedDashboardScreen(
                     }
 
                     is UiTxnRow.Normal -> {
+
                         TransactionRow(
                             sms = row.tx,
                             isExpanded = expandedItemId == row.tx.id,
@@ -335,6 +338,15 @@ fun RedesignedDashboardScreen(
                                 viewModel.undoSelfTransfer(it)
                             }
                         )
+                        TextButton(
+                            onClick = {
+                                viewModel.onMessageClicked(row.tx)
+                                viewModel.debugReprocessSms(row.tx.id)
+
+                            }
+                        ) {
+                            Text("Re-run classification (debug)")
+                        }
                         Spacer(Modifier.height(8.dp))
                     }
 
@@ -782,6 +794,7 @@ fun GroupedMerchantRow(
                         onClick = {
                             expandedItemId =
                                 if (expandedItemId == tx.id) null else tx.id
+                            viewModel.debugReprocessSms(tx.id)
                             viewModel.onMessageClicked(it)
                         },
                         onMarkNotExpense = onMarkNotExpense,
@@ -909,6 +922,8 @@ fun TransactionRow(
                 sms = sms,
                 isExpanded = isExpanded
             )
+
+
 
             // Expanded controls INSIDE same card
             if (isExpanded) {

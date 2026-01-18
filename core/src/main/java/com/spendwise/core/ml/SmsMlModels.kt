@@ -28,7 +28,9 @@ enum class CategoryType {
     ATM_CASH,
     INCOME,
     PERSON,   // 👈 ADD THIS
-    OTHER
+    OTHER,
+    INVESTMENT,
+    CREDIT_CARD_PAYMENT
 }
 
 
