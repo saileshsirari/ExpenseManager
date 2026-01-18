@@ -71,14 +71,17 @@ import com.spendwise.app.navigation.Screen
 import com.spendwise.app.ui.dashboard.CategoryPieChart
 import com.spendwise.app.ui.dashboard.DashboardModeSelector
 import com.spendwise.core.com.spendwise.core.ExpenseFrequency
+import com.spendwise.core.com.spendwise.core.FrequencyFilter
 import com.spendwise.core.extensions.nextQuarter
 import com.spendwise.core.extensions.previousQuarter
 import com.spendwise.domain.com.spendwise.feature.smsimport.data.DashboardMode
 import com.spendwise.domain.com.spendwise.feature.smsimport.ui.MonthlyComparisonCard
 import com.spendwise.domain.com.spendwise.feature.smsimport.ui.WalletInsightCard
 import com.spendwise.feature.smsimport.data.SmsEntity
+import com.spendwise.feature.smsimport.data.isExpense
 import com.spendwise.feature.smsimport.ui.SmsImportViewModel
 import com.spendwise.feature.smsimport.ui.UiTxnRow
+import com.spendwise.feature.smsimport.ui.matchesFrequency
 import java.time.YearMonth
 import java.time.format.DateTimeFormatter
 import kotlin.math.roundToInt
@@ -337,19 +340,15 @@ fun RedesignedDashboardScreen(
                             onMarkAsSelfTransfer = {
                                 viewModel.markAsSelfTransfer(it)
                             },
+                            onDebugClick = {
+                                viewModel.onMessageClicked(row.tx)
+                                viewModel.debugReprocessSms(row.tx.id)
+                            },
                             onUndoSelfTransfer = {
                                 viewModel.undoSelfTransfer(it)
                             }
                         )
-                        TextButton(
-                            onClick = {
-                                viewModel.onMessageClicked(row.tx)
-                                viewModel.debugReprocessSms(row.tx.id)
 
-                            }
-                        ) {
-                            Text("Re-run classification (debug)")
-                        }
                         Spacer(Modifier.height(8.dp))
                     }
 
@@ -425,6 +424,30 @@ fun InternalTransferSectionHeader(
 
     Divider()
 }
+@Composable
+fun InsightsFrequencySelector(
+    selected: FrequencyFilter,
+    onChange: (FrequencyFilter) -> Unit
+) {
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        FrequencyFilter.entries.forEach { filter ->
+            FilterChip(
+                selected = selected == filter,
+                onClick = { onChange(filter) },
+                label = {
+                    Text(
+                        when (filter) {
+                            FrequencyFilter.MONTHLY_ONLY -> "Monthly"
+                            FrequencyFilter.ALL_EXPENSES -> "All"
+                            FrequencyFilter.YEARLY_ONLY -> "Yearly"
+                            FrequencyFilter.IRREGULAR_ONLY -> "Irregular"
+                        }
+                    )
+                }
+            )
+        }
+    }
+}
 
 /* -----------------------------------------------------------
    2) Insights screen: full-size pie chart + category breakdown
@@ -436,6 +459,10 @@ fun InsightsScreen(
     navController: NavController,
     viewModel: SmsImportViewModel
 ) {
+    val freqFilter by viewModel.insightsFrequencyFilter.collectAsState()
+    val uiState by viewModel.uiState.collectAsState()
+
+
     // Reset filter whenever entering Insights
     LaunchedEffect(Unit) {
         viewModel.clearSelectedType()
@@ -443,7 +470,43 @@ fun InsightsScreen(
 
     val totalSpend by viewModel.totalSpend.collectAsState()
 
-    val uiState by viewModel.uiState.collectAsState()
+    val filteredTxs = remember(
+        uiState.finalList,
+        freqFilter
+    ) {
+        uiState.finalList
+            .filter { !it.isNetZero } // remove internal transfers
+            .filter { tx ->
+                tx.isExpense() && tx.matchesFrequency(freqFilter)
+            }
+    }
+
+    val insightRows = remember(
+        filteredTxs,
+        uiState.sortConfig,
+        uiState.showGroupedMerchants
+    ) {
+        val sortedTxs = viewModel.sortTransactions(
+            list = filteredTxs,
+            config = uiState.sortConfig
+        )
+
+        if (!uiState.showGroupedMerchants) {
+            sortedTxs.map { UiTxnRow.Normal(it) }
+        } else {
+            viewModel.buildUiRows(
+                txs = sortedTxs,
+                sortConfig = uiState.sortConfig,
+                groupByMerchant = true
+            )
+        }
+    }
+
+
+
+
+
+
     var expandedItemId by remember { mutableStateOf<Long?>(null) }
 
     val topCategories by viewModel.topCategoriesFree.collectAsState()
@@ -455,6 +518,7 @@ fun InsightsScreen(
     val categoryInsight by viewModel.categoryInsight.collectAsState()
     val comparison by viewModel.periodComparison.collectAsState()
     val walletInsight by viewModel.walletInsight.collectAsState()
+
 
     Scaffold(
         topBar = {
@@ -509,6 +573,32 @@ fun InsightsScreen(
                                 text = "₹${totalSpend.roundToInt()}",
                                 style = MaterialTheme.typography.headlineMedium
                             )
+                            Spacer(Modifier.height(10.dp))
+                            InsightsFrequencySelector(
+                                selected = freqFilter,
+                                onChange = viewModel::setInsightsFrequencyFilter
+                            )
+
+                            if (freqFilter != FrequencyFilter.MONTHLY_ONLY) {
+                                Text(
+                                    text = when (freqFilter) {
+                                        FrequencyFilter.ALL_EXPENSES ->
+                                            "Includes yearly and irregular expenses"
+
+                                        FrequencyFilter.YEARLY_ONLY ->
+                                            "Showing yearly expenses only"
+
+                                        FrequencyFilter.IRREGULAR_ONLY ->
+                                            "Showing irregular and one-time expenses"
+
+                                        else -> ""
+                                    },
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = Color.Gray,
+                                    modifier = Modifier.padding(top = 6.dp, bottom = 8.dp)
+                                )
+                            }
+
                             Spacer(Modifier.height(10.dp))
 
                             CategoryPieChart(
@@ -580,37 +670,27 @@ fun InsightsScreen(
 
                 Spacer(Modifier.height(12.dp))
             }
+            item {
+            if (freqFilter != FrequencyFilter.MONTHLY_ONLY) {
+                Text(
+                    "Filtered by ${freqFilter.name.lowercase()} expenses",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = Color.Gray
+                )
+            }
+                }
 
             items(
-                items = uiState.rows,
+                items = insightRows,
                 key = { row ->
                     when (row) {
                         is UiTxnRow.Normal -> "tx-${row.tx.id}"
                         is UiTxnRow.Grouped -> "group-${row.groupId}"
-                        is UiTxnRow.Section -> "section-${row.id}"
+                        else -> "row"
                     }
                 }
             ) { row ->
                 when (row) {
-
-                    is UiTxnRow.Section -> {
-                        InternalTransferSectionHeader(
-                            title = row.title,
-                            count = row.count,
-                            collapsed = row.collapsed,
-                            onToggle = {
-                                when (row.id) {
-                                    "main_transactions" ->
-                                        viewModel.toggleMainSection()
-
-                                    "internal_transfers" ->
-                                        viewModel.toggleInternalSection()
-                                }
-                            }
-                        )
-                        Spacer(Modifier.height(8.dp))
-                    }
-
                     is UiTxnRow.Normal -> {
                         TransactionRow(
                             sms = row.tx,
@@ -618,29 +698,40 @@ fun InsightsScreen(
                             onClick = {
                                 expandedItemId =
                                     if (expandedItemId == row.tx.id) null else row.tx.id
+
                                 viewModel.onMessageClicked(it)
                             },
-                            onChange =  { freq ->
+                            onChange = { freq ->
                                 viewModel.setExpenseFrequency(row.tx, freq)
                             },
-                            onMarkAsSelfTransfer = { viewModel.markAsSelfTransfer(it) },
-                            onUndoSelfTransfer = { viewModel.undoSelfTransfer(it) }
+                            onMarkAsSelfTransfer = {
+                                viewModel.markAsSelfTransfer(it)
+                            },
+                            onUndoSelfTransfer = {
+                                viewModel.undoSelfTransfer(it)
+                            },
+                            onDebugClick = {
+                                viewModel.onMessageClicked(row.tx)
+                                viewModel.debugReprocessSms(row.tx.id)
+                            }
                         )
-                        Spacer(Modifier.height(8.dp))
                     }
 
                     is UiTxnRow.Grouped -> {
                         GroupedMerchantRow(
                             group = row,
                             viewModel = viewModel,
-                            onMarkNotExpense = { sms, ignored ->
-                                viewModel.setIgnoredState(sms, ignored)
-                            }
+                            onMarkNotExpense = { _, _ -> }
                         )
-                        Spacer(Modifier.height(8.dp))
+                    }
+
+                    // 🔒 Explicitly ignore sections in Insights
+                    is UiTxnRow.Section -> {
+                        // no-op (Insights does not show section headers)
                     }
                 }
             }
+
         }
     }
 }
@@ -797,14 +888,17 @@ fun GroupedMerchantRow(
                         onClick = {
                             expandedItemId =
                                 if (expandedItemId == tx.id) null else tx.id
-                            viewModel.debugReprocessSms(tx.id)
                             viewModel.onMessageClicked(it)
                         },
                         onChange =  { freq ->
                             viewModel.setExpenseFrequency(tx, freq)
                         },
                         onMarkAsSelfTransfer = { viewModel.markAsSelfTransfer(it) },
-                        onUndoSelfTransfer = { viewModel.undoSelfTransfer(it) }
+                        onUndoSelfTransfer = { viewModel.undoSelfTransfer(it) },
+                        onDebugClick = {
+                            viewModel.onMessageClicked(tx)
+                            viewModel.debugReprocessSms(tx.id)
+                        }
                     )
                     Spacer(Modifier.height(6.dp))
                 }
@@ -927,6 +1021,7 @@ fun TransactionRow(
     sms: SmsEntity,
     isExpanded: Boolean,
     onClick: (SmsEntity) -> Unit,
+    onDebugClick: () -> Unit,
     onChange: (ExpenseFrequency) -> Unit,
     onMarkAsSelfTransfer: (SmsEntity) -> Unit,
     onUndoSelfTransfer: (SmsEntity) -> Unit
@@ -992,6 +1087,11 @@ fun TransactionRow(
                                 color = Color.Gray
                             )
                         }
+                    }
+                    TextButton(
+                        onClick = onDebugClick
+                    ) {
+                        Text("Re-run classification (debug)")
                     }
 
                     ExpenseFrequencySelector(

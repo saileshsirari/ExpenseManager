@@ -6,6 +6,7 @@ import androidx.room.Entity
 import androidx.room.Index
 import androidx.room.PrimaryKey
 import com.spendwise.core.com.spendwise.core.ExpenseFrequency
+import com.spendwise.core.com.spendwise.core.FrequencyFilter
 
 @Entity(
     tableName = "sms",
@@ -82,5 +83,25 @@ fun SmsEntity.isExpense(): Boolean {
     return isNetZero &&
             linkType == "INTERNAL_TRANSFER" &&
             m.contains("wallet", ignoreCase = true)
+}
+private fun SmsEntity.matchesFrequency(
+    filter: FrequencyFilter
+): Boolean {
+    val freq = expenseFrequency
+
+    return when (filter) {
+        FrequencyFilter.MONTHLY_ONLY ->
+            freq == ExpenseFrequency.MONTHLY.name
+
+        FrequencyFilter.ALL_EXPENSES ->
+            true
+
+        FrequencyFilter.YEARLY_ONLY ->
+            freq == ExpenseFrequency.YEARLY.name
+
+        FrequencyFilter.IRREGULAR_ONLY ->
+            freq == ExpenseFrequency.IRREGULAR.name ||
+                    freq == ExpenseFrequency.ONE_TIME.name
+    }
 }
 
