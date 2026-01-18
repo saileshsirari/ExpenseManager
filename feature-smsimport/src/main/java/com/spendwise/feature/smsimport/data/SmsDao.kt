@@ -1,8 +1,10 @@
 package com.spendwise.feature.smsimport.data
 
 import androidx.room.Dao
+import androidx.room.Entity
 import androidx.room.Insert
 import androidx.room.OnConflictStrategy
+import androidx.room.PrimaryKey
 import androidx.room.Query
 import androidx.room.Update
 import kotlinx.coroutines.flow.Flow
@@ -139,4 +141,26 @@ interface SmsDao {
         id: Long,
         merchant: String
     )
+
+    @Entity(tableName = "self_recipients")
+    data class SelfRecipientEntity(
+        @PrimaryKey val normalizedName: String,
+        val createdAt: Long = System.currentTimeMillis()
+    )
+
+
+    // ======================================================
+// SELF RECIPIENT RULES (USER DECLARED)
+// ======================================================
+
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun insertSelfRecipient(entity: SelfRecipientEntity)
+
+    @Query("SELECT normalizedName FROM self_recipients")
+    suspend fun getAllSelfRecipients(): List<String>
+
+    @Query("DELETE FROM self_recipients WHERE normalizedName = :name")
+    suspend fun deleteSelfRecipient(name: String)
+
+
 }

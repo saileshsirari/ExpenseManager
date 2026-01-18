@@ -14,6 +14,7 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -24,30 +25,33 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.CompareArrows
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CenterAlignedTopAppBar
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Divider
 import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberTooltipState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -59,24 +63,22 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.painterResource
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.navigation.NavController
 import com.spendwise.app.navigation.Screen
 import com.spendwise.app.ui.dashboard.CategoryPieChart
-import com.spendwise.app.ui.dashboard.FixMerchantDialog
+import com.spendwise.app.ui.dashboard.DashboardModeSelector
 import com.spendwise.core.extensions.nextQuarter
 import com.spendwise.core.extensions.previousQuarter
 import com.spendwise.domain.com.spendwise.feature.smsimport.data.DashboardMode
+import com.spendwise.domain.com.spendwise.feature.smsimport.ui.MonthlyComparisonCard
+import com.spendwise.domain.com.spendwise.feature.smsimport.ui.WalletInsightCard
 import com.spendwise.feature.smsimport.data.SmsEntity
 import com.spendwise.feature.smsimport.ui.SmsImportViewModel
 import com.spendwise.feature.smsimport.ui.UiTxnRow
-import java.time.Instant
 import java.time.YearMonth
-import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import kotlin.math.roundToInt
 
@@ -96,11 +98,17 @@ fun RedesignedDashboardScreen(
 ) {
     val uiState by viewModel.uiState.collectAsState()
     val progress by viewModel.importProgress.collectAsState()
-    val categories by viewModel.categoryTotals.collectAsState()
-    var showFixDialog by remember { mutableStateOf<SmsEntity?>(null) }
     var expandedItemId by remember { mutableStateOf<Long?>(null) }
     val onMarkNotExpense: (SmsEntity, Boolean) -> Unit = { id, ignored ->
-        viewModel.setIgnoredState (id, ignored)
+        viewModel.setIgnoredState(id, ignored)
+    }
+
+    val progressReclassify by viewModel.reclassifyProgress.collectAsState()
+
+
+
+    LaunchedEffect(Unit) {
+        viewModel.resetToCurrentMonth()
     }
     // top-level loading / import handling (assumes app-level permission + import triggers)
     if (!progress.done) {
@@ -115,6 +123,7 @@ fun RedesignedDashboardScreen(
         return
     }
 
+
     if (uiState.isLoading) {
         Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
@@ -126,7 +135,14 @@ fun RedesignedDashboardScreen(
         return
     }
 
+
+
     Scaffold(
+        floatingActionButton = {
+            FloatingActionButton(onClick = { navController.navigate(Screen.AddExpense.route) }) {
+                Icon(Icons.Default.Add, contentDescription = "Add Expense")
+            }
+        },
         topBar = {
             CenterAlignedTopAppBar(
                 title = {
@@ -153,17 +169,6 @@ fun RedesignedDashboardScreen(
         }
     ) { padding ->
 
-
-        showFixDialog?.let { tx ->
-            FixMerchantDialog(
-                tx = tx,
-                onConfirm = { newName ->
-                    viewModel.fixMerchant(tx, newName)
-                    showFixDialog = null
-                },
-                onDismiss = { showFixDialog = null }
-            )
-        }
         LazyColumn(
             modifier = Modifier
                 .padding(padding)
@@ -171,6 +176,52 @@ fun RedesignedDashboardScreen(
                 .fillMaxSize(),
             contentPadding = PaddingValues(bottom = 56.dp)
         ) {
+            // 🔒 RECLASSIFY PROGRESS (VISIBLE & SAFE)
+            progressReclassify?.let { (done, total) ->
+                item {
+                    Card(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(bottom = 12.dp),
+                        colors = CardDefaults.cardColors(
+                            containerColor = MaterialTheme.colorScheme.surfaceVariant
+                        )
+                    ) {
+                        Column(modifier = Modifier.padding(12.dp)) {
+                            Text(
+                                "Improving transaction classification",
+                                style = MaterialTheme.typography.bodyMedium
+                            )
+
+                            Spacer(Modifier.height(6.dp))
+
+                            LinearProgressIndicator(
+                                progress =
+                                    if (total > 0) done.toFloat() / total else 0f,
+                                modifier = Modifier.fillMaxWidth()
+                            )
+
+                            Spacer(Modifier.height(4.dp))
+
+                            Text(
+                                if (total > 0) "$done of $total transactions"
+                                else "Starting…",
+                                style = MaterialTheme.typography.bodySmall
+                            )
+                        }
+                    }
+                }
+            }
+
+
+            item {
+                Button(
+                    onClick = { viewModel.triggerReclassification() },
+                    modifier = Modifier.padding(12.dp)
+                ) {
+                    Text("Reclassify Transactions (Debug)")
+                }
+            }
             item {
                 PeriodNavigator(
                     mode = uiState.mode,
@@ -208,9 +259,7 @@ fun RedesignedDashboardScreen(
             item {
                 // Quick filters & actions row
                 QuickActionsRow(
-                    showInternal = uiState.showInternalTransfers,
                     showGroupedMerchants = uiState.showGroupedMerchants,
-                    onToggleInternal = { viewModel.toggleInternalTransfers() },
                     onOpenInsights = { navController.navigate(Screen.Insights.route) },
                     onToggleGroupByMerchant = {
                         viewModel.toggleGroupByMerchant()
@@ -244,11 +293,31 @@ fun RedesignedDashboardScreen(
                     when (row) {
                         is UiTxnRow.Normal -> "tx-${row.tx.id}"
                         is UiTxnRow.Grouped -> "group-${row.groupId}"
+                        is UiTxnRow.Section -> "section-${row.id}"
                     }
                 }
-
             ) { row ->
                 when (row) {
+
+                    is UiTxnRow.Section -> {
+                        InternalTransferSectionHeader(
+                            title = row.title,
+                            count = row.count,
+                            collapsed = row.collapsed,
+                            onToggle = {
+                                when (row.id) {
+                                    "main_transactions" ->
+                                        viewModel.toggleMainSection()
+
+                                    "internal_transfers" ->
+                                        viewModel.toggleInternalSection()
+                                }
+                            }
+
+                        )
+                        Spacer(Modifier.height(8.dp))
+                    }
+
                     is UiTxnRow.Normal -> {
 
                         TransactionRow(
@@ -259,21 +328,40 @@ fun RedesignedDashboardScreen(
                                     if (expandedItemId == row.tx.id) null else row.tx.id
                                 viewModel.onMessageClicked(it)
                             },
-                            onMarkNotExpense ={sms, ignored ->
-                                onMarkNotExpense(sms,ignored)
-
-                            }   // optional: lighter UI
-
+                            onMarkNotExpense = { sms, ignored ->
+                                onMarkNotExpense(sms, ignored)
+                            },
+                            onMarkAsSelfTransfer = {
+                                viewModel.markAsSelfTransfer(it)
+                            },
+                            onUndoSelfTransfer = {
+                                viewModel.undoSelfTransfer(it)
+                            }
                         )
+                        TextButton(
+                            onClick = {
+                                viewModel.onMessageClicked(row.tx)
+                                viewModel.debugReprocessSms(row.tx.id)
+
+                            }
+                        ) {
+                            Text("Re-run classification (debug)")
+                        }
                         Spacer(Modifier.height(8.dp))
                     }
 
                     is UiTxnRow.Grouped -> {
-                        GroupedMerchantRow(row,viewModel,onMarkNotExpense)
+                        GroupedMerchantRow(
+                            group = row,
+                            viewModel = viewModel,
+                            onMarkNotExpense = onMarkNotExpense
+                        )
                         Spacer(Modifier.height(8.dp))
                     }
                 }
             }
+
+
             // small footer / explore insights
             item {
                 Spacer(Modifier.height(12.dp))
@@ -303,6 +391,38 @@ fun CategoryHeader(selectedType: String?) {
     )
 }
 
+@Composable
+fun InternalTransferSectionHeader(
+    title: String,
+    count: Int,
+    collapsed: Boolean,
+    onToggle: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable { onToggle() }
+            .padding(vertical = 10.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(
+            text = "$title ($count)",
+            style = MaterialTheme.typography.titleMedium,
+            color = MaterialTheme.colorScheme.primary
+        )
+
+        Icon(
+            imageVector =
+                if (collapsed) Icons.Default.ExpandMore
+                else Icons.Default.ExpandLess,
+            contentDescription = null
+        )
+    }
+
+    Divider()
+}
+
 /* -----------------------------------------------------------
    2) Insights screen: full-size pie chart + category breakdown
    - Timeframe toggle (Month / Quarter / Year)
@@ -317,19 +437,21 @@ fun InsightsScreen(
     LaunchedEffect(Unit) {
         viewModel.clearSelectedType()
     }
-    var showFixDialog by remember { mutableStateOf<SmsEntity?>(null) }
 
     val totalSpend by viewModel.totalSpend.collectAsState()
 
     val uiState by viewModel.uiState.collectAsState()
     var expandedItemId by remember { mutableStateOf<Long?>(null) }
 
+    val topCategories by viewModel.topCategoriesFree.collectAsState()
 
     // Full categories for pie chart
-    val categoriesAll by viewModel.categoryTotalsAll.collectAsState()
+    val categoriesAll by viewModel.categoryTotalsForPeriod.collectAsState()
 
     // Filtered categories (if selectedType is applied)
-    val categoriesFiltered by viewModel.categoryTotals.collectAsState()
+    val categoryInsight by viewModel.categoryInsight.collectAsState()
+    val comparison by viewModel.periodComparison.collectAsState()
+    val walletInsight by viewModel.walletInsight.collectAsState()
 
     Scaffold(
         topBar = {
@@ -347,31 +469,28 @@ fun InsightsScreen(
         }
     ) { padding ->
 
-        // Sort ALL categories for list (NOT filtered ones!)
-        val sortedCategoriesAll = remember(categoriesAll) {
-            categoriesAll.sortedByDescending { it.total }
-        }
 
-        // Sort filtered categories for list view
-        val sortedFilteredCategories = remember(categoriesFiltered) {
-            categoriesFiltered.sortedByDescending { it.total }
-        }
-
-        showFixDialog?.let { tx ->
-            FixMerchantDialog(
-                tx = tx,
-                onConfirm = { newName ->
-                    viewModel.fixMerchant(tx, newName)
-                    showFixDialog = null
-                },
-                onDismiss = { showFixDialog = null }
-            )
-        }
         LazyColumn(
             modifier = Modifier
                 .padding(padding)
                 .padding(16.dp)
         ) {
+
+            item {
+                DashboardModeSelector(
+                    mode = uiState.mode,
+                    onModeChange = viewModel::setMode
+                )
+            }
+            item {
+                PeriodNavigator(
+                    mode = uiState.mode,
+                    period = uiState.period,
+                    onPrev = viewModel::prevPeriod,
+                    onNext = viewModel::nextPeriod
+                )
+            }
+
 
             /* -------------------------------------------------------------
                 CATEGORY PIE CHART
@@ -415,64 +534,36 @@ fun InsightsScreen(
                 Spacer(Modifier.height(16.dp))
             }
 
-
-            /* -------------------------------------------------------------
-                TIMEFRAME SWITCH
-            ------------------------------------------------------------- */
-            item {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
-                    Button(onClick = { viewModel.setMode(DashboardMode.MONTH) }) { Text("Month") }
-                    Button(onClick = { viewModel.setMode(DashboardMode.QUARTER) }) { Text("Quarter") }
-                    Button(onClick = { viewModel.setMode(DashboardMode.YEAR) }) { Text("Year") }
-                }
-                Spacer(Modifier.height(16.dp))
-            }
-
             /* -------------------------------------------------------------
                 CATEGORY LIST
             ------------------------------------------------------------- */
             item {
-                Text("Categories", style = MaterialTheme.typography.titleMedium)
-                Spacer(Modifier.height(8.dp))
-            }
-
-
-            // If filtered list is empty, fallback to showing all categories
-            val listToShow = if (categoriesFiltered.isNotEmpty()) {
-                sortedFilteredCategories
-            } else {
-                sortedCategoriesAll
-            }
-
-            items(listToShow) { cat ->
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(vertical = 10.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Box(
-                            modifier = Modifier
-                                .size(16.dp)
-                                .background(cat.color, shape = CircleShape)
-                        )
-                        Spacer(Modifier.width(8.dp))
-                        Text(cat.name, style = MaterialTheme.typography.bodyLarge)
-                    }
-
-                    Text("₹${cat.total.toInt()}", style = MaterialTheme.typography.bodyLarge)
-                }
-
-                Divider()
+                CategoryListCard(
+                    title = "Spending by category",
+                    items = categoryInsight.items,
+                    locked = categoryInsight.isLocked,
+                    onUpgrade = { viewModel.onUpgradeClicked() }
+                )
+                Spacer(Modifier.height(16.dp))
             }
 
             item {
+                MonthlyComparisonCard(
+                    comparison = comparison,
+                    onUpgrade = { viewModel.onUpgradeClicked() }
+                )
                 Spacer(Modifier.height(16.dp))
+            }
+            item {
+                WalletInsightCard(
+                    insight = walletInsight,
+                    onUpgrade = { viewModel.onUpgradeClicked() }
+                )
+                Spacer(Modifier.height(16.dp))
+            }
 
+
+            item {
                 // Sorting
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -487,28 +578,66 @@ fun InsightsScreen(
                 Spacer(Modifier.height(12.dp))
             }
 
-
             items(
-                items = uiState.sortedList,
-                key = { it.id }
-            ) { tx ->
-                SmsListItem(
-                    sms = tx,
-                    isExpanded = expandedItemId == tx.id,
-                    onClick = {
-                        expandedItemId =
-                            if (expandedItemId == tx.id) null else tx.id
-                        viewModel.onMessageClicked(it)
-                    },
-                    onRequestMerchantFix = { showFixDialog = it },
-                    onMarkNotExpense = { item, checked ->
-                        viewModel.setIgnoredState(item, checked)
+                items = uiState.rows,
+                key = { row ->
+                    when (row) {
+                        is UiTxnRow.Normal -> "tx-${row.tx.id}"
+                        is UiTxnRow.Grouped -> "group-${row.groupId}"
+                        is UiTxnRow.Section -> "section-${row.id}"
                     }
-                )
-                Spacer(Modifier.height(8.dp))
+                }
+            ) { row ->
+                when (row) {
+
+                    is UiTxnRow.Section -> {
+                        InternalTransferSectionHeader(
+                            title = row.title,
+                            count = row.count,
+                            collapsed = row.collapsed,
+                            onToggle = {
+                                when (row.id) {
+                                    "main_transactions" ->
+                                        viewModel.toggleMainSection()
+
+                                    "internal_transfers" ->
+                                        viewModel.toggleInternalSection()
+                                }
+                            }
+                        )
+                        Spacer(Modifier.height(8.dp))
+                    }
+
+                    is UiTxnRow.Normal -> {
+                        TransactionRow(
+                            sms = row.tx,
+                            isExpanded = expandedItemId == row.tx.id,
+                            onClick = {
+                                expandedItemId =
+                                    if (expandedItemId == row.tx.id) null else row.tx.id
+                                viewModel.onMessageClicked(it)
+                            },
+                            onMarkNotExpense = { sms, ignored ->
+                                viewModel.setIgnoredState(sms, ignored)
+                            },
+                            onMarkAsSelfTransfer = { viewModel.markAsSelfTransfer(it) },
+                            onUndoSelfTransfer = { viewModel.undoSelfTransfer(it) }
+                        )
+                        Spacer(Modifier.height(8.dp))
+                    }
+
+                    is UiTxnRow.Grouped -> {
+                        GroupedMerchantRow(
+                            group = row,
+                            viewModel = viewModel,
+                            onMarkNotExpense = { sms, ignored ->
+                                viewModel.setIgnoredState(sms, ignored)
+                            }
+                        )
+                        Spacer(Modifier.height(8.dp))
+                    }
+                }
             }
-
-
         }
     }
 }
@@ -558,17 +687,14 @@ fun GroupGroupingToggle(
         Spacer(Modifier.width(6.dp))
 
 
-
     }
 }
 
 @Composable
 fun QuickActionsRow(
-    showInternal: Boolean,
     showGroupedMerchants: Boolean,
-    onToggleInternal: () -> Unit,
     onOpenInsights: () -> Unit,
-    onToggleGroupByMerchant: () -> Unit,
+    onToggleGroupByMerchant: () -> Unit
 ) {
     Column(modifier = Modifier.fillMaxWidth()) {
 
@@ -591,15 +717,6 @@ fun QuickActionsRow(
             horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
 
-
-            FilterChip(
-                selected = showInternal,
-                onClick = onToggleInternal,
-                label = {
-                    Text(if (showInternal) "Transfers shown" else "Transfers hidden")
-                }
-            )
-
             Column {
                 FilterChip(
                     selected = showGroupedMerchants,
@@ -613,14 +730,17 @@ fun QuickActionsRow(
 }
 
 @Composable
-fun GroupedMerchantRow(group: UiTxnRow.Grouped, viewModel: SmsImportViewModel,onMarkNotExpense: (SmsEntity, Boolean)-> Unit) {
+fun GroupedMerchantRow(
+    group: UiTxnRow.Grouped,
+    viewModel: SmsImportViewModel,
+    onMarkNotExpense: (SmsEntity, Boolean) -> Unit
+) {
     var expanded by remember { mutableStateOf(false) }
     var expandedItemId by remember { mutableStateOf<Long?>(null) }
 
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .animateContentSize()   // 🔥 smooth height animation
             .background(
                 MaterialTheme.colorScheme.surfaceVariant,
                 RoundedCornerShape(12.dp)
@@ -630,8 +750,7 @@ fun GroupedMerchantRow(group: UiTxnRow.Grouped, viewModel: SmsImportViewModel,on
         val isCredit = group.netAmount > 0
         val displayAmount = kotlin.math.abs(group.netAmount)
 
-
-        // Header
+        // 🔹 Group header
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -642,21 +761,15 @@ fun GroupedMerchantRow(group: UiTxnRow.Grouped, viewModel: SmsImportViewModel,on
             Column {
                 Text(
                     text = group.title,
-                    style = MaterialTheme.typography.titleMedium,
-                    color = MaterialTheme.colorScheme.onSurface
+                    style = MaterialTheme.typography.titleMedium
                 )
 
                 Text(
-                    text = if (isCredit)
-                        "+₹$displayAmount"
-                    else
-                        "-₹$displayAmount",
+                    text = if (isCredit) "+₹$displayAmount" else "-₹$displayAmount",
                     style = MaterialTheme.typography.titleMedium,
                     color = if (isCredit) Color(0xFF2E7D32) else Color.Red
                 )
-
             }
-
 
             Icon(
                 imageVector =
@@ -666,8 +779,7 @@ fun GroupedMerchantRow(group: UiTxnRow.Grouped, viewModel: SmsImportViewModel,on
             )
         }
 
-
-        // Children (animated)
+        // 🔹 Children
         AnimatedVisibility(
             visible = expanded,
             enter = expandVertically() + fadeIn(),
@@ -682,15 +794,14 @@ fun GroupedMerchantRow(group: UiTxnRow.Grouped, viewModel: SmsImportViewModel,on
                         onClick = {
                             expandedItemId =
                                 if (expandedItemId == tx.id) null else tx.id
+                            viewModel.debugReprocessSms(tx.id)
                             viewModel.onMessageClicked(it)
                         },
-                        onMarkNotExpense ={sms, ignored ->
-                            onMarkNotExpense(sms,ignored)
-
-                        }   // optional: lighter UI
-
+                        onMarkNotExpense = onMarkNotExpense,
+                        onMarkAsSelfTransfer = { viewModel.markAsSelfTransfer(it) },
+                        onUndoSelfTransfer = { viewModel.undoSelfTransfer(it) }
                     )
-                    Spacer(Modifier.height(4.dp))
+                    Spacer(Modifier.height(6.dp))
                 }
             }
         }
@@ -698,110 +809,147 @@ fun GroupedMerchantRow(group: UiTxnRow.Grouped, viewModel: SmsImportViewModel,on
 }
 
 @Composable
+private fun TransactionRowContent(
+    sms: SmsEntity,
+    isExpanded: Boolean
+) {
+    val isCredit =
+        sms.type.equals("CREDIT", true) ||
+                sms.type.equals("REFUND", true)
+
+    val formattedDate = remember(sms.timestamp) {
+        java.text.SimpleDateFormat(
+            "dd MMM yyyy",
+            java.util.Locale.getDefault()
+        ).format(java.util.Date(sms.timestamp))
+    }
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(12.dp)
+    ) {
+
+        // Main row
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(modifier = Modifier
+                .weight(1f)
+                .padding(end = 12.dp)) {
+                Text(
+                    text = sms.merchant ?: "Unknown",
+                    style = MaterialTheme.typography.bodyLarge
+                )
+
+                Text(
+                    text = formattedDate,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = Color.Gray
+                )
+
+                if ( sms.linkType == "INTERNAL_TRANSFER") {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.padding(bottom = 6.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.CompareArrows ,
+                            contentDescription = null,
+                            tint = Color(0xFF2E7D32)
+                        )
+                        Text(
+                            text =  "Internal Transfer" ,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.padding(start = 6.dp)
+                        )
+                    }
+
+                }
+            }
+            Column(horizontalAlignment = Alignment.End) {
+                Text(
+                    text =
+                        if (isCredit) "+₹${sms.amount.toInt()}"
+                        else "-₹${sms.amount.toInt()}",
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = if (isCredit) Color(0xFF2E7D32) else Color.Red
+                )
+            }
+        }
+
+        // Expanded SMS body ONLY
+        if (isExpanded) {
+            Spacer(Modifier.height(8.dp))
+            Text(
+                text = sms.body,
+                style = MaterialTheme.typography.bodySmall,
+                color = Color.DarkGray
+            )
+        }
+    }
+}
+
+
+@Composable
 fun TransactionRow(
     sms: SmsEntity,
     isExpanded: Boolean,
     onClick: (SmsEntity) -> Unit,
-    onMarkNotExpense: (SmsEntity, Boolean) -> Unit
+    onMarkNotExpense: (SmsEntity, Boolean) -> Unit,
+    onMarkAsSelfTransfer: (SmsEntity) -> Unit,
+    onUndoSelfTransfer: (SmsEntity) -> Unit
 ) {
+
+    val rowBackground = MaterialTheme.colorScheme.surface
+
     Card(
         modifier = Modifier
             .fillMaxWidth()
-            .wrapContentHeight() // 🚀 prevents vertical stretch
-            .clickable { onClick(sms) }
+            .animateContentSize() // 🔒 animate height smoothly
+            .combinedClickable(
+                onClick = { onClick(sms) },
+            ),
+        colors = CardDefaults.cardColors(containerColor = rowBackground)
     ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(12.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
 
-            // LEFT: Merchant + message
-            Column(
-                modifier = Modifier.weight(1f), // 🚀 prevents squeezing
-                verticalArrangement = Arrangement.Center
-            ) {
-                Text(
-                    sms.merchant ?: sms.sender,
-                    style = MaterialTheme.typography.bodyLarge,
-                    maxLines = 1
-                )
+        Column {
 
-                Spacer(Modifier.height(4.dp))
-
-                Text(
-                    sms.body,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = Color.Gray,
-                    maxLines = if (isExpanded) Int.MAX_VALUE else 2,
-                    overflow = if (isExpanded) TextOverflow.Visible else TextOverflow.Ellipsis
-                )
-
-                if (sms.isNetZero) {
-                    Spacer(Modifier.height(4.dp))
-                    Text(
-                        text = "Internal transfer",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = Color.Gray
-                    )
-                }
-
-            }
-
-            Spacer(Modifier.width(12.dp))
-
-            // RIGHT: Amount + date
-            Column(
-                horizontalAlignment = Alignment.End,
-                verticalArrangement = Arrangement.Center
-            ) {
-                val amountText = when {
-                    sms.isNetZero -> "₹${sms.amount.toInt()}"
-                    sms.type == "DEBIT" -> "-₹${sms.amount.toInt()}"
-                    else -> "₹${sms.amount.toInt()}"
-                }
-
-                val amountColor = when {
-                    sms.isNetZero -> Color.Gray
-                    sms.type == "DEBIT" -> Color.Red
-                    else -> Color(0xFF2E7D32) // green
-                }
-
-                Text(
-                    amountText,
-                    style = MaterialTheme.typography.bodyLarge,
-                    color = amountColor,
-                    maxLines = 1
-                )
+            // Main content
+            TransactionRowContent(
+                sms = sms,
+                isExpanded = isExpanded
+            )
 
 
-                Spacer(Modifier.height(4.dp))
 
-                val date = Instant
-                    .ofEpochMilli(sms.timestamp)
-                    .atZone(ZoneId.systemDefault())
-                    .toLocalDate()
+            // Expanded controls INSIDE same card
+            if (isExpanded) {
+                Divider()
 
-                Text(
-                    date.toString(),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = Color.Gray,
-                    maxLines = 1
-                )
-
-                Spacer(Modifier.height(6.dp))
-
-                Switch(
-                    modifier = Modifier.alpha(
-                        if (sms.isIgnored) 0.5f else 1f
-                    ),
-                    checked = sms.isIgnored,
-                    onCheckedChange = { checked ->
-                        onMarkNotExpense(sms, checked)
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 12.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text("Self transfer")
+                        Switch(
+                            checked = sms.isNetZero && sms.linkType == "INTERNAL_TRANSFER",
+                            onCheckedChange = { checked ->
+                                if (checked) onMarkAsSelfTransfer(sms)
+                                else onUndoSelfTransfer(sms)
+                            }
+                        )
                     }
-                )
+                }
             }
         }
     }

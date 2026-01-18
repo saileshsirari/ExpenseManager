@@ -79,7 +79,6 @@ fun SpendWiseApp() {
             }
 
             /* EXISTING SCREENS */
-            composable(Screen.Categories.route) { CategoriesScreen(viewModel) }
             composable(Screen.Merchants.route) { MerchantsScreen(viewModel) }
             composable(Screen.Calendar.route) { CalendarScreen(viewModel) }
             composable(Screen.Transactions.route) { AllTransactionsScreen(viewModel) }

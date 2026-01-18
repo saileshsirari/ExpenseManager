@@ -5,6 +5,7 @@ import com.spendwise.core.com.spendwise.core.isCardBillPayment
 import com.spendwise.core.com.spendwise.core.isCreditCardSpend
 import com.spendwise.core.com.spendwise.core.isPayZappWalletTopup
 import com.spendwise.core.com.spendwise.core.isPaymentReceiptInfo
+import com.spendwise.core.com.spendwise.core.isSingleSmsInternalTransfer
 import com.spendwise.core.com.spendwise.core.isWalletAutoload
 import com.spendwise.core.com.spendwise.core.isWalletCredit
 import com.spendwise.core.com.spendwise.core.isWalletDeduction
@@ -42,6 +43,11 @@ class LinkedTransactionDetector(
         Log.d(TAG, "amount=${tx.amount}, ts=${tx.timestamp} (${tsReadable(tx.timestamp)})")
         if (tx.isNetZero) {
             Log.d(TAG, "Already net-zero → skipping further processing")
+            return
+        }
+
+        if (isSingleSmsInternalTransfer(tx.body)) {
+            markAsInternalTransfer(tx, confidence = 95)
             return
         }
 
