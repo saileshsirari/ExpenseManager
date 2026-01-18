@@ -3,10 +3,13 @@ package com.spendwise.feature.smsimport.repo
 import SmsMlPipeline
 import android.content.ContentResolver
 import com.spendwise.core.com.spendwise.core.ExpenseFrequency
+import com.spendwise.core.com.spendwise.core.detector.CATEGORY_INVESTMENT
+import com.spendwise.core.com.spendwise.core.detector.LINK_TYPE_INVESTMENT_OUTFLOW
 import com.spendwise.core.com.spendwise.core.isCardBillPayment
 import com.spendwise.core.com.spendwise.core.isSingleSmsInternalTransfer
 import com.spendwise.core.com.spendwise.core.isSystemInfoDebit
 import com.spendwise.core.com.spendwise.core.isWalletCredit
+import com.spendwise.core.detector.InvestmentOutflowDetector
 import com.spendwise.core.linked.LinkedTransactionDetector
 import com.spendwise.core.ml.CategoryType
 import com.spendwise.core.ml.IgnorePatternBuilder
@@ -25,6 +28,7 @@ import com.spendwise.feature.smsimport.data.ImportEvent
 import com.spendwise.feature.smsimport.data.SmsDao.SelfRecipientEntity
 import com.spendwise.feature.smsimport.data.SmsEntity
 import com.spendwise.feature.smsimport.data.UserMlOverride
+import com.spendwise.feature.smsimport.data.hasCreditedPartyInSameSms
 import com.spendwise.feature.smsimport.data.isWalletMerchantSpend
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
@@ -527,6 +531,33 @@ class SmsRepositoryImpl @Inject constructor(
 
         val body = tx.body
         val amount = SmsParser.parseAmount(body) ?: 0.0
+
+        // --------------------------------------------
+// INVESTMENT OUTFLOW DETECTION (NEW)
+// --------------------------------------------
+        // --------------------------------------------------
+// INVESTMENT OUTFLOW DETECTION (BODY-BASED, SAFE)
+// --------------------------------------------------
+        if (
+            tx.type.equals("DEBIT", true) &&
+            tx.hasCreditedPartyInSameSms() &&
+            InvestmentOutflowDetector.isInvestmentOutflow(tx.body)
+        ) {
+            tx.copy(
+                linkType = LINK_TYPE_INVESTMENT_OUTFLOW,
+                category = CATEGORY_INVESTMENT,
+                isNetZero = false,
+                expenseFrequency = ExpenseFrequency.YEARLY.name
+            ).also {
+                Log.d(
+                    "INVESTMENT",
+                    "Detected INVESTMENT_OUTFLOW → YEARLY default, id=${tx.id}"
+                )
+                return it
+            }
+        }
+
+
         if (isSingleSmsInternalTransfer(tx.body)) {
             Log.e("REPROCESS", "Single-SMS internal transfer detected")
 

@@ -8,6 +8,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.spendwise.core.com.spendwise.core.ExpenseFrequency
 import com.spendwise.core.com.spendwise.core.FrequencyFilter
+import com.spendwise.core.com.spendwise.core.detector.LINK_TYPE_INVESTMENT_OUTFLOW
 import com.spendwise.core.ml.CategoryType
 import com.spendwise.core.ml.MerchantExtractorMl
 import com.spendwise.core.ml.MlReasonBundle
@@ -449,6 +450,7 @@ class SmsImportViewModel @Inject constructor(
             val expenseList =
                 finalList.filter {
                     it.isExpense() &&
+                            it.linkType != LINK_TYPE_INVESTMENT_OUTFLOW &&
                             it.expenseFrequency == ExpenseFrequency.MONTHLY.name
                 }
 

@@ -104,4 +104,8 @@ private fun SmsEntity.matchesFrequency(
                     freq == ExpenseFrequency.ONE_TIME.name
     }
 }
+fun SmsEntity.hasCreditedPartyInSameSms(): Boolean {
+    val text = body.lowercase()
+    return " credited" in text || "; credited" in text
+}
 
