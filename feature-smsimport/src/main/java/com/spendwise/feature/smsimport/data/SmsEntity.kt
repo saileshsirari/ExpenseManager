@@ -108,4 +108,12 @@ fun SmsEntity.hasCreditedPartyInSameSms(): Boolean {
     val text = body.lowercase()
     return " credited" in text || "; credited" in text
 }
+fun SmsEntity.isSystemInfoDebit(): Boolean {
+    val text = body.lowercase()
+    return text.contains("info:bil") ||
+            text.contains("info:imps") ||
+            text.contains("info:ach") ||
+            text.contains("info:rtgs")
+}
+
 

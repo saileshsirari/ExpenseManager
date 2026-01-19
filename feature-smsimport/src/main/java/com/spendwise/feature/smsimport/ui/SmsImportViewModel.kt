@@ -447,12 +447,19 @@ class SmsImportViewModel @Inject constructor(
             // -------------------------------------------------
             // 5) Expense list (math-only, derived from finalList)
             // -------------------------------------------------
-            val expenseList =
+            val monthlyExpenses =
                 finalList.filter {
                     it.isExpense() &&
                             it.linkType != LINK_TYPE_INVESTMENT_OUTFLOW &&
                             it.expenseFrequency == ExpenseFrequency.MONTHLY.name
                 }
+
+            val monthlyInternalTransfers =
+                finalList.filter {
+                    it.isNetZero &&
+                            it.expenseFrequency == ExpenseFrequency.MONTHLY.name
+                }
+
 
             // -------------------------------------------------
             // 6) Recalculate category totals
@@ -463,7 +470,7 @@ class SmsImportViewModel @Inject constructor(
             // -------------------------------------------------
             // 7) Totals (Debit / Credit)
             // -------------------------------------------------
-            val totalDebit = expenseList.sumOf { it.amount }
+            val totalDebit = monthlyExpenses.sumOf { it.amount }
 
             val totalCredit =
                 finalList
@@ -481,13 +488,13 @@ class SmsImportViewModel @Inject constructor(
             // -------------------------------------------------
             val barData = when (input.mode) {
                 DashboardMode.MONTH ->
-                    expenseList
+                    monthlyExpenses
                         .groupBy { it.localDate().dayOfMonth }
                         .mapValues { it.value.sumOf { tx -> tx.amount } }
 
                 DashboardMode.QUARTER,
                 DashboardMode.YEAR ->
-                    expenseList
+                    monthlyExpenses
                         .groupBy { it.localDate().monthValue }
                         .mapValues { it.value.sumOf { tx -> tx.amount } }
             }
@@ -495,12 +502,11 @@ class SmsImportViewModel @Inject constructor(
             // -------------------------------------------------
             // 9) Sorting (semantic split happens AFTER this)
             // -------------------------------------------------
-            val sortedTxs =
-                sortTransactions(finalList, input.sortConfig)
+            val sortedExpenses =
+                sortTransactions(monthlyExpenses, input.sortConfig)
 
-            // 🔒 Semantic meaning split
-            val (internalTxs, normalTxs) =
-                sortedTxs.partition { it.isNetZero }
+            val sortedInternal =
+                sortTransactions(monthlyInternalTransfers, input.sortConfig)
 
             // -------------------------------------------------
             // 10) MAIN rows (expenses + credits)
@@ -508,7 +514,13 @@ class SmsImportViewModel @Inject constructor(
             groupIndex =0
             val mainRows =
                 buildUiRows(
-                    txs = normalTxs,
+                    txs = sortedExpenses,
+                    sortConfig = input.sortConfig,
+                    groupByMerchant = input.showGroupedMerchants
+                )
+            val internalRows =
+                buildUiRows(
+                    txs = sortedInternal,
                     sortConfig = input.sortConfig,
                     groupByMerchant = input.showGroupedMerchants
                 )
@@ -520,30 +532,25 @@ class SmsImportViewModel @Inject constructor(
 // INTERNAL TRANSFER section (SAFE)
 // -------------------------------------------------
             val internalSectionHeader: UiTxnRow.Section? =
-                if (internalTxs.isEmpty()) null
+                if (sortedInternal.isEmpty()) null
                 else UiTxnRow.Section(
                     id = "internal_transfers",
                     title = "Internal transfers",
-                    count = internalTxs.size,
+                    count = sortedInternal.size,
                     collapsed = input.internalSectionCollapsed
                 )
 
+
             val internalSectionBody: List<UiTxnRow> =
-                if (internalTxs.isEmpty()) {
+                if (sortedInternal.isEmpty()) {
                     emptyList()
                 } else {
-                    val internalGrouped =
-                        buildUiRows(
-                            txs = internalTxs,
-                            sortConfig = input.sortConfig,
-                            groupByMerchant = input.showGroupedMerchants
-                        )
-
                     if (input.showGroupedMerchants)
-                        sortUiRows(internalGrouped, input.sortConfig)
+                        sortUiRows(internalRows, input.sortConfig)
                     else
-                        internalGrouped
+                        internalRows
                 }
+
 
             val visibleInternalRows: List<UiTxnRow> =
                 when {
@@ -564,9 +571,10 @@ class SmsImportViewModel @Inject constructor(
                 UiTxnRow.Section(
                     id = "main_transactions",
                     title = "Transactions",
-                    count = normalTxs.size,
+                    count = sortedExpenses.size,
                     collapsed = input.mainSectionCollapsed
                 )
+
 
             val visibleMainRows =
                 if (input.mainSectionCollapsed) emptyList()
@@ -599,7 +607,7 @@ class SmsImportViewModel @Inject constructor(
                 sortConfig = input.sortConfig,
                 showIgnored = input.showIgnored,
                 finalList = finalList,
-                sortedList = sortedTxs,
+                sortedList = sortedExpenses,
                 totalsDebit = totalDebit,
                 totalsCredit = totalCredit,
                 debitCreditTotals = debitCreditTotals,
@@ -994,6 +1002,17 @@ class SmsImportViewModel @Inject constructor(
         }
     }
 
+    private val _linkProgress =
+        MutableStateFlow<ProgressState?>(null)
+
+    val linkProgress = _linkProgress.asStateFlow()
+
+    data class ProgressState(
+        val processed: Int,
+        val total: Int,
+        val done: Boolean
+    )
+
 
     fun addManualExpense(
         amount: Double,
@@ -1038,27 +1057,6 @@ class SmsImportViewModel @Inject constructor(
     }
 
 
-    fun startImportIfNeeded1(resolverProvider: () -> ContentResolver) {
-        viewModelScope.launch(Dispatchers.Default) {
-
-            if (!prefs.importCompleted) {
-                // 1) Start loading
-                update { it.copy(isLoading = true) }
-                _importProgress.value = ImportProgress(done = false)
-
-                // 2) Start import
-                importAll(resolverProvider)
-
-            } else {
-                // 1) Start loading
-                // repo.reclassifyAll()
-
-                update { it.copy(isLoading = true) }
-                // 2) Start import
-                loadExistingData()
-            }
-        }
-    }
     fun sortTransactions(
         list: List<SmsEntity>,
         config: SortConfig
@@ -1147,52 +1145,6 @@ class SmsImportViewModel @Inject constructor(
     fun clearSelectedType() {
         update { it.copy(selectedType = null) } // use your existing update(...) method
         // optionally trigger recompute if you don't recompute from combine automatically
-    }
-
-    fun buildRowsForInsights(
-        txs: List<SmsEntity>
-    ): List<UiTxnRow> {
-        val sorted = sortTransactions(txs, uiInputs.value.sortConfig)
-
-        val (internal, normal) = sorted.partition { it.isNetZero }
-
-        val mainRows =
-            buildUiRows(
-                txs = normal,
-                sortConfig = uiInputs.value.sortConfig,
-                groupByMerchant = uiInputs.value.showGroupedMerchants
-            )
-
-        val internalRows =
-            buildUiRows(
-                txs = internal,
-                sortConfig = uiInputs.value.sortConfig,
-                groupByMerchant = uiInputs.value.showGroupedMerchants
-            )
-
-        val result = mutableListOf<UiTxnRow>()
-
-        if (mainRows.isNotEmpty()) {
-            result += UiTxnRow.Section(
-                id = "main_transactions",
-                title = "Transactions",
-                count = mainRows.count { it !is UiTxnRow.Section },
-                collapsed = false
-            )
-            result += mainRows
-        }
-
-        if (internalRows.isNotEmpty()) {
-            result += UiTxnRow.Section(
-                id = "internal_transfers",
-                title = "Internal transfers",
-                count = internalRows.count { it !is UiTxnRow.Section },
-                collapsed = false
-            )
-            result += internalRows
-        }
-
-        return result
     }
 
     fun setSelectedTypeSafe(type: String?) {
