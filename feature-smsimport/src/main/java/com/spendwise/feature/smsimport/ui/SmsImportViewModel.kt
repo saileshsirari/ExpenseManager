@@ -61,6 +61,8 @@ class SmsImportViewModel @Inject constructor(
         private const val FREE_CATEGORY_LIMIT = 5
 
     }
+    private var lastInsightsMode: DashboardMode? = null
+    private var lastInsightsPeriod: YearMonth? = null
 
     private val _items = MutableStateFlow<List<SmsEntity>>(emptyList())
     val items: StateFlow<List<SmsEntity>> = _items
@@ -183,7 +185,129 @@ class SmsImportViewModel @Inject constructor(
 
         }
     }
+    fun restoreDashboardFromInsights() {
+        val mode = lastInsightsMode ?: return
+        val period = lastInsightsPeriod ?: return
 
+        val targetMonth = when (mode) {
+            DashboardMode.MONTH -> period
+
+            DashboardMode.QUARTER -> {
+                val startMonth = ((period.monthValue - 1) / 3) * 3 + 1
+                YearMonth.of(period.year, startMonth)
+            }
+
+            DashboardMode.YEAR -> {
+                // 🔒 FORCE JANUARY
+                YearMonth.of(period.year, 1)
+            }
+        }
+
+        update {
+            it.copy(
+                mode = DashboardMode.MONTH,
+                period = targetMonth,
+
+                // 🔒 Clear selections so nothing re-syncs
+                selectedDay = null,
+                selectedMonth = null,
+                selectedType = null
+            )
+        }
+    }
+
+    fun prepareInsightsFromDashboard() {
+        val dashboardMonth = uiState.value.period
+
+        update {
+            it.copy(
+                mode = DashboardMode.MONTH,   // 🔒 always month
+                period = dashboardMonth,
+
+                // Clear transient selections
+                selectedDay = null,
+                selectedMonth = null,
+                selectedType = null
+            )
+        }
+    }
+
+    fun rememberInsightsContext(
+        mode: DashboardMode,
+        period: YearMonth
+    ) {
+        Log.d("INSIGHTS_CTX", "Captured mode=$mode period=$period")
+
+        lastInsightsMode = mode
+        lastInsightsPeriod = when (mode) {
+            DashboardMode.MONTH -> period
+            DashboardMode.QUARTER -> {
+                val startMonth = ((period.monthValue - 1) / 3) * 3 + 1
+                YearMonth.of(period.year, startMonth)
+            }
+            DashboardMode.YEAR -> YearMonth.of(period.year, 1)
+        }
+    }
+
+    val insightsUiState: StateFlow<InsightsUiState> =
+        combine(
+            items,
+            uiInputs,
+            insightsFrequencyFilter
+        ) { list, input, selectedFilter ->
+
+            // Use same base rules as Insights charts
+            val periodFiltered =
+                list
+                    .filterByPeriod(input.mode, input.period)
+                    .filter { it.isCountedAsExpense() }
+
+            val hasMonthlyData =
+                periodFiltered.any {
+                    it.expenseFrequency == ExpenseFrequency.MONTHLY.name
+                }
+
+            val hasYearlyData =
+                periodFiltered.any {
+                    it.expenseFrequency == ExpenseFrequency.YEARLY.name
+                }
+
+            val hasIrregularData =
+                periodFiltered.any {
+                    it.expenseFrequency == ExpenseFrequency.IRREGULAR.name ||
+                            it.expenseFrequency == ExpenseFrequency.ONE_TIME.name
+                }
+
+            val hasAnyData =
+                hasMonthlyData || hasYearlyData || hasIrregularData
+
+            InsightsUiState(
+                frequency = selectedFilter,
+                hasMonthlyData = hasMonthlyData,
+                hasYearlyData = hasYearlyData,
+                hasIrregularData = hasIrregularData,
+                hasAnyData = hasAnyData
+            )
+        }.stateIn(
+            viewModelScope,
+            SharingStarted.Eagerly,
+            InsightsUiState(
+                frequency = FrequencyFilter.MONTHLY_ONLY,
+                hasMonthlyData = false,
+                hasYearlyData = false,
+                hasIrregularData = false,
+                hasAnyData = false
+            )
+        )
+
+
+    data class InsightsUiState(
+        val frequency: FrequencyFilter,
+        val hasMonthlyData: Boolean,
+        val hasYearlyData: Boolean,
+        val hasIrregularData: Boolean,
+        val hasAnyData: Boolean
+    )
 
 
     fun prevPeriod() {
@@ -220,23 +344,6 @@ class SmsImportViewModel @Inject constructor(
                     DashboardMode.QUARTER -> it.period.plusMonths(3)
                     DashboardMode.YEAR -> it.period.plusYears(1)
                 },
-                selectedType = null,
-                selectedDay = null,
-                selectedMonth = null
-            )
-        }
-    }
-    fun resetToCurrentMonth() {
-        val now = YearMonth.now()
-
-        update {
-            if (
-                it.mode == DashboardMode.MONTH &&
-                it.period == now
-            ) it
-            else it.copy(
-                mode = DashboardMode.MONTH,
-                period = now,
                 selectedType = null,
                 selectedDay = null,
                 selectedMonth = null

@@ -75,14 +75,13 @@ import com.spendwise.app.ui.dashboard.DashboardModeSelector
 import com.spendwise.core.com.spendwise.core.ExpenseFrequency
 import com.spendwise.core.com.spendwise.core.FrequencyFilter
 import com.spendwise.core.com.spendwise.core.detector.LINK_TYPE_INVESTMENT_OUTFLOW
-import com.spendwise.core.extensions.nextQuarter
-import com.spendwise.core.extensions.previousQuarter
 import com.spendwise.domain.com.spendwise.feature.smsimport.data.DashboardMode
 import com.spendwise.domain.com.spendwise.feature.smsimport.ui.MonthlyComparisonCard
 import com.spendwise.domain.com.spendwise.feature.smsimport.ui.WalletInsightCard
 import com.spendwise.feature.smsimport.data.SmsEntity
 import com.spendwise.feature.smsimport.data.isExpense
 import com.spendwise.feature.smsimport.ui.SmsImportViewModel
+import com.spendwise.feature.smsimport.ui.SmsImportViewModel.InsightsUiState
 import com.spendwise.feature.smsimport.ui.UiTxnRow
 import com.spendwise.feature.smsimport.ui.matchesFrequency
 import java.time.YearMonth
@@ -115,9 +114,7 @@ fun RedesignedDashboardScreen(
 
 
 
-    LaunchedEffect(Unit) {
-        viewModel.resetToCurrentMonth()
-    }
+
     // top-level loading / import handling (assumes app-level permission + import triggers)
     if (!progress.done) {
         // small inset progress UI — full screen handled elsewhere
@@ -232,25 +229,18 @@ fun RedesignedDashboardScreen(
             }
             item {
                 PeriodNavigator(
-                    mode = uiState.mode,
+                    mode = DashboardMode.MONTH,   // 🔒 FORCE month view
                     period = uiState.period,
+
                     onPrev = {
-                        val newPeriod = when (uiState.mode) {
-                            DashboardMode.MONTH -> uiState.period.minusMonths(1)
-                            DashboardMode.QUARTER -> uiState.period.previousQuarter()
-                            DashboardMode.YEAR -> uiState.period.minusYears(1)
-                        }
-                        viewModel.setPeriod(newPeriod)
+                        viewModel.setPeriod(uiState.period.minusMonths(1))
                     },
+
                     onNext = {
-                        val newPeriod = when (uiState.mode) {
-                            DashboardMode.MONTH -> uiState.period.plusMonths(1)
-                            DashboardMode.QUARTER -> uiState.period.nextQuarter()
-                            DashboardMode.YEAR -> uiState.period.plusYears(1)
-                        }
-                        viewModel.setPeriod(newPeriod)
+                        viewModel.setPeriod(uiState.period.plusMonths(1))
                     }
                 )
+
                 Spacer(Modifier.height(12.dp))
             }
 
@@ -259,7 +249,10 @@ fun RedesignedDashboardScreen(
                 SummaryHeader(
                     totalDebit = uiState.totalsDebit,
                     totalCredit = uiState.totalsCredit,
-                    onOpenInsights = { navController.navigate(Screen.Insights.route) }
+                    onOpenInsights = {
+                        viewModel.prepareInsightsFromDashboard()
+                        navController.navigate(Screen.Insights.route)
+                    }
                 )
                 Spacer(Modifier.height(12.dp))
             }
@@ -268,7 +261,10 @@ fun RedesignedDashboardScreen(
                 // Quick filters & actions row
                 QuickActionsRow(
                     showGroupedMerchants = uiState.showGroupedMerchants,
-                    onOpenInsights = { navController.navigate(Screen.Insights.route) },
+                    onOpenInsights = {
+                        viewModel.prepareInsightsFromDashboard()
+                        navController.navigate(Screen.Insights.route)
+                                     },
                     onToggleGroupByMerchant = {
                         viewModel.toggleGroupByMerchant()
                     }
@@ -374,7 +370,10 @@ fun RedesignedDashboardScreen(
                     Column(modifier = Modifier.padding(12.dp)) {
                         Text("Want deeper insights?", style = MaterialTheme.typography.titleMedium)
                         Spacer(Modifier.height(6.dp))
-                        Button(onClick = { navController.navigate(Screen.Insights.route) }) {
+                        Button(onClick = {
+                            viewModel.prepareInsightsFromDashboard()
+                            navController.navigate(Screen.Insights.route)
+                        }) {
                             Text("Open Insights")
                         }
                     }
@@ -429,28 +428,75 @@ fun InternalTransferSectionHeader(
 }
 @Composable
 fun InsightsFrequencySelector(
-    selected: FrequencyFilter,
+    uiState: SmsImportViewModel.InsightsUiState,
     onChange: (FrequencyFilter) -> Unit
 ) {
-    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        FrequencyFilter.entries.forEach { filter ->
-            FilterChip(
-                selected = selected == filter,
-                onClick = { onChange(filter) },
-                label = {
-                    Text(
-                        when (filter) {
-                            FrequencyFilter.MONTHLY_ONLY -> "Monthly"
-                            FrequencyFilter.ALL_EXPENSES -> "All"
-                            FrequencyFilter.YEARLY_ONLY -> "Yearly"
-                            FrequencyFilter.IRREGULAR_ONLY -> "Irregular"
-                        }
-                    )
-                }
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            FrequencyChip(
+                filter = FrequencyFilter.MONTHLY_ONLY,
+                uiState = uiState,
+                onChange = onChange
+            )
+            FrequencyChip(
+                filter = FrequencyFilter.YEARLY_ONLY,
+                uiState = uiState,
+                onChange = onChange
+            )
+        }
+
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            FrequencyChip(
+                filter = FrequencyFilter.ALL_EXPENSES,
+                uiState = uiState,
+                onChange = onChange
+            )
+            FrequencyChip(
+                filter = FrequencyFilter.IRREGULAR_ONLY,
+                uiState = uiState,
+                onChange = onChange
             )
         }
     }
 }
+
+fun FrequencyFilter.isEnabled(ui: InsightsUiState): Boolean =
+    when (this) {
+        FrequencyFilter.MONTHLY_ONLY -> ui.hasMonthlyData
+        FrequencyFilter.YEARLY_ONLY -> ui.hasYearlyData
+        FrequencyFilter.IRREGULAR_ONLY -> ui.hasIrregularData
+        FrequencyFilter.ALL_EXPENSES -> ui.hasAnyData
+    }
+
+@Composable
+private fun FrequencyChip(
+    filter: FrequencyFilter,
+    uiState: InsightsUiState,
+    onChange: (FrequencyFilter) -> Unit
+) {
+    val enabled = filter.isEnabled(uiState)
+
+    FilterChip(
+        selected = uiState.frequency == filter,
+        enabled = enabled,
+        onClick = {
+            if (enabled) onChange(filter)
+        },
+        label = {
+            Text(
+                when (filter) {
+                    FrequencyFilter.MONTHLY_ONLY -> "Monthly"
+                    FrequencyFilter.ALL_EXPENSES -> "All"
+                    FrequencyFilter.YEARLY_ONLY -> "Yearly"
+                    FrequencyFilter.IRREGULAR_ONLY -> "Irregular"
+                }
+            )
+        }
+    )
+}
+
+
 
 /* -----------------------------------------------------------
    2) Insights screen: full-size pie chart + category breakdown
@@ -470,6 +516,7 @@ fun InsightsScreen(
     LaunchedEffect(Unit) {
         viewModel.clearSelectedType()
     }
+
 
     val totalSpend by viewModel.totalSpend.collectAsState()
 
@@ -521,6 +568,9 @@ fun InsightsScreen(
     val categoryInsight by viewModel.categoryInsight.collectAsState()
     val comparison by viewModel.periodComparison.collectAsState()
     val walletInsight by viewModel.walletInsight.collectAsState()
+    val insightsUi by viewModel.insightsUiState.collectAsState()
+
+
 
 
     Scaffold(
@@ -528,7 +578,13 @@ fun InsightsScreen(
             CenterAlignedTopAppBar(
                 title = { Text("Insights") },
                 navigationIcon = {
-                    IconButton(onClick = { navController.popBackStack() }) {
+                    IconButton(onClick = {
+                        viewModel.rememberInsightsContext(
+                            mode = uiState.mode,
+                            period = uiState.period
+                        )
+                        viewModel.restoreDashboardFromInsights()
+                        navController.popBackStack() }) {
                         Icon(
                             painter = painterResource(id = R.drawable.ic_menu_close_clear_cancel),
                             contentDescription = "Back"
@@ -578,7 +634,7 @@ fun InsightsScreen(
                             )
                             Spacer(Modifier.height(10.dp))
                             InsightsFrequencySelector(
-                                selected = freqFilter,
+                                uiState = insightsUi,
                                 onChange = viewModel::setInsightsFrequencyFilter
                             )
 
