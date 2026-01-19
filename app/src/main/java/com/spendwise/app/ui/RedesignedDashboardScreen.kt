@@ -42,14 +42,18 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CenterAlignedTopAppBar
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Divider
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ExposedDropdownMenuBox
+import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
@@ -75,6 +79,7 @@ import com.spendwise.app.ui.dashboard.DashboardModeSelector
 import com.spendwise.core.com.spendwise.core.ExpenseFrequency
 import com.spendwise.core.com.spendwise.core.FrequencyFilter
 import com.spendwise.core.com.spendwise.core.detector.LINK_TYPE_INVESTMENT_OUTFLOW
+import com.spendwise.core.ml.CategoryType
 import com.spendwise.domain.com.spendwise.feature.smsimport.data.DashboardMode
 import com.spendwise.domain.com.spendwise.feature.smsimport.ui.MonthlyComparisonCard
 import com.spendwise.domain.com.spendwise.feature.smsimport.ui.WalletInsightCard
@@ -343,6 +348,12 @@ fun RedesignedDashboardScreen(
                                 viewModel.onMessageClicked(row.tx)
                                 viewModel.debugReprocessSms(row.tx.id)
                             },
+                            onChangeCategory = { tx, category ->
+                                viewModel.changeMerchantCategory(
+                                    merchant = tx.merchant ?: return@TransactionRow,
+                                    category = category
+                                )
+                            },
                             onUndoSelfTransfer = {
                                 viewModel.undoSelfTransfer(it)
                             }
@@ -468,6 +479,65 @@ fun FrequencyFilter.isEnabled(ui: InsightsUiState): Boolean =
         FrequencyFilter.IRREGULAR_ONLY -> ui.hasIrregularData
         FrequencyFilter.ALL_EXPENSES -> ui.hasAnyData
     }
+@Composable
+fun MerchantCategorySelector(
+    currentCategory: String,
+    onChange: (CategoryType) -> Unit
+) {
+    var expanded by remember { mutableStateOf(false) }
+
+    Column {
+        Text(
+            text = "Category (applies to this merchant)",
+            style = MaterialTheme.typography.labelMedium
+        )
+
+        Spacer(Modifier.height(6.dp))
+
+        ExposedDropdownMenuBox(
+            expanded = expanded,
+            onExpandedChange = { expanded = !expanded }
+        ) {
+            OutlinedTextField(
+                value = currentCategory
+                    .lowercase()
+                    .replaceFirstChar { it.uppercase() },
+                onValueChange = {},
+                readOnly = true,
+                label = { Text("Category") },
+                trailingIcon = {
+                    ExposedDropdownMenuDefaults.TrailingIcon(expanded)
+                },
+                modifier = Modifier
+                    .menuAnchor()
+                    .fillMaxWidth()
+            )
+
+            ExposedDropdownMenu(
+                expanded = expanded,
+                onDismissRequest = { expanded = false }
+            ) {
+                CategoryType.values().forEach { category ->
+                    DropdownMenuItem(
+                        text = {
+                            Text(
+                                category.name
+                                    .lowercase()
+                                    .replaceFirstChar { it.uppercase() }
+                            )
+                        },
+                        onClick = {
+                            expanded = false
+                            onChange(category)
+                        }
+                    )
+                }
+            }
+        }
+    }
+}
+
+
 
 @Composable
 private fun FrequencyChip(
@@ -769,6 +839,12 @@ fun InsightsScreen(
                             onUndoSelfTransfer = {
                                 viewModel.undoSelfTransfer(it)
                             },
+                            onChangeCategory = { tx, category ->
+                                viewModel.changeMerchantCategory(
+                                    merchant = tx.merchant ?: return@TransactionRow,
+                                    category = category
+                                )
+                            },
                             onDebugClick = {
                                 viewModel.onMessageClicked(row.tx)
                                 viewModel.debugReprocessSms(row.tx.id)
@@ -954,6 +1030,12 @@ fun GroupedMerchantRow(
                         },
                         onMarkAsSelfTransfer = { viewModel.markAsSelfTransfer(it) },
                         onUndoSelfTransfer = { viewModel.undoSelfTransfer(it) },
+                        onChangeCategory = { tx, category ->
+                            viewModel.changeMerchantCategory(
+                                merchant = tx.merchant ?: return@TransactionRow,
+                                category = category
+                            )
+                        },
                         onDebugClick = {
                             viewModel.onMessageClicked(tx)
                             viewModel.debugReprocessSms(tx.id)
@@ -1052,27 +1134,97 @@ private fun TransactionRowContent(
 @Composable
 fun ExpenseFrequencySelector(
     current: String,
+    amount: Double,
     onChange: (ExpenseFrequency) -> Unit
 ) {
+    var expanded by remember { mutableStateOf(false) }
+
+    val currentEnum =
+        runCatching { ExpenseFrequency.valueOf(current) }
+            .getOrNull() ?: ExpenseFrequency.MONTHLY
+
+    // 🔒 Small amount rule
+    val isSmallAmount = amount < 1000.0
+
     Column {
         Text(
-            "Expense frequency",
+            text = "Expense frequency",
             style = MaterialTheme.typography.labelMedium
         )
 
         Spacer(Modifier.height(6.dp))
 
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            ExpenseFrequency.values().forEach { freq ->
-                FilterChip(
-                    selected = current == freq.name,
-                    onClick = { onChange(freq) },
-                    label = { Text(freq.name.lowercase().replaceFirstChar { it.uppercase() }) }
-                )
+        ExposedDropdownMenuBox(
+            expanded = expanded,
+            onExpandedChange = { expanded = !expanded }
+        ) {
+            OutlinedTextField(
+                value = currentEnum.displayName(),
+                onValueChange = {},
+                readOnly = true,
+                label = { Text("Frequency") },
+                trailingIcon = {
+                    ExposedDropdownMenuDefaults.TrailingIcon(expanded)
+                },
+                modifier = Modifier
+                    .menuAnchor()
+                    .fillMaxWidth()
+            )
+
+            ExposedDropdownMenu(
+                expanded = expanded,
+                onDismissRequest = { expanded = false }
+            ) {
+                ExpenseFrequency.values().forEach { freq ->
+
+                    val disabled =
+                        isSmallAmount &&
+                                (freq == ExpenseFrequency.YEARLY ||
+                                        freq == ExpenseFrequency.IRREGULAR)
+
+                    DropdownMenuItem(
+                        enabled = !disabled,
+                        text = {
+                            Text(
+                                text = freq.displayName(),
+                                color = if (disabled)
+                                    MaterialTheme.colorScheme.onSurfaceVariant
+                                else
+                                    MaterialTheme.colorScheme.onSurface
+                            )
+                        },
+                        onClick = {
+                            if (!disabled) {
+                                expanded = false
+                                onChange(freq)
+                            }
+                        }
+                    )
+                }
             }
+        }
+
+        // Optional helper text
+        if (isSmallAmount) {
+            Spacer(Modifier.height(4.dp))
+            Text(
+                text = "Yearly / Irregular disabled for small amounts",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
         }
     }
 }
+
+fun ExpenseFrequency.displayName(): String =
+    when (this) {
+        ExpenseFrequency.MONTHLY -> "Monthly"
+        ExpenseFrequency.YEARLY -> "Yearly"
+        ExpenseFrequency.IRREGULAR -> "Irregular"
+        ExpenseFrequency.ONE_TIME -> "One-time"
+    }
+
+private const val MIN_AMOUNT_FOR_FREQUENCY_SELECTOR = 1000.0
 
 
 @Composable
@@ -1082,6 +1234,7 @@ fun TransactionRow(
     onClick: (SmsEntity) -> Unit,
     onDebugClick: () -> Unit,
     onChange: (ExpenseFrequency) -> Unit,
+    onChangeCategory: (SmsEntity, CategoryType) -> Unit,
     onMarkAsSelfTransfer: (SmsEntity) -> Unit,
     onUndoSelfTransfer: (SmsEntity) -> Unit
 ) {
@@ -1174,12 +1327,27 @@ fun TransactionRow(
                         Text("Re-run classification (debug)")
                     }
 
+                    if (sms.amount >= MIN_AMOUNT_FOR_FREQUENCY_SELECTOR) {
+                        ExpenseFrequencySelector(
+                            current = sms.expenseFrequency,
+                            amount = sms.amount,
+                            onChange = onChange
+                        )
+                    }
 
 
-                    ExpenseFrequencySelector(
-                        current = sms.expenseFrequency,
-                        onChange = onChange
-                    )
+
+                    if (!sms.merchant.isNullOrBlank() && !sms.category.isNullOrBlank()) {
+                        Divider()
+
+                        MerchantCategorySelector(
+                            currentCategory = sms.category!!,
+                            onChange = { newCategory ->
+                                onChangeCategory(sms, newCategory)
+                            }
+                        )
+                    }
+
 
                 }
             }

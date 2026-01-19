@@ -440,12 +440,32 @@ class SmsRepositoryImpl @Inject constructor(
     // ------------------------------------------------------------
     // CATEGORY OVERRIDE  (CORRECTED)
     // ------------------------------------------------------------
-    suspend fun saveCategoryOverride(merchant: String, newCategory: String) {
-        val normalized = MerchantExtractorMl.normalize(merchant)
+    // ------------------------------------------------------------
+// CATEGORY OVERRIDE  (ENUM-SAFE)
+// ------------------------------------------------------------
+    suspend fun changeMerchantCategory(
+        merchant: String,
+        newCategory: CategoryType
+    ) {
+        val key = MerchantCategoryOverride.keyFor(merchant)
+
+        Log.d("expense", "Category override: $key -> ${newCategory.name}")
+
+        // 1️⃣ Save override (future imports & reprocess)
         db.userMlOverrideDao().save(
-            UserMlOverride("category:$normalized", newCategory)
+            UserMlOverride(
+                key = key,
+                value = MerchantCategoryOverride.encode(newCategory)
+            )
+        )
+
+        // 2️⃣ Update existing transactions immediately
+        db.smsDao().updateCategoryForMerchant(
+            merchant = merchant,
+            category = newCategory.name
         )
     }
+
 
 
     // ------------------------------------------------------------
@@ -652,10 +672,22 @@ class SmsRepositoryImpl @Inject constructor(
         if (result != null) {
             Log.e("REPROCESS", "ML result=$result")
 
+            val overrideCategory =
+                MerchantCategoryOverride.decode(
+                    db.userMlOverrideDao().getValue(
+                        MerchantCategoryOverride.keyFor(
+                            result.merchant ?: tx.merchant ?: ""
+                        )
+                    )
+                )
+
+            val finalCategory =
+                overrideCategory ?: result.category
+
             val updated = tx.copy(
                 type = if (result.isCredit) "CREDIT" else "DEBIT",
-                category = result.category.name,
-                merchant = resolveMerchant(result.merchant, result.category)
+                category = finalCategory.name,
+                merchant = resolveMerchant(result.merchant, finalCategory)
             )
 
             db.smsDao().update(updated)

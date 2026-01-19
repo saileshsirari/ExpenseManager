@@ -231,6 +231,17 @@ class SmsImportViewModel @Inject constructor(
             )
         }
     }
+    fun changeMerchantCategory(
+        merchant: String,
+        category: CategoryType
+    ) {
+        viewModelScope.launch {
+            repo.changeMerchantCategory(
+                merchant = merchant,
+                newCategory = category
+            )
+        }
+    }
 
     fun rememberInsightsContext(
         mode: DashboardMode,
@@ -1147,13 +1158,7 @@ class SmsImportViewModel @Inject constructor(
                 !isNetZero
     }
 
-    fun fixCategory(tx: SmsEntity, newCategory: CategoryType) {
-        viewModelScope.launch {
-            repo.saveCategoryOverride(tx.merchant ?: tx.sender, newCategory.name)
-            repo.reclassifySingle(tx.id)
-            refresh()
-        }
-    }
+
 
     fun setIgnoredState(tx: SmsEntity, ignored: Boolean) {
         viewModelScope.launch {

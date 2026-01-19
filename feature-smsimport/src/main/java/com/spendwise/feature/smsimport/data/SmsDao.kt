@@ -174,5 +174,15 @@ interface SmsDao {
         frequency: String,
         anchorYear: Int?
     )
+    @Query("""
+    UPDATE sms
+    SET category = :category
+    WHERE merchant = :merchant
+      AND isNetZero = 0
+""")
+    suspend fun updateCategoryForMerchant(
+        merchant: String,
+        category: String
+    )
 
 }
