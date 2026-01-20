@@ -13,9 +13,26 @@ object MerchantExtractorMl {
         "mobikwik" to "MobiKwik Wallet"
     )
 
+
     private val personStopWords = setOf(
         "LIMITED", "LTD", "PRIVATE", "PVT", "LLP",
-        "ON", "OF", "FOR", "AND"
+        "ON", "OF", "FOR", "AND",
+        // 🔒 FD / FINANCIAL TERMS (NOT PEOPLE)
+        "fd",
+        "fd no",
+        "fixed",
+        "fixed deposit",
+        "term",
+        "term deposit",
+        "deposit",
+        "interest",
+        "maturity",
+        "loan",
+        "emi",
+        "installment",
+        "reinvestment",
+        "renewal"
+
     )
 
 

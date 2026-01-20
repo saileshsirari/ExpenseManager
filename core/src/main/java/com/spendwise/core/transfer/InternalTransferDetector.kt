@@ -1,6 +1,6 @@
 package com.spendwise.core.transfer
 
-import android.util.Log
+import com.spendwise.core.Logger as Log
 import com.spendwise.core.ml.MerchantExtractorMl
 import com.spendwise.core.ml.SenderType
 import com.spendwise.core.transfer.InternalTransferDetector.TransferInfo

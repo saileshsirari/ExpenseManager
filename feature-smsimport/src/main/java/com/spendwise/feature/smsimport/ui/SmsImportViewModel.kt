@@ -530,7 +530,7 @@ class SmsImportViewModel @Inject constructor(
     val uiState: StateFlow<DashboardUiState> =
         combine(items, uiInputs) { list, input ->
 
-            android.util.Log.d("expense", "input.mode ${input.mode}")
+            Log.d("expense", "input.mode ${input.mode}")
 
             // -------------------------------------------------
             // 1) Base list — ALL transactions from DB
@@ -1002,14 +1002,6 @@ class SmsImportViewModel @Inject constructor(
             val log = repo.getMlExplanationFor(tx)
             Log.d("expense", log.toString())
             _selectedExplanation.value = log
-        }
-    }
-
-    fun forceReclassify() {
-        viewModelScope.launch(Dispatchers.Default) {
-            repo.reclassifyAllWithProgress { done, total ->
-                _reclassifyProgress.value = done to total
-            }
         }
     }
 

@@ -93,24 +93,43 @@ class LinkedTransactionDetector(
         /* --------------------------------------------------------
          * SAME-DAY MATCHING
          * -------------------------------------------------------- */
+        val windowMs = LINK_WINDOW_DAYS * DAY_MS
+
         val candidates = repo.findCandidates(
             amount = tx.amount,
-            from = tx.timestamp - DAY_MS,
-            to = tx.timestamp + DAY_MS,
+            from = tx.timestamp - windowMs,
+            to = tx.timestamp + windowMs,
             excludeId = tx.id
         )
 
+
         for (cand in candidates) {
+            // 🔒 Optional safety: debit should precede credit (or same day)
+            if (tx.type == "DEBIT" && cand.timestamp < tx.timestamp - windowMs) continue
+
             val score = scorePair(tx, cand)
             if (score >= possibleLinkThreshold) {
 
                 // 🔒 FINAL SAFETY: NEVER internal unless self
-                if (!isSelfRecipient(tx, selfRecipientProvider)) {
-                    Log.e(TAG, "BLOCKED false internal: ${tx.merchant}")
-                    break
+                val isExplicitSelf = isSelfRecipient(tx, selfRecipientProvider)
+                val isSamePerson = isSamePersonTransfer(tx, cand)
+
+                if (!isExplicitSelf && !isSamePerson) {
+                    Log.e(
+                        TAG,
+                        "BLOCKED false internal: not self, not same person"
+                    )
+                    continue
                 }
 
+
                 applyLink(tx, cand, score)
+                if (isSamePerson) {
+                    repo.saveLinkedPattern(
+                        "${extractPersonName(tx.body)}|person_transfer"
+                    )
+                }
+
                 return
             }
         }
@@ -185,10 +204,40 @@ class LinkedTransactionDetector(
 
         return when (dayDiff) {
             0L -> 90
-            1L -> 80
+            in 1L..2L -> 80
+            in 3L..35L -> 65    // 👈 still ≥ possibleLinkThreshold (60)
             else -> 0
         }
+
     }
+    private val personNameRegex = Regex(
+        "(to|from)\\s+(mr\\.?|mrs\\.?|ms\\.?|shri)?\\s*([A-Za-z][A-Za-z ]{2,50})",
+        RegexOption.IGNORE_CASE
+    )
+
+    private fun extractPersonName(body: String): String? {
+        val m = personNameRegex.find(body.lowercase()) ?: return null
+        val raw = m.groupValues[3]
+
+        val cleaned = raw
+            .replace(Regex("[^A-Za-z ]"), "")
+            .trim()
+
+        if (cleaned.split(" ").size > 3) return null // avoid long garbage matches
+
+        return cleaned.uppercase()
+    }
+
+    private fun isSamePersonTransfer(
+        a: TransactionCoreModel,
+        b: TransactionCoreModel
+    ): Boolean {
+        val p1 = extractPersonName(a.body)
+        val p2 = extractPersonName(b.body)
+
+        return p1 != null && p1 == p2
+    }
+
 
     private suspend fun inferMissingCredit(
         tx: TransactionCoreModel,
@@ -206,12 +255,15 @@ class LinkedTransactionDetector(
         val key = "${normalize(tx.merchant ?: "")}|${extractPhrase(tx.body ?: "")}"
         if (!patterns.contains(key)) return
 
+        val windowMs = LINK_WINDOW_DAYS * DAY_MS
+
         val candidates = repo.findCandidates(
             amount = tx.amount,
-            from = tx.timestamp - inferenceWindowDays * DAY_MS,
-            to = tx.timestamp + inferenceWindowDays * DAY_MS,
+            from = tx.timestamp - windowMs,
+            to = tx.timestamp + windowMs,
             excludeId = tx.id
         )
+
 
         candidates
             .filter { isOpposite(tx.type, it.type) }
@@ -250,5 +302,6 @@ class LinkedTransactionDetector(
 
     companion object {
         private const val DAY_MS = 24L * 60L * 60L * 1000L
+        private const val LINK_WINDOW_DAYS = 35L
     }
 }

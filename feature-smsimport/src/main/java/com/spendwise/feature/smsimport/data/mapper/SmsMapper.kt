@@ -20,10 +20,3 @@ fun SmsEntity.toDomain(): TransactionCoreModel =
         isNetZero = isNetZero
     )
 
-fun TransactionCoreModel.applyToEntity(old: SmsEntity): SmsEntity =
-    old.copy(
-        linkId = linkId,
-        linkType = linkType,
-        linkConfidence = linkConfidence,
-        isNetZero = isNetZero
-    )

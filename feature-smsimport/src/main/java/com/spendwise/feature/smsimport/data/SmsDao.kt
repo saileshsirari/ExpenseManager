@@ -184,5 +184,14 @@ interface SmsDao {
         merchant: String,
         category: String
     )
+    @Query("""
+SELECT * FROM sms
+WHERE category = 'INVESTMENT'
+  AND linkType = 'INVESTMENT_OUTFLOW'
+  AND timestamp BETWEEN :from AND :to
+ORDER BY timestamp DESC
+LIMIT 1
+""")
+    fun findRecentFdInvestment(from: Long, to: Long): SmsEntity?
 
 }

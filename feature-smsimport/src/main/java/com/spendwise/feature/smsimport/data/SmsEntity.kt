@@ -1,12 +1,12 @@
 
 package com.spendwise.feature.smsimport.data
 
-import android.util.Log
 import androidx.room.Entity
 import androidx.room.Index
 import androidx.room.PrimaryKey
 import com.spendwise.core.com.spendwise.core.ExpenseFrequency
 import com.spendwise.core.com.spendwise.core.FrequencyFilter
+import com.spendwise.core.Logger as Log
 
 @Entity(
     tableName = "sms",
