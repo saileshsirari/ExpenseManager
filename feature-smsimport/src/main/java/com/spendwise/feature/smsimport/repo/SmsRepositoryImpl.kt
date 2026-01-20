@@ -6,7 +6,6 @@ import com.spendwise.core.com.spendwise.core.ExpenseFrequency
 import com.spendwise.core.com.spendwise.core.detector.CATEGORY_INVESTMENT
 import com.spendwise.core.com.spendwise.core.detector.LINK_TYPE_INVESTMENT_OUTFLOW
 import com.spendwise.core.com.spendwise.core.isCardBillPayment
-import com.spendwise.core.com.spendwise.core.isSingleSmsInternalTransfer
 import com.spendwise.core.com.spendwise.core.isSystemInfoDebit
 import com.spendwise.core.com.spendwise.core.isWalletCredit
 import com.spendwise.core.detector.InvestmentOutflowDetector
@@ -197,12 +196,8 @@ class SmsRepositoryImpl @Inject constructor(
 
                 type = if (result.isCredit) "CREDIT" else "DEBIT",
                 category = result.category.name,
-                isNetZero =
-                    if (isWalletSpend) false else result.isSingleSmsInternal,
-                linkType =
-                    if (isWalletSpend) null
-                    else if (result.isSingleSmsInternal) "INTERNAL_TRANSFER"
-                    else null,
+                isNetZero = false,
+                linkType = null,
                 linkId =
                     if (isWalletSpend) null
                     else if (result.isSingleSmsInternal) "single:${sms.timestamp}"
@@ -224,11 +219,9 @@ class SmsRepositoryImpl @Inject constructor(
             }
 // 🔒 NEVER run linker for wallet spends
             if (!classified.isNetZero && !classified.isWalletMerchantSpend()) {
-                linkedDetector.process(classified.toDomain())
-            }
-            // 🔒 NEVER run linker for wallet spends
-            if (!saved.isNetZero && !saved.isWalletMerchantSpend()) {
-                linkedDetector.process(saved.toDomain())
+                linkedDetector.process(
+                    classified.toDomain(),
+                    selfRecipientProvider = { getSelfRecipients() })
             }
         }
         autoLinkStrongSelfTransfers()
@@ -332,24 +325,11 @@ class SmsRepositoryImpl @Inject constructor(
                 category = result.category.name,
 
                 // internal transfer only if NOT wallet spend
-                isNetZero =
-                    if (isWalletSpend) false
-                    else result.isSingleSmsInternal,
+                isNetZero = false,
+                linkType = null,
+                linkId = null,
+                linkConfidence = 0
 
-                linkType =
-                    if (isWalletSpend) null
-                    else if (result.isSingleSmsInternal) "INTERNAL_TRANSFER"
-                    else null,
-
-                linkId =
-                    if (isWalletSpend) null
-                    else if (result.isSingleSmsInternal) "single:${sms.timestamp}"
-                    else null,
-
-                linkConfidence =
-                    if (isWalletSpend) 0
-                    else if (result.isSingleSmsInternal) 2
-                    else 0
             )
 
             val id = db.smsDao().insert(entity)
@@ -364,11 +344,13 @@ class SmsRepositoryImpl @Inject constructor(
                 !classified.isNetZero &&
                 !classified.isWalletMerchantSpend()
             ) {
-                linkedDetector.process(classified.toDomain())
+                linkedDetector.process(
+                    classified.toDomain(),
+                    selfRecipientProvider = { getSelfRecipients() })
             }
 
             // 🔒 THROTTLED progress (every 25 items)
-            if (processed % 25 == 0 || processed == total) {
+            if (processed % 100 == 0 || processed == total) {
                 emit(
                     ImportEvent.Progress(
                         total = total,
@@ -386,7 +368,6 @@ class SmsRepositoryImpl @Inject constructor(
 
         emit(ImportEvent.Finished(db.smsDao().getAllOnce()))
     }
-
 
 
     // ------------------------------------------------------------
@@ -465,7 +446,6 @@ class SmsRepositoryImpl @Inject constructor(
             category = newCategory.name
         )
     }
-
 
 
     // ------------------------------------------------------------
@@ -549,37 +529,33 @@ class SmsRepositoryImpl @Inject constructor(
         val amount = SmsParser.parseAmount(body) ?: 0.0
 // --------------------------------------------------
 // INFO / SYSTEM ROUTING DEBIT (LOCKED RULE)
-// --------------------------------------------------
-        // --------------------------------------------------
-// INFO / SYSTEM ROUTING DEBIT (LOCKED RULE)
-// --------------------------------------------------
         if (tx.isSystemInfoDebit()) {
-            val updated = tx.copy(
-                type = "DEBIT",                 // 👈 explicit
-                linkType = "INTERNAL_TRANSFER",
-                isNetZero = true
-            )
+            val internal =
+                InternalTransferDetector.detect(
+                    senderType = SenderType.BANK,
+                    body = tx.body,
+                    amount = amount,
+                    selfRecipientProvider = { getSelfRecipients() }
+                )
+            if (internal != null) {
+                val updated = tx.copy(
+                    type = "DEBIT",
+                    isNetZero = true,
+                    linkType = "INTERNAL_TRANSFER",
+                    linkConfidence = 95
+                )
+                db.smsDao().update(updated)
 
-            db.smsDao().update(updated)
+                Log.d(
+                    "SYSTEM_INFO",
+                    "Info/system debit detected → INTERNAL_TRANSFER, id=${tx.id}"
+                )
 
-            Log.d(
-                "SYSTEM_INFO",
-                "Info/system debit detected → INTERNAL_TRANSFER, id=${tx.id}"
-            )
-
-            return updated
+                return updated
+            }
         }
 
-
-        // --------------------------------------------
-// INVESTMENT OUTFLOW DETECTION (NEW)
-// --------------------------------------------
-        // --------------------------------------------------
 // INVESTMENT OUTFLOW DETECTION (BODY-BASED, SAFE)
-// --------------------------------------------------
-        // --------------------------------------------------
-// INVESTMENT OUTFLOW DETECTION (BODY-BASED, SAFE)
-// --------------------------------------------------
         if (
             tx.hasCreditedPartyInSameSms() &&
             InvestmentOutflowDetector.isInvestmentOutflow(tx.body)
@@ -592,7 +568,7 @@ class SmsRepositoryImpl @Inject constructor(
                 expenseFrequency = ExpenseFrequency.YEARLY.name
             )
 
-            db.smsDao().update(updated)   // ✅ CRITICAL LINE
+            db.smsDao().update(updated)
 
             Log.d(
                 "INVESTMENT",
@@ -602,20 +578,6 @@ class SmsRepositoryImpl @Inject constructor(
             return updated
         }
 
-
-
-        if (isSingleSmsInternalTransfer(tx.body)) {
-            Log.e("REPROCESS", "Single-SMS internal transfer detected")
-
-            val updated = tx.copy(
-                type = "DEBIT",
-                isNetZero = true,
-                linkType = "INTERNAL_TRANSFER",
-                linkConfidence = 95
-            )
-            db.smsDao().update(updated)
-            return updated
-        }
         Log.e("REPROCESS", "Parsed amount=$amount")
 
         // 🔒 1️⃣ INFO / system SMS
@@ -681,19 +643,26 @@ class SmsRepositoryImpl @Inject constructor(
                     )
                 )
 
+
             val finalCategory =
                 overrideCategory ?: result.category
 
             val updated = tx.copy(
                 type = if (result.isCredit) "CREDIT" else "DEBIT",
-                category = finalCategory.name,
+                category =    if (tx.category == CategoryType.INVESTMENT.name &&
+                    tx.expenseFrequency == ExpenseFrequency.MONTHLY.name
+                ) {
+                   ExpenseFrequency.YEARLY.name
+                }else finalCategory.name,
                 merchant = resolveMerchant(result.merchant, finalCategory)
             )
 
             db.smsDao().update(updated)
 
             // 🔒 5️⃣ Internal transfer detector (AFTER ML)
-            linkedDetector.process(updated.toDomain())
+            linkedDetector.process(
+                updated.toDomain(),
+                selfRecipientProvider = { getSelfRecipients() })
 
             return db.smsDao().getById(tx.id)!!
         }
@@ -708,19 +677,6 @@ class SmsRepositoryImpl @Inject constructor(
     // ------------------------------------------------------------
     override suspend fun reclassifySingle(id: Long): SmsEntity? {
         val tx = db.smsDao().getById(id) ?: return null
-// 🔒 INFO SMS SHOULD NEVER BECOME DEBIT
-        if (isInvestmentInfoSms(tx.body)) {
-            val fixed = tx.copy(
-                amount = 0.0,
-                type = "INFO",
-                isNetZero = true,
-                linkType = null,
-                linkId = null,
-                linkConfidence = 0
-            )
-            db.smsDao().update(fixed)
-            return fixed
-        }
 
         // 🔒 Preserve user-declared self transfer
         val isUserSelfTransfer =
