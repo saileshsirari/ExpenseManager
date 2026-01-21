@@ -194,4 +194,26 @@ LIMIT 1
 """)
     fun findRecentFdInvestment(from: Long, to: Long): SmsEntity?
 
+
+
+    @Query("""
+SELECT * FROM sms
+WHERE isNetZero = 0
+  AND type = 'DEBIT'
+  AND sender LIKE '%' || :senderBank || '%'
+  AND body LIKE '%' || :personName || '%'
+""")
+    fun findCandidateSelfTransfers(
+        personName: String,
+        senderBank: String
+    ): List<SmsEntity>
+
+
+    @Query("""
+SELECT * FROM sms
+WHERE type = 'DEBIT'
+  AND isNetZero = 0
+""")
+    suspend fun getAllDebitNonNetZero(): List<SmsEntity>
+
 }

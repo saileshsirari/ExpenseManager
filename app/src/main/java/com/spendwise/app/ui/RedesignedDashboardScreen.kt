@@ -36,6 +36,7 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.CompareArrows
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -109,6 +110,8 @@ fun RedesignedDashboardScreen(
 ) {
     val uiState by viewModel.uiState.collectAsState()
     val progress by viewModel.importProgress.collectAsState()
+
+
     var expandedItemId by remember { mutableStateOf<Long?>(null) }
     val onMarkNotExpense: (SmsEntity, Boolean) -> Unit = { id, ignored ->
         viewModel.setIgnoredState(id, ignored)
@@ -116,8 +119,6 @@ fun RedesignedDashboardScreen(
 
 
     val progressReclassify by viewModel.reclassifyProgress.collectAsState()
-
-
 
 
     // top-level loading / import handling (assumes app-level permission + import triggers)
@@ -143,6 +144,50 @@ fun RedesignedDashboardScreen(
             }
         }
         return
+    }
+    val applyRuleProgress by viewModel.applyRuleProgress.collectAsState()
+
+    var showApplyRuleDialog by remember { mutableStateOf(false) }
+    var selectedTx by remember { mutableStateOf<SmsEntity?>(null) }
+    val ctx = selectedTx?.let { viewModel.getSelfRuleContext(it) }
+    val person = ctx?.first
+    val bank = ctx?.second
+
+    val applyRuleTx by viewModel.applySelfRuleRequest.collectAsState()
+
+    LaunchedEffect(applyRuleTx) {
+        if (applyRuleTx != null) {
+            selectedTx = applyRuleTx
+            showApplyRuleDialog = true
+        }
+    }
+    val contextText = when {
+        person != null && bank != null ->
+            "Transfers to $person from $bank"
+
+        person != null ->
+            "Transfers to $person"
+
+        bank != null ->
+            "Transfers from $bank"
+
+        else ->
+            "Messages with the same format"
+    }
+    if(applyRuleTx!=null && showApplyRuleDialog) {
+
+        ApplySelfTransferRuleDialog(
+            ctxText = contextText,
+            onConfirmApplyAll = {
+                viewModel.applySelfTransferPattern(selectedTx!!)
+                viewModel.consumeApplySelfRuleRequest()
+                showApplyRuleDialog = false
+            },
+            onOnlyThis = {
+                viewModel.consumeApplySelfRuleRequest()
+                showApplyRuleDialog = false
+            }
+        )
     }
 
 
@@ -178,7 +223,36 @@ fun RedesignedDashboardScreen(
             )
         }
     ) { padding ->
+        if (applyRuleProgress != null) {
+            val (done, total) = applyRuleProgress!!
 
+            Box(
+                Modifier
+                    .fillMaxSize()
+                    .background(Color.Black.copy(alpha = 0.4f)),
+                contentAlignment = Alignment.Center
+            ) {
+                Card {
+                    Column(
+                        Modifier.padding(20.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        Text("Applying self-transfer rule")
+
+                        Spacer(Modifier.height(12.dp))
+
+                        LinearProgressIndicator(
+                            progress = if (total > 0) done.toFloat() / total else 0f,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+
+                        Spacer(Modifier.height(8.dp))
+
+                        Text("$done of $total messages")
+                    }
+                }
+            }
+        }
         LazyColumn(
             modifier = Modifier
                 .padding(padding)
@@ -269,7 +343,7 @@ fun RedesignedDashboardScreen(
                     onOpenInsights = {
                         viewModel.prepareInsightsFromDashboard()
                         navController.navigate(Screen.Insights.route)
-                                     },
+                    },
                     onToggleGroupByMerchant = {
                         viewModel.toggleGroupByMerchant()
                     }
@@ -337,12 +411,13 @@ fun RedesignedDashboardScreen(
                                     if (expandedItemId == row.tx.id) null else row.tx.id
                                 viewModel.onMessageClicked(it)
                             },
-                            onChange =  { freq ->
+                            onChange = { freq ->
                                 viewModel.setExpenseFrequency(row.tx, freq)
                             },
 
-                            onMarkAsSelfTransfer = {
-                                viewModel.markAsSelfTransfer(it)
+                            onMarkAsSelfTransfer = { tx ->
+                                viewModel.markAsSelfTransfer(tx)
+                                viewModel.requestApplySelfRule(tx)
                             },
                             onDebugClick = {
                                 viewModel.onMessageClicked(row.tx)
@@ -407,6 +482,44 @@ fun CategoryHeader(selectedType: String?) {
 }
 
 @Composable
+fun ApplySelfTransferRuleDialog(
+    ctxText: String,
+    onConfirmApplyAll: () -> Unit,
+    onOnlyThis: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = { /* non-dismissible */ },
+        title = {
+            Text("Apply to similar transactions?")
+        },
+        text = {
+            Column {
+                Text(
+                    "We’ll mark other $ctxText as self transfers."
+                )
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    "This only affects messages with the same format.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = Color.Gray
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onConfirmApplyAll) {
+                Text("Apply to all")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onOnlyThis) {
+                Text("Only this one")
+            }
+        }
+    )
+}
+
+
+@Composable
 fun InternalTransferSectionHeader(
     title: String,
     count: Int,
@@ -437,6 +550,7 @@ fun InternalTransferSectionHeader(
 
     Divider()
 }
+
 @Composable
 fun InsightsFrequencySelector(
     uiState: SmsImportViewModel.InsightsUiState,
@@ -479,6 +593,7 @@ fun FrequencyFilter.isEnabled(ui: InsightsUiState): Boolean =
         FrequencyFilter.IRREGULAR_ONLY -> ui.hasIrregularData
         FrequencyFilter.ALL_EXPENSES -> ui.hasAnyData
     }
+
 @Composable
 fun MerchantCategorySelector(
     currentCategory: String,
@@ -538,7 +653,6 @@ fun MerchantCategorySelector(
 }
 
 
-
 @Composable
 private fun FrequencyChip(
     filter: FrequencyFilter,
@@ -565,7 +679,6 @@ private fun FrequencyChip(
         }
     )
 }
-
 
 
 /* -----------------------------------------------------------
@@ -623,14 +736,8 @@ fun InsightsScreen(
     }
 
 
-
-
-
-
+    var selectedTx by remember { mutableStateOf<SmsEntity?>(null) }
     var expandedItemId by remember { mutableStateOf<Long?>(null) }
-
-    val topCategories by viewModel.topCategoriesFree.collectAsState()
-
     // Full categories for pie chart
     val categoriesAll by viewModel.categoryTotalsForPeriod.collectAsState()
 
@@ -654,7 +761,8 @@ fun InsightsScreen(
                             period = uiState.period
                         )
                         viewModel.restoreDashboardFromInsights()
-                        navController.popBackStack() }) {
+                        navController.popBackStack()
+                    }) {
                         Icon(
                             painter = painterResource(id = R.drawable.ic_menu_close_clear_cancel),
                             contentDescription = "Back"
@@ -800,14 +908,14 @@ fun InsightsScreen(
                 Spacer(Modifier.height(12.dp))
             }
             item {
-            if (freqFilter != FrequencyFilter.MONTHLY_ONLY) {
-                Text(
-                    "Filtered by ${freqFilter.name.lowercase()} expenses",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = Color.Gray
-                )
-            }
+                if (freqFilter != FrequencyFilter.MONTHLY_ONLY) {
+                    Text(
+                        "Filtered by ${freqFilter.name.lowercase()} expenses",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = Color.Gray
+                    )
                 }
+            }
 
             items(
                 items = insightRows,
@@ -833,8 +941,9 @@ fun InsightsScreen(
                             onChange = { freq ->
                                 viewModel.setExpenseFrequency(row.tx, freq)
                             },
-                            onMarkAsSelfTransfer = {
-                                viewModel.markAsSelfTransfer(it)
+                            onMarkAsSelfTransfer = { tx ->
+                                viewModel.markAsSelfTransfer(tx)
+                                viewModel.requestApplySelfRule(tx)
                             },
                             onUndoSelfTransfer = {
                                 viewModel.undoSelfTransfer(it)
@@ -966,7 +1075,6 @@ fun GroupedMerchantRow(
 ) {
     var expanded by remember { mutableStateOf(false) }
     var expandedItemId by remember { mutableStateOf<Long?>(null) }
-
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -1025,10 +1133,13 @@ fun GroupedMerchantRow(
                                 if (expandedItemId == tx.id) null else tx.id
                             viewModel.onMessageClicked(it)
                         },
-                        onChange =  { freq ->
+                        onChange = { freq ->
                             viewModel.setExpenseFrequency(tx, freq)
                         },
-                        onMarkAsSelfTransfer = { viewModel.markAsSelfTransfer(it) },
+                        onMarkAsSelfTransfer = { tx ->
+                            viewModel.markAsSelfTransfer(tx)
+                            viewModel.requestApplySelfRule(tx)
+                        },
                         onUndoSelfTransfer = { viewModel.undoSelfTransfer(it) },
                         onChangeCategory = { tx, category ->
                             viewModel.changeMerchantCategory(
@@ -1075,9 +1186,11 @@ private fun TransactionRowContent(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Column(modifier = Modifier
-                .weight(1f)
-                .padding(end = 12.dp)) {
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .padding(end = 12.dp)
+            ) {
                 Text(
                     text = sms.merchant ?: "Unknown",
                     style = MaterialTheme.typography.bodyLarge
@@ -1089,18 +1202,18 @@ private fun TransactionRowContent(
                     color = Color.Gray
                 )
 
-                if ( sms.linkType == "INTERNAL_TRANSFER") {
+                if (sms.linkType == "INTERNAL_TRANSFER") {
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
                         modifier = Modifier.padding(bottom = 6.dp)
                     ) {
                         Icon(
-                            imageVector = Icons.Default.CompareArrows ,
+                            imageVector = Icons.Default.CompareArrows,
                             contentDescription = null,
                             tint = Color(0xFF2E7D32)
                         )
                         Text(
-                            text =  "Internal Transfer" ,
+                            text = "Internal Transfer",
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.primary,
                             modifier = Modifier.padding(start = 6.dp)
@@ -1131,6 +1244,7 @@ private fun TransactionRowContent(
         }
     }
 }
+
 @Composable
 fun ExpenseFrequencySelector(
     current: String,
@@ -1260,7 +1374,6 @@ fun TransactionRow(
             )
 
 
-
             // Expanded controls INSIDE same card
             if (isExpanded) {
                 Divider()
@@ -1280,7 +1393,10 @@ fun TransactionRow(
                         Switch(
                             checked = sms.isNetZero && sms.linkType == "INTERNAL_TRANSFER",
                             onCheckedChange = { checked ->
-                                if (checked) onMarkAsSelfTransfer(sms)
+                                if (checked) {
+                                    onMarkAsSelfTransfer(sms)
+
+                                }
                                 else onUndoSelfTransfer(sms)
                             }
                         )
@@ -1299,7 +1415,10 @@ fun TransactionRow(
                             )
                             Spacer(Modifier.width(4.dp))
                             Text(
-                                text = "Investment • ${sms.expenseFrequency.lowercase().replaceFirstChar { it.uppercase() }}",
+                                text = "Investment • ${
+                                    sms.expenseFrequency.lowercase()
+                                        .replaceFirstChar { it.uppercase() }
+                                }",
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.primary
                             )

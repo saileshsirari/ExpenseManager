@@ -18,6 +18,34 @@ object SenderClassifierMl {
         "blinkit", "zepto", "jio", "airtel", "vi ", "vodafone", "tata sky", "sun direct"
     )
 
+        // existing code stays exactly as-is …
+
+        /**
+         * Returns a normalized bank identifier if sender is a bank.
+         * Used for USER_SELF patterns and safety guards.
+         */
+        fun extractBankName(sender: String): String? {
+            val s = sender.lowercase()
+
+            return when {
+                s.contains("icici") -> "ICICI"
+                s.contains("sbi") || s.contains("cbssbi") -> "SBI"
+                s.contains("hdfc") -> "HDFC"
+                s.contains("axis") -> "AXIS"
+                s.contains("kotak") -> "KOTAK"
+                s.contains("idfc") -> "IDFC"
+                s.contains("pnb") -> "PNB"
+                s.contains("boi") -> "BOI"
+                s.contains("canara") || s.contains("cnrb") -> "CANARA"
+                s.contains("union") -> "UNION"
+                s.contains("indusind") -> "INDUSIND"
+                s.contains("yes") -> "YES"
+                s.contains("federal") -> "FEDERAL"
+                s.contains("aubank") -> "AU"
+                else -> null
+            }
+        }
+
     fun classify(sender: String, body: String): SenderType {
         val s = sender.lowercase()
         val b = body.lowercase()

@@ -117,3 +117,17 @@ fun SmsEntity.isSystemInfoDebit(): Boolean {
 }
 
 
+@Entity(tableName = "user_self_patterns")
+data class UserSelfPattern(
+    @PrimaryKey(autoGenerate = true)
+    val id: Long = 0L,
+
+    val personName: String,        // "SAILESH"
+    val senderBank: String,        // "ICICI", "SBI"
+    val direction: String,         // "DEBIT_TO_PERSON"
+
+    val createdAt: Long = System.currentTimeMillis(),
+)
+
+
+

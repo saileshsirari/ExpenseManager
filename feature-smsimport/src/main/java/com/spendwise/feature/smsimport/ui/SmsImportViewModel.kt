@@ -12,6 +12,7 @@ import com.spendwise.core.com.spendwise.core.detector.LINK_TYPE_INVESTMENT_OUTFL
 import com.spendwise.core.ml.CategoryType
 import com.spendwise.core.ml.MerchantExtractorMl
 import com.spendwise.core.ml.MlReasonBundle
+import com.spendwise.core.ml.SenderClassifierMl
 import com.spendwise.domain.com.spendwise.feature.smsimport.data.CategoryTotal
 import com.spendwise.domain.com.spendwise.feature.smsimport.data.DashboardMode
 import com.spendwise.domain.com.spendwise.feature.smsimport.data.DashboardUiState
@@ -20,6 +21,7 @@ import com.spendwise.domain.com.spendwise.feature.smsimport.data.SortField
 import com.spendwise.domain.com.spendwise.feature.smsimport.data.SortOrder
 import com.spendwise.domain.com.spendwise.feature.smsimport.data.categoryColorProvider
 import com.spendwise.domain.com.spendwise.feature.smsimport.data.localDate
+import com.spendwise.domain.com.spendwise.feature.smsimport.ui.ApplyRuleProgress
 import com.spendwise.domain.com.spendwise.feature.smsimport.ui.InsightBlock
 import com.spendwise.feature.smsimport.data.ImportEvent
 import com.spendwise.feature.smsimport.data.SmsEntity
@@ -1262,12 +1264,76 @@ class SmsImportViewModel @Inject constructor(
         }
     }
 
+    private val _applyRuleProgress =
+        MutableStateFlow<ApplyRuleProgress?>(null)
+
+    val applyRuleProgress: StateFlow<ApplyRuleProgress?> =
+        _applyRuleProgress
+
+
+
+    private val _applySelfRuleRequest =
+        MutableStateFlow<SmsEntity?>(null)
+
+    val applySelfRuleRequest: StateFlow<SmsEntity?> =
+        _applySelfRuleRequest
+
+    fun requestApplySelfRule(tx: SmsEntity) {
+        if (canSuggestSelfRule(tx)) {
+            _applySelfRuleRequest.value = tx
+        }
+    }
+
+    fun consumeApplySelfRuleRequest() {
+        _applySelfRuleRequest.value = null
+    }
+
+    fun applySelfTransferPattern(tx: SmsEntity) {
+        viewModelScope.launch {
+            repo
+                .applySelfTransferPattern(tx)
+                .flowOn(Dispatchers.IO)
+                .collect { progress ->
+                    _applyRuleProgress.value = progress
+                }
+
+            // clear when done
+            _applyRuleProgress.value = null
+        }
+    }
+
+    fun extractPersonName(tx: SmsEntity): String? {
+        return MerchantExtractorMl.extractPersonName(tx.body)
+    }
+    fun extractBankName(tx: SmsEntity): String? {
+        return SenderClassifierMl.extractBankName(tx.sender)
+            ?.takeIf { it != "UNKNOWN" }
+    }
+
+
     fun undoSelfTransfer(tx: SmsEntity) {
         viewModelScope.launch {
             repo.undoSelfTransfer(tx)
         }
     }
+    fun canSuggestSelfRule(tx: SmsEntity): Boolean {
+        // Only real debits can be self-transfer rules
+        if (!tx.type.equals("DEBIT", true)) return false
 
+        // Already net-zero? No need to suggest again
+        if (tx.isNetZero) return false
+
+        // Body must be non-empty (sanity guard)
+        if (tx.body.isBlank()) return false
+
+        return true
+    }
+
+    fun getSelfRuleContext(tx: SmsEntity): Pair<String?, String?> {
+        val person = extractPersonName(tx)
+        val bank = extractBankName(tx)
+        return person to bank
+    }
 }
 
 sealed class UiTxnRow {

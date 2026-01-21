@@ -111,18 +111,34 @@ object MerchantExtractorMl {
         RegexOption.IGNORE_CASE
     )
 
-    private fun extractPersonName(body: String): String? {
-        val m = personNameRegex.find(body.lowercase()) ?: return null
+    fun extractPersonName(body: String): String? {
+
+        // 1️⃣ Strongest: credited-person (bank formats)
+        extractCreditedPerson(body)?.let { return it }
+
+        // 2️⃣ Fallback: to/from person (UPI, IMPS, NEFT)
+        extractToFromPerson(body)?.let { return it }
+
+        return null
+    }
+    private val toFromRegex = Regex(
+        "(to|from)\\s+(mr\\.?|mrs\\.?|ms\\.?|shri)?\\s*([A-Za-z][A-Za-z ]{2,50})",
+        RegexOption.IGNORE_CASE
+    )
+
+    private fun extractToFromPerson(body: String): String? {
+        val m = toFromRegex.find(body) ?: return null
         val raw = m.groupValues[3]
 
         val cleaned = raw
             .replace(Regex("[^A-Za-z ]"), "")
             .trim()
 
-        if (cleaned.split(" ").size > 3) return null // avoid long garbage matches
+        if (cleaned.split(" ").size > 3) return null
 
         return cleaned.uppercase()
     }
+
 
     // --------------------------------------------------------------------
     // MAIN EXTRACTION LOGIC
@@ -368,6 +384,7 @@ object MerchantExtractorMl {
         return raw
             .replace(Regex("[^A-Za-z0-9 &-]"), " ") // remove junk, KEEP CASE
             .replace(Regex("\\s+"), " ")             // collapse spaces
+            .replace("\r\n", "\n")
             .trim()
     }
 
@@ -392,7 +409,7 @@ object MerchantExtractorMl {
     fun extractCreditedPerson(body: String): String? {
         // Matches: "; SHAHEED CHAMAN  credited"
         val regex = Regex(
-            ";\\s*([A-Z][A-Z ]{2,40})\\s+credited",
+            "[;\\n]\\s*([A-Z][A-Z ]{2,40})\\s*credited\\b",
             RegexOption.IGNORE_CASE
         )
 
