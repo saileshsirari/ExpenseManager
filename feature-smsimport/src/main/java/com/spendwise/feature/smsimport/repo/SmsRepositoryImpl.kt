@@ -937,6 +937,20 @@ class SmsRepositoryImpl @Inject constructor(
         }
     }
 
+    suspend fun previewSelfTransferMatches(seedTx: SmsEntity): Int {
+        val smsDao = db.smsDao()
+
+        // 1️⃣ Build structural template from seed
+        val template = SmsTemplateUtil.buildTemplate(seedTx.body)
+
+        // 2️⃣ Fetch candidate transactions
+        val candidates = smsDao.getAllDebitNonNetZero()
+
+        // 3️⃣ Count structural matches
+        return candidates.count { tx ->
+            SmsTemplateMatcher.matches(tx.body, template)
+        }
+    }
 
 
 

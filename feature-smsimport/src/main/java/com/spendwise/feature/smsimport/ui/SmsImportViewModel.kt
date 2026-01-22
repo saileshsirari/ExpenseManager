@@ -32,9 +32,11 @@ import com.spendwise.feature.smsimport.repo.SmsRepositoryImpl
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flowOn
@@ -63,6 +65,7 @@ class SmsImportViewModel @Inject constructor(
         private const val FREE_CATEGORY_LIMIT = 5
 
     }
+
     private var lastInsightsMode: DashboardMode? = null
     private var lastInsightsPeriod: YearMonth? = null
 
@@ -133,6 +136,7 @@ class SmsImportViewModel @Inject constructor(
                 SharingStarted.Eagerly,
                 emptyList()
             )
+
     private fun previousPeriod(
         mode: DashboardMode,
         period: YearMonth
@@ -187,6 +191,7 @@ class SmsImportViewModel @Inject constructor(
 
         }
     }
+
     fun restoreDashboardFromInsights() {
         val mode = lastInsightsMode ?: return
         val period = lastInsightsPeriod ?: return
@@ -233,6 +238,7 @@ class SmsImportViewModel @Inject constructor(
             )
         }
     }
+
     fun changeMerchantCategory(
         merchant: String,
         category: CategoryType
@@ -258,6 +264,7 @@ class SmsImportViewModel @Inject constructor(
                 val startMonth = ((period.monthValue - 1) / 3) * 3 + 1
                 YearMonth.of(period.year, startMonth)
             }
+
             DashboardMode.YEAR -> YearMonth.of(period.year, 1)
         }
     }
@@ -329,6 +336,7 @@ class SmsImportViewModel @Inject constructor(
             )
         }
     }
+
     fun toggleMainSection() {
         update {
             it.copy(mainSectionCollapsed = !it.mainSectionCollapsed)
@@ -438,7 +446,6 @@ class SmsImportViewModel @Inject constructor(
         )
 
 
-
     /**
      * Total amount routed via wallets in current period
      */
@@ -519,7 +526,9 @@ class SmsImportViewModel @Inject constructor(
             }
         }
     }
+
     var groupIndex = 0
+
     // FINAL UI STATE (all expensive computation happens here)
     val uiState: StateFlow<DashboardUiState> =
         combine(items, uiInputs) { list, input ->
@@ -552,8 +561,6 @@ class SmsImportViewModel @Inject constructor(
                     visibleList
                 else
                     visibleList.filter { it.category == input.selectedType }
-
-
 
 
             // -------------------------------------------------
@@ -623,7 +630,7 @@ class SmsImportViewModel @Inject constructor(
             // -------------------------------------------------
             // 10) MAIN rows (expenses + credits)
             // -------------------------------------------------
-            groupIndex =0
+            groupIndex = 0
             val mainRows =
                 buildUiRows(
                     txs = sortedExpenses,
@@ -670,7 +677,6 @@ class SmsImportViewModel @Inject constructor(
                     input.internalSectionCollapsed -> listOf(internalSectionHeader)
                     else -> listOf(internalSectionHeader) + internalSectionBody
                 }
-
 
 
             // -------------------------------------------------
@@ -811,7 +817,7 @@ class SmsImportViewModel @Inject constructor(
         }
     }
 
-     fun buildUiRows(
+    fun buildUiRows(
         txs: List<SmsEntity>,
         sortConfig: SortConfig,
         groupByMerchant: Boolean
@@ -1145,7 +1151,6 @@ class SmsImportViewModel @Inject constructor(
     }
 
 
-
     fun setIgnoredState(tx: SmsEntity, ignored: Boolean) {
         viewModelScope.launch {
             repo.setIgnored(tx.id, ignored)
@@ -1188,6 +1193,7 @@ class SmsImportViewModel @Inject constructor(
             }
         }
     }
+
     fun startImportIfNeeded(resolverProvider: () -> ContentResolver) {
         viewModelScope.launch {
 
@@ -1238,7 +1244,6 @@ class SmsImportViewModel @Inject constructor(
     }
 
 
-
     // --- Convenience helpers to clear or set selected filter (if needed) ---
     fun clearSelectedType() {
         update { it.copy(selectedType = null) } // use your existing update(...) method
@@ -1263,21 +1268,38 @@ class SmsImportViewModel @Inject constructor(
         _applyRuleProgress
 
 
-
     private val _applySelfRuleRequest =
-        MutableStateFlow<SmsEntity?>(null)
+        MutableSharedFlow<SmsEntity>(
+            replay = 0,
+            extraBufferCapacity = 1
+        )
 
-    val applySelfRuleRequest: StateFlow<SmsEntity?> =
-        _applySelfRuleRequest
+    val applySelfRuleRequest =
+        _applySelfRuleRequest.asSharedFlow()
+
 
     fun requestApplySelfRule(tx: SmsEntity) {
-        if (canSuggestSelfRule(tx)) {
-            _applySelfRuleRequest.value = tx
+        val canSuggest = canSuggestSelfRule(tx)
+        if (canSuggest) {
+            _applySelfRuleRequest.tryEmit(tx)
         }
     }
 
-    fun consumeApplySelfRuleRequest() {
-        _applySelfRuleRequest.value = null
+    fun clearSelfTransferPreview() {
+        _selfRulePreviewCount.value = null
+    }
+
+    private val _selfRulePreviewCount =
+        MutableStateFlow<Int?>(null)
+
+    val selfRulePreviewCount: StateFlow<Int?> =
+        _selfRulePreviewCount.asStateFlow()
+
+    fun computeSelfTransferPreview(tx: SmsEntity) {
+        viewModelScope.launch(Dispatchers.Default) {
+            val count = maxOf(0, repo.previewSelfTransferMatches(tx) - 1)
+            _selfRulePreviewCount.value = count
+        }
     }
 
     fun applySelfTransferPattern(tx: SmsEntity) {
@@ -1297,6 +1319,7 @@ class SmsImportViewModel @Inject constructor(
     fun extractPersonName(tx: SmsEntity): String? {
         return MerchantExtractorMl.extractPersonName(tx.body)
     }
+
     fun extractBankName(tx: SmsEntity): String? {
         return SenderClassifierMl.extractBankName(tx.sender)
             ?.takeIf { it != "UNKNOWN" }
@@ -1308,6 +1331,7 @@ class SmsImportViewModel @Inject constructor(
             repo.undoSelfTransfer(tx)
         }
     }
+
     fun canSuggestSelfRule(tx: SmsEntity): Boolean {
         // Only real debits can be self-transfer rules
         if (!tx.type.equals("DEBIT", true)) return false
@@ -1348,8 +1372,6 @@ sealed class UiTxnRow {
         val collapsed: Boolean
     ) : UiTxnRow()
 }
-
-
 
 
 private fun SmsEntity.isWalletMovement(): Boolean {
@@ -1406,7 +1428,7 @@ private fun List<SmsEntity>.filterByPeriod(
 
 }
 
- fun SmsEntity.matchesFrequency(
+fun SmsEntity.matchesFrequency(
     filter: FrequencyFilter
 ): Boolean {
     val freq = expenseFrequency

@@ -67,12 +67,14 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.zIndex
 import androidx.navigation.NavController
 import com.spendwise.app.navigation.Screen
 import com.spendwise.app.ui.dashboard.CategoryPieChart
@@ -145,51 +147,6 @@ fun RedesignedDashboardScreen(
         }
         return
     }
-    val applyRuleProgress by viewModel.applyRuleProgress.collectAsState()
-
-    var showApplyRuleDialog by remember { mutableStateOf(false) }
-    var selectedTx by remember { mutableStateOf<SmsEntity?>(null) }
-    val ctx = selectedTx?.let { viewModel.getSelfRuleContext(it) }
-    val person = ctx?.first
-    val bank = ctx?.second
-
-    val applyRuleTx by viewModel.applySelfRuleRequest.collectAsState()
-
-    LaunchedEffect(applyRuleTx) {
-        if (applyRuleTx != null) {
-            selectedTx = applyRuleTx
-            showApplyRuleDialog = true
-        }
-    }
-    val contextText = when {
-        person != null && bank != null ->
-            "Transfers to $person from $bank"
-
-        person != null ->
-            "Transfers to $person"
-
-        bank != null ->
-            "Transfers from $bank"
-
-        else ->
-            "Messages with the same format"
-    }
-    if(applyRuleTx!=null && showApplyRuleDialog) {
-
-        ApplySelfTransferRuleDialog(
-            ctxText = contextText,
-            onConfirmApplyAll = {
-                viewModel.applySelfTransferPattern(selectedTx!!)
-                viewModel.consumeApplySelfRuleRequest()
-                showApplyRuleDialog = false
-            },
-            onOnlyThis = {
-                viewModel.consumeApplySelfRuleRequest()
-                showApplyRuleDialog = false
-            }
-        )
-    }
-
 
 
     Scaffold(
@@ -223,36 +180,7 @@ fun RedesignedDashboardScreen(
             )
         }
     ) { padding ->
-        if (applyRuleProgress != null) {
-            val (done, total) = applyRuleProgress!!
-
-            Box(
-                Modifier
-                    .fillMaxSize()
-                    .background(Color.Black.copy(alpha = 0.4f)),
-                contentAlignment = Alignment.Center
-            ) {
-                Card {
-                    Column(
-                        Modifier.padding(20.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally
-                    ) {
-                        Text("Applying self-transfer rule")
-
-                        Spacer(Modifier.height(12.dp))
-
-                        LinearProgressIndicator(
-                            progress = if (total > 0) done.toFloat() / total else 0f,
-                            modifier = Modifier.fillMaxWidth()
-                        )
-
-                        Spacer(Modifier.height(8.dp))
-
-                        Text("$done of $total messages")
-                    }
-                }
-            }
-        }
+        ApplySelfTransferUiHost(viewModel)
         LazyColumn(
             modifier = Modifier
                 .padding(padding)
@@ -469,6 +397,93 @@ fun RedesignedDashboardScreen(
         }
     }
 }
+@Composable
+fun ApplySelfTransferUiHost(
+    viewModel: SmsImportViewModel
+) {
+    var selectedTx by rememberSaveable { mutableStateOf<SmsEntity?>(null) }
+    var showDialog by rememberSaveable { mutableStateOf(false) }
+
+    val applyRuleProgress by viewModel.applyRuleProgress.collectAsState()
+    val previewCount by viewModel.selfRulePreviewCount.collectAsState()
+
+    // 🔒 EVENT collector (SharedFlow)
+    LaunchedEffect(Unit) {
+        viewModel.applySelfRuleRequest.collect { tx ->
+            selectedTx = tx
+            showDialog = true
+            viewModel.computeSelfTransferPreview(tx)
+        }
+    }
+
+    // 🔒 GLOBAL OVERLAY LAYER
+    if (showDialog || applyRuleProgress != null) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(Color.Black.copy(alpha = 0.45f))
+                .zIndex(999f),   // 🔥 critical
+            contentAlignment = Alignment.Center
+        ) {
+
+            // -----------------------------------
+            // APPLY IN PROGRESS
+            // -----------------------------------
+            if (applyRuleProgress != null) {
+                val (done, total) = applyRuleProgress!!
+
+                Card(
+                    shape = RoundedCornerShape(16.dp),
+                    modifier = Modifier.padding(24.dp)
+                ) {
+                    Column(
+                        modifier = Modifier.padding(20.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        Text(
+                            "Applying self-transfer rule",
+                            style = MaterialTheme.typography.titleMedium
+                        )
+
+                        Spacer(Modifier.height(12.dp))
+
+                        LinearProgressIndicator(
+                            progress =
+                                if (total > 0) done.toFloat() / total else 0f,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+
+                        Spacer(Modifier.height(8.dp))
+
+                        Text(
+                            "$done of $total messages",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = Color.Gray
+                        )
+                    }
+                }
+            }
+
+            // -----------------------------------
+            // APPLY RULE DIALOG
+            // -----------------------------------
+            else if (showDialog && selectedTx != null) {
+                ApplySelfTransferRuleDialog(
+                    previewCount = previewCount,
+                    onConfirmApplyAll = {
+                        viewModel.applySelfTransferPattern(selectedTx!!)
+                        viewModel.clearSelfTransferPreview()
+                        showDialog = false
+                    },
+                    onOnlyThis = {
+                        viewModel.clearSelfTransferPreview()
+                        showDialog = false
+                    }
+                )
+            }
+        }
+    }
+}
 
 @Composable
 fun CategoryHeader(selectedType: String?) {
@@ -483,23 +498,21 @@ fun CategoryHeader(selectedType: String?) {
 
 @Composable
 fun ApplySelfTransferRuleDialog(
-    ctxText: String,
+    previewCount: Int?,
     onConfirmApplyAll: () -> Unit,
     onOnlyThis: () -> Unit
 ) {
     AlertDialog(
         onDismissRequest = { /* non-dismissible */ },
-        title = {
-            Text("Apply to similar transactions?")
-        },
+        title = { Text("Apply to similar transactions?") },
         text = {
             Column {
+                if (previewCount != null) {
+                    Text("This will affect $previewCount messages.")
+                    Spacer(Modifier.height(8.dp))
+                }
                 Text(
-                    "We’ll mark other $ctxText as self transfers."
-                )
-                Spacer(Modifier.height(8.dp))
-                Text(
-                    "This only affects messages with the same format.",
+                    "Only messages with the same format will be marked as self-transfer.",
                     style = MaterialTheme.typography.bodySmall,
                     color = Color.Gray
                 )
@@ -517,6 +530,7 @@ fun ApplySelfTransferRuleDialog(
         }
     )
 }
+
 
 
 @Composable
@@ -767,7 +781,7 @@ fun InsightsScreen(
             )
         }
     ) { padding ->
-
+        ApplySelfTransferUiHost(viewModel)
 
         LazyColumn(
             modifier = Modifier
@@ -1384,7 +1398,6 @@ fun TransactionRow(
                             onCheckedChange = { checked ->
                                 if (checked) {
                                     onMarkAsSelfTransfer(sms)
-
                                 }
                                 else onUndoSelfTransfer(sms)
                             }
