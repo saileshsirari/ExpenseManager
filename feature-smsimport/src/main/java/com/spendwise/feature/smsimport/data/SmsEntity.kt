@@ -1,10 +1,12 @@
 
 package com.spendwise.feature.smsimport.data
 
-import android.util.Log
 import androidx.room.Entity
 import androidx.room.Index
 import androidx.room.PrimaryKey
+import com.spendwise.core.com.spendwise.core.ExpenseFrequency
+import com.spendwise.core.com.spendwise.core.FrequencyFilter
+import com.spendwise.core.Logger as Log
 
 @Entity(
     tableName = "sms",
@@ -17,6 +19,8 @@ data class SmsEntity(
     val sender: String,
     val body: String,
     val timestamp: Long,
+    val expenseFrequency: String = ExpenseFrequency.MONTHLY.name,
+    val frequencyAnchorYear: Int? = null,   // for yearly grouping (e.g. 2025)
 
     // Extracted data
     val amount: Double,
@@ -80,4 +84,50 @@ fun SmsEntity.isExpense(): Boolean {
             linkType == "INTERNAL_TRANSFER" &&
             m.contains("wallet", ignoreCase = true)
 }
+private fun SmsEntity.matchesFrequency(
+    filter: FrequencyFilter
+): Boolean {
+    val freq = expenseFrequency
+
+    return when (filter) {
+        FrequencyFilter.MONTHLY_ONLY ->
+            freq == ExpenseFrequency.MONTHLY.name
+
+        FrequencyFilter.ALL_EXPENSES ->
+            true
+
+        FrequencyFilter.YEARLY_ONLY ->
+            freq == ExpenseFrequency.YEARLY.name
+
+        FrequencyFilter.IRREGULAR_ONLY ->
+            freq == ExpenseFrequency.IRREGULAR.name ||
+                    freq == ExpenseFrequency.ONE_TIME.name
+    }
+}
+fun SmsEntity.hasCreditedPartyInSameSms(): Boolean {
+    val text = body.lowercase()
+    return " credited" in text || "; credited" in text
+}
+fun SmsEntity.isSystemInfoDebit(): Boolean {
+    val text = body.lowercase()
+    return text.contains("info:bil") ||
+            text.contains("info:imps") ||
+            text.contains("info:ach") ||
+            text.contains("info:rtgs")
+}
+
+
+@Entity(tableName = "user_self_patterns")
+data class UserSelfPattern(
+    @PrimaryKey(autoGenerate = true)
+    val id: Long = 0L,
+
+    val personName: String,        // "SAILESH"
+    val senderBank: String,        // "ICICI", "SBI"
+    val direction: String,         // "DEBIT_TO_PERSON"
+
+    val createdAt: Long = System.currentTimeMillis(),
+)
+
+
 

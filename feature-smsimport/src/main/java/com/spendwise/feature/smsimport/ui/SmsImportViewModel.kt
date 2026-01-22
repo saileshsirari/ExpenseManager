@@ -6,9 +6,13 @@ import android.os.Build
 import androidx.annotation.RequiresApi
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.spendwise.core.com.spendwise.core.ExpenseFrequency
+import com.spendwise.core.com.spendwise.core.FrequencyFilter
+import com.spendwise.core.com.spendwise.core.detector.LINK_TYPE_INVESTMENT_OUTFLOW
 import com.spendwise.core.ml.CategoryType
 import com.spendwise.core.ml.MerchantExtractorMl
 import com.spendwise.core.ml.MlReasonBundle
+import com.spendwise.core.ml.SenderClassifierMl
 import com.spendwise.domain.com.spendwise.feature.smsimport.data.CategoryTotal
 import com.spendwise.domain.com.spendwise.feature.smsimport.data.DashboardMode
 import com.spendwise.domain.com.spendwise.feature.smsimport.data.DashboardUiState
@@ -17,6 +21,7 @@ import com.spendwise.domain.com.spendwise.feature.smsimport.data.SortField
 import com.spendwise.domain.com.spendwise.feature.smsimport.data.SortOrder
 import com.spendwise.domain.com.spendwise.feature.smsimport.data.categoryColorProvider
 import com.spendwise.domain.com.spendwise.feature.smsimport.data.localDate
+import com.spendwise.domain.com.spendwise.feature.smsimport.ui.ApplyRuleProgress
 import com.spendwise.domain.com.spendwise.feature.smsimport.ui.InsightBlock
 import com.spendwise.feature.smsimport.data.ImportEvent
 import com.spendwise.feature.smsimport.data.SmsEntity
@@ -58,6 +63,8 @@ class SmsImportViewModel @Inject constructor(
         private const val FREE_CATEGORY_LIMIT = 5
 
     }
+    private var lastInsightsMode: DashboardMode? = null
+    private var lastInsightsPeriod: YearMonth? = null
 
     private val _items = MutableStateFlow<List<SmsEntity>>(emptyList())
     val items: StateFlow<List<SmsEntity>> = _items
@@ -68,6 +75,15 @@ class SmsImportViewModel @Inject constructor(
     private val uiInputs = _uiInputs.asStateFlow()
     private val _importProgress = MutableStateFlow(ImportProgress())
     val importProgress = _importProgress.asStateFlow()
+    private val _insightsFrequencyFilter =
+        MutableStateFlow(FrequencyFilter.MONTHLY_ONLY)
+
+    val insightsFrequencyFilter =
+        _insightsFrequencyFilter.asStateFlow()
+
+    fun setInsightsFrequencyFilter(filter: FrequencyFilter) {
+        _insightsFrequencyFilter.value = filter
+    }
 
 
     private val _isPro = MutableStateFlow(true)
@@ -78,10 +94,12 @@ class SmsImportViewModel @Inject constructor(
     }
 
     val categoryTotalsForPeriod: StateFlow<List<CategoryTotal>> =
-        combine(items, uiInputs) { list, input ->
+        combine(items, uiInputs, insightsFrequencyFilter) { list, input, freqFilter ->
+
             list
                 .filterByPeriod(input.mode, input.period)
                 .filter { it.isCountedAsExpense() }
+                .filter { it.matchesFrequency(freqFilter) }
                 .groupBy { it.category ?: "Uncategorized" }
                 .map { (cat, txs) ->
                     CategoryTotal(
@@ -91,6 +109,8 @@ class SmsImportViewModel @Inject constructor(
                     )
                 }
                 .sortedByDescending { it.total }
+
+
         }.stateIn(
             viewModelScope,
             SharingStarted.Eagerly,
@@ -167,7 +187,140 @@ class SmsImportViewModel @Inject constructor(
 
         }
     }
+    fun restoreDashboardFromInsights() {
+        val mode = lastInsightsMode ?: return
+        val period = lastInsightsPeriod ?: return
 
+        val targetMonth = when (mode) {
+            DashboardMode.MONTH -> period
+
+            DashboardMode.QUARTER -> {
+                val startMonth = ((period.monthValue - 1) / 3) * 3 + 1
+                YearMonth.of(period.year, startMonth)
+            }
+
+            DashboardMode.YEAR -> {
+                // 🔒 FORCE JANUARY
+                YearMonth.of(period.year, 1)
+            }
+        }
+
+        update {
+            it.copy(
+                mode = DashboardMode.MONTH,
+                period = targetMonth,
+
+                // 🔒 Clear selections so nothing re-syncs
+                selectedDay = null,
+                selectedMonth = null,
+                selectedType = null
+            )
+        }
+    }
+
+    fun prepareInsightsFromDashboard() {
+        val dashboardMonth = uiState.value.period
+
+        update {
+            it.copy(
+                mode = DashboardMode.MONTH,   // 🔒 always month
+                period = dashboardMonth,
+
+                // Clear transient selections
+                selectedDay = null,
+                selectedMonth = null,
+                selectedType = null
+            )
+        }
+    }
+    fun changeMerchantCategory(
+        merchant: String,
+        category: CategoryType
+    ) {
+        viewModelScope.launch {
+            repo.changeMerchantCategory(
+                merchant = merchant,
+                newCategory = category
+            )
+        }
+    }
+
+    fun rememberInsightsContext(
+        mode: DashboardMode,
+        period: YearMonth
+    ) {
+        Log.d("INSIGHTS_CTX", "Captured mode=$mode period=$period")
+
+        lastInsightsMode = mode
+        lastInsightsPeriod = when (mode) {
+            DashboardMode.MONTH -> period
+            DashboardMode.QUARTER -> {
+                val startMonth = ((period.monthValue - 1) / 3) * 3 + 1
+                YearMonth.of(period.year, startMonth)
+            }
+            DashboardMode.YEAR -> YearMonth.of(period.year, 1)
+        }
+    }
+
+    val insightsUiState: StateFlow<InsightsUiState> =
+        combine(
+            items,
+            uiInputs,
+            insightsFrequencyFilter
+        ) { list, input, selectedFilter ->
+
+            // Use same base rules as Insights charts
+            val periodFiltered =
+                list
+                    .filterByPeriod(input.mode, input.period)
+                    .filter { it.isCountedAsExpense() }
+
+            val hasMonthlyData =
+                periodFiltered.any {
+                    it.expenseFrequency == ExpenseFrequency.MONTHLY.name
+                }
+
+            val hasYearlyData =
+                periodFiltered.any {
+                    it.expenseFrequency == ExpenseFrequency.YEARLY.name
+                }
+
+            val hasIrregularData =
+                periodFiltered.any {
+                    it.expenseFrequency == ExpenseFrequency.IRREGULAR.name ||
+                            it.expenseFrequency == ExpenseFrequency.ONE_TIME.name
+                }
+
+            val hasAnyData =
+                hasMonthlyData || hasYearlyData || hasIrregularData
+
+            InsightsUiState(
+                frequency = selectedFilter,
+                hasMonthlyData = hasMonthlyData,
+                hasYearlyData = hasYearlyData,
+                hasIrregularData = hasIrregularData,
+                hasAnyData = hasAnyData
+            )
+        }.stateIn(
+            viewModelScope,
+            SharingStarted.Eagerly,
+            InsightsUiState(
+                frequency = FrequencyFilter.MONTHLY_ONLY,
+                hasMonthlyData = false,
+                hasYearlyData = false,
+                hasIrregularData = false,
+                hasAnyData = false
+            )
+        )
+
+
+    data class InsightsUiState(
+        val frequency: FrequencyFilter,
+        val hasMonthlyData: Boolean,
+        val hasYearlyData: Boolean,
+        val hasIrregularData: Boolean,
+        val hasAnyData: Boolean
+    )
 
 
     fun prevPeriod() {
@@ -210,23 +363,6 @@ class SmsImportViewModel @Inject constructor(
             )
         }
     }
-    fun resetToCurrentMonth() {
-        val now = YearMonth.now()
-
-        update {
-            if (
-                it.mode == DashboardMode.MONTH &&
-                it.period == now
-            ) it
-            else it.copy(
-                mode = DashboardMode.MONTH,
-                period = now,
-                selectedType = null,
-                selectedDay = null,
-                selectedMonth = null
-            )
-        }
-    }
 
     private fun YearMonth.previous(): YearMonth =
         this.minusMonths(1)
@@ -250,10 +386,25 @@ class SmsImportViewModel @Inject constructor(
             0.0
         )
 
-
     val periodComparison: StateFlow<InsightBlock.Comparison> =
-        combine(totalSpend, previousPeriodTotal, isPro, uiInputs) {
-                current, previous, pro, input ->
+        combine(items, uiInputs, isPro) { list, input, pro ->
+
+            val effectiveFilter =
+                if (input.mode == DashboardMode.YEAR)
+                    FrequencyFilter.ALL_EXPENSES
+                else
+                    FrequencyFilter.MONTHLY_ONLY
+
+            fun totalFor(period: YearMonth): Double =
+                list
+                    .filterByPeriod(input.mode, period)
+                    .filter { it.isCountedAsExpense() }
+                    .filter { it.matchesFrequency(effectiveFilter) }
+                    .sumOf { it.amount }
+
+            val current = totalFor(input.period)
+            val prevPeriod = previousPeriod(input.mode, input.period)
+            val previous = totalFor(prevPeriod)
 
             val hasData = previous > 0.0
             val delta =
@@ -293,6 +444,7 @@ class SmsImportViewModel @Inject constructor(
             SharingStarted.Eagerly,
             InsightBlock.Comparison("", null, null, false)
         )
+
 
 
     /**
@@ -380,7 +532,7 @@ class SmsImportViewModel @Inject constructor(
     val uiState: StateFlow<DashboardUiState> =
         combine(items, uiInputs) { list, input ->
 
-            android.util.Log.d("expense", "input.mode ${input.mode}")
+            Log.d("expense", "input.mode ${input.mode}")
 
             // -------------------------------------------------
             // 1) Base list — ALL transactions from DB
@@ -409,11 +561,25 @@ class SmsImportViewModel @Inject constructor(
                 else
                     visibleList.filter { it.category == input.selectedType }
 
+
+
+
             // -------------------------------------------------
             // 5) Expense list (math-only, derived from finalList)
             // -------------------------------------------------
-            val expenseList =
-                finalList.filter { it.isExpense() }
+            val monthlyExpenses =
+                finalList.filter {
+                    it.isExpense() &&
+                            it.linkType != LINK_TYPE_INVESTMENT_OUTFLOW &&
+                            it.expenseFrequency == ExpenseFrequency.MONTHLY.name
+                }
+
+            val monthlyInternalTransfers =
+                finalList.filter {
+                    it.isNetZero &&
+                            it.expenseFrequency == ExpenseFrequency.MONTHLY.name
+                }
+
 
             // -------------------------------------------------
             // 6) Recalculate category totals
@@ -424,7 +590,7 @@ class SmsImportViewModel @Inject constructor(
             // -------------------------------------------------
             // 7) Totals (Debit / Credit)
             // -------------------------------------------------
-            val totalDebit = expenseList.sumOf { it.amount }
+            val totalDebit = monthlyExpenses.sumOf { it.amount }
 
             val totalCredit =
                 finalList
@@ -442,13 +608,13 @@ class SmsImportViewModel @Inject constructor(
             // -------------------------------------------------
             val barData = when (input.mode) {
                 DashboardMode.MONTH ->
-                    expenseList
+                    monthlyExpenses
                         .groupBy { it.localDate().dayOfMonth }
                         .mapValues { it.value.sumOf { tx -> tx.amount } }
 
                 DashboardMode.QUARTER,
                 DashboardMode.YEAR ->
-                    expenseList
+                    monthlyExpenses
                         .groupBy { it.localDate().monthValue }
                         .mapValues { it.value.sumOf { tx -> tx.amount } }
             }
@@ -456,12 +622,11 @@ class SmsImportViewModel @Inject constructor(
             // -------------------------------------------------
             // 9) Sorting (semantic split happens AFTER this)
             // -------------------------------------------------
-            val sortedTxs =
-                sortTransactions(finalList, input.sortConfig)
+            val sortedExpenses =
+                sortTransactions(monthlyExpenses, input.sortConfig)
 
-            // 🔒 Semantic meaning split
-            val (internalTxs, normalTxs) =
-                sortedTxs.partition { it.isNetZero }
+            val sortedInternal =
+                sortTransactions(monthlyInternalTransfers, input.sortConfig)
 
             // -------------------------------------------------
             // 10) MAIN rows (expenses + credits)
@@ -469,7 +634,13 @@ class SmsImportViewModel @Inject constructor(
             groupIndex =0
             val mainRows =
                 buildUiRows(
-                    txs = normalTxs,
+                    txs = sortedExpenses,
+                    sortConfig = input.sortConfig,
+                    groupByMerchant = input.showGroupedMerchants
+                )
+            val internalRows =
+                buildUiRows(
+                    txs = sortedInternal,
                     sortConfig = input.sortConfig,
                     groupByMerchant = input.showGroupedMerchants
                 )
@@ -481,30 +652,25 @@ class SmsImportViewModel @Inject constructor(
 // INTERNAL TRANSFER section (SAFE)
 // -------------------------------------------------
             val internalSectionHeader: UiTxnRow.Section? =
-                if (internalTxs.isEmpty()) null
+                if (sortedInternal.isEmpty()) null
                 else UiTxnRow.Section(
                     id = "internal_transfers",
                     title = "Internal transfers",
-                    count = internalTxs.size,
+                    count = sortedInternal.size,
                     collapsed = input.internalSectionCollapsed
                 )
 
+
             val internalSectionBody: List<UiTxnRow> =
-                if (internalTxs.isEmpty()) {
+                if (sortedInternal.isEmpty()) {
                     emptyList()
                 } else {
-                    val internalGrouped =
-                        buildUiRows(
-                            txs = internalTxs,
-                            sortConfig = input.sortConfig,
-                            groupByMerchant = input.showGroupedMerchants
-                        )
-
                     if (input.showGroupedMerchants)
-                        sortUiRows(internalGrouped, input.sortConfig)
+                        sortUiRows(internalRows, input.sortConfig)
                     else
-                        internalGrouped
+                        internalRows
                 }
+
 
             val visibleInternalRows: List<UiTxnRow> =
                 when {
@@ -525,9 +691,10 @@ class SmsImportViewModel @Inject constructor(
                 UiTxnRow.Section(
                     id = "main_transactions",
                     title = "Transactions",
-                    count = normalTxs.size,
+                    count = sortedExpenses.size,
                     collapsed = input.mainSectionCollapsed
                 )
+
 
             val visibleMainRows =
                 if (input.mainSectionCollapsed) emptyList()
@@ -560,7 +727,7 @@ class SmsImportViewModel @Inject constructor(
                 sortConfig = input.sortConfig,
                 showIgnored = input.showIgnored,
                 finalList = finalList,
-                sortedList = sortedTxs,
+                sortedList = sortedExpenses,
                 totalsDebit = totalDebit,
                 totalsCredit = totalCredit,
                 debitCreditTotals = debitCreditTotals,
@@ -652,7 +819,7 @@ class SmsImportViewModel @Inject constructor(
         }
     }
 
-    private fun buildUiRows(
+     fun buildUiRows(
         txs: List<SmsEntity>,
         sortConfig: SortConfig,
         groupByMerchant: Boolean
@@ -744,15 +911,21 @@ class SmsImportViewModel @Inject constructor(
 
     fun setMode(newMode: DashboardMode) {
         update {
-            if (it.mode == newMode) it
-            else it.copy(
+            _insightsFrequencyFilter.value =
+                if (newMode == DashboardMode.YEAR)
+                    FrequencyFilter.ALL_EXPENSES
+                else
+                    FrequencyFilter.MONTHLY_ONLY
+
+            it.copy(
                 mode = newMode,
-                selectedType = null,      // reset category filter
+                selectedType = null,
                 selectedDay = null,
                 selectedMonth = null
             )
         }
     }
+
 
     fun setPeriod(p: YearMonth) = update { it.copy(period = p) }
     fun setSelectedType(t: String?) = update { it.copy(selectedType = t) }
@@ -790,6 +963,14 @@ class SmsImportViewModel @Inject constructor(
         }
     }
 
+    fun setExpenseFrequency(
+        tx: SmsEntity,
+        frequency: ExpenseFrequency
+    ) {
+        viewModelScope.launch {
+            repo.setExpenseFrequency(tx, frequency)
+        }
+    }
 
     fun onMessageClicked(tx: SmsEntity) {
         viewModelScope.launch {
@@ -823,14 +1004,6 @@ class SmsImportViewModel @Inject constructor(
             val log = repo.getMlExplanationFor(tx)
             Log.d("expense", log.toString())
             _selectedExplanation.value = log
-        }
-    }
-
-    fun forceReclassify() {
-        viewModelScope.launch(Dispatchers.Default) {
-            repo.reclassifyAllWithProgress { done, total ->
-                _reclassifyProgress.value = done to total
-            }
         }
     }
 
@@ -941,6 +1114,17 @@ class SmsImportViewModel @Inject constructor(
         }
     }
 
+    private val _linkProgress =
+        MutableStateFlow<ProgressState?>(null)
+
+    val linkProgress = _linkProgress.asStateFlow()
+
+    data class ProgressState(
+        val processed: Int,
+        val total: Int,
+        val done: Boolean
+    )
+
 
     fun addManualExpense(
         amount: Double,
@@ -968,13 +1152,7 @@ class SmsImportViewModel @Inject constructor(
                 !isNetZero
     }
 
-    fun fixCategory(tx: SmsEntity, newCategory: CategoryType) {
-        viewModelScope.launch {
-            repo.saveCategoryOverride(tx.merchant ?: tx.sender, newCategory.name)
-            repo.reclassifySingle(tx.id)
-            refresh()
-        }
-    }
+
 
     fun setIgnoredState(tx: SmsEntity, ignored: Boolean) {
         viewModelScope.launch {
@@ -985,28 +1163,39 @@ class SmsImportViewModel @Inject constructor(
     }
 
 
-    fun startImportIfNeeded1(resolverProvider: () -> ContentResolver) {
-        viewModelScope.launch(Dispatchers.Default) {
+    fun sortTransactions(
+        list: List<SmsEntity>,
+        config: SortConfig
+    ): List<SmsEntity> {
 
-            if (!prefs.importCompleted) {
-                // 1) Start loading
-                update { it.copy(isLoading = true) }
-                _importProgress.value = ImportProgress(done = false)
+        fun compareByField(
+            a: SmsEntity,
+            b: SmsEntity,
+            field: SortField,
+            order: SortOrder
+        ): Int {
+            val result = when (field) {
+                SortField.DATE ->
+                    a.timestamp.compareTo(b.timestamp)
 
-                // 2) Start import
-                importAll(resolverProvider)
+                SortField.AMOUNT ->
+                    a.amount.compareTo(b.amount)
+            }
 
+            return if (order == SortOrder.ASC) result else -result
+        }
+
+        return list.sortedWith { a, b ->
+            val primaryResult =
+                compareByField(a, b, config.primary, config.primaryOrder)
+
+            if (primaryResult != 0) {
+                primaryResult
             } else {
-                // 1) Start loading
-                // repo.reclassifyAll()
-
-                update { it.copy(isLoading = true) }
-                // 2) Start import
-                loadExistingData()
+                compareByField(a, b, config.secondary, config.secondaryOrder)
             }
         }
     }
-
     fun startImportIfNeeded(resolverProvider: () -> ContentResolver) {
         viewModelScope.launch {
 
@@ -1064,7 +1253,6 @@ class SmsImportViewModel @Inject constructor(
         // optionally trigger recompute if you don't recompute from combine automatically
     }
 
-
     fun setSelectedTypeSafe(type: String?) {
         update { it.copy(selectedType = type) }
         // The combine block should react to uiInputs.selectedType and recompute finalList / totals
@@ -1076,12 +1264,76 @@ class SmsImportViewModel @Inject constructor(
         }
     }
 
+    private val _applyRuleProgress =
+        MutableStateFlow<ApplyRuleProgress?>(null)
+
+    val applyRuleProgress: StateFlow<ApplyRuleProgress?> =
+        _applyRuleProgress
+
+
+
+    private val _applySelfRuleRequest =
+        MutableStateFlow<SmsEntity?>(null)
+
+    val applySelfRuleRequest: StateFlow<SmsEntity?> =
+        _applySelfRuleRequest
+
+    fun requestApplySelfRule(tx: SmsEntity) {
+        if (canSuggestSelfRule(tx)) {
+            _applySelfRuleRequest.value = tx
+        }
+    }
+
+    fun consumeApplySelfRuleRequest() {
+        _applySelfRuleRequest.value = null
+    }
+
+    fun applySelfTransferPattern(tx: SmsEntity) {
+        viewModelScope.launch {
+            repo
+                .applySelfTransferPattern(tx)
+                .flowOn(Dispatchers.IO)
+                .collect { progress ->
+                    _applyRuleProgress.value = progress
+                }
+
+            // clear when done
+            _applyRuleProgress.value = null
+        }
+    }
+
+    fun extractPersonName(tx: SmsEntity): String? {
+        return MerchantExtractorMl.extractPersonName(tx.body)
+    }
+    fun extractBankName(tx: SmsEntity): String? {
+        return SenderClassifierMl.extractBankName(tx.sender)
+            ?.takeIf { it != "UNKNOWN" }
+    }
+
+
     fun undoSelfTransfer(tx: SmsEntity) {
         viewModelScope.launch {
             repo.undoSelfTransfer(tx)
         }
     }
+    fun canSuggestSelfRule(tx: SmsEntity): Boolean {
+        // Only real debits can be self-transfer rules
+        if (!tx.type.equals("DEBIT", true)) return false
 
+        // Already net-zero? No need to suggest again
+        if (tx.isNetZero) return false
+
+        // Body must be non-empty (sanity guard)
+        if (tx.body.isBlank()) return false
+
+        return true
+    }
+
+    fun getSelfRuleContext(tx: SmsEntity): Pair<String?, String?> {
+        val person = extractPersonName(tx)
+        val bank = extractBankName(tx)
+        return person to bank
+    }
 }
 
 sealed class UiTxnRow {
@@ -1105,39 +1357,7 @@ sealed class UiTxnRow {
     ) : UiTxnRow()
 }
 
-private fun sortTransactions(
-    list: List<SmsEntity>,
-    config: SortConfig
-): List<SmsEntity> {
 
-    fun compareByField(
-        a: SmsEntity,
-        b: SmsEntity,
-        field: SortField,
-        order: SortOrder
-    ): Int {
-        val result = when (field) {
-            SortField.DATE ->
-                a.timestamp.compareTo(b.timestamp)
-
-            SortField.AMOUNT ->
-                a.amount.compareTo(b.amount)
-        }
-
-        return if (order == SortOrder.ASC) result else -result
-    }
-
-    return list.sortedWith { a, b ->
-        val primaryResult =
-            compareByField(a, b, config.primary, config.primaryOrder)
-
-        if (primaryResult != 0) {
-            primaryResult
-        } else {
-            compareByField(a, b, config.secondary, config.secondaryOrder)
-        }
-    }
-}
 
 
 private fun SmsEntity.isWalletMovement(): Boolean {
@@ -1193,4 +1413,26 @@ private fun List<SmsEntity>.filterByPeriod(
 
 
 }
+
+ fun SmsEntity.matchesFrequency(
+    filter: FrequencyFilter
+): Boolean {
+    val freq = expenseFrequency
+
+    return when (filter) {
+        FrequencyFilter.MONTHLY_ONLY ->
+            freq == ExpenseFrequency.MONTHLY.name
+
+        FrequencyFilter.ALL_EXPENSES ->
+            true
+
+        FrequencyFilter.YEARLY_ONLY ->
+            freq == ExpenseFrequency.YEARLY.name
+
+        FrequencyFilter.IRREGULAR_ONLY ->
+            freq == ExpenseFrequency.IRREGULAR.name ||
+                    freq == ExpenseFrequency.ONE_TIME.name
+    }
+}
+
 

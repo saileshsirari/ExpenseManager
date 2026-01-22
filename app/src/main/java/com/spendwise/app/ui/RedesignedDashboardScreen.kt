@@ -25,29 +25,36 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.TrendingUp
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.CompareArrows
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CenterAlignedTopAppBar
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Divider
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ExposedDropdownMenuBox
+import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
@@ -70,14 +77,19 @@ import androidx.navigation.NavController
 import com.spendwise.app.navigation.Screen
 import com.spendwise.app.ui.dashboard.CategoryPieChart
 import com.spendwise.app.ui.dashboard.DashboardModeSelector
-import com.spendwise.core.extensions.nextQuarter
-import com.spendwise.core.extensions.previousQuarter
+import com.spendwise.core.com.spendwise.core.ExpenseFrequency
+import com.spendwise.core.com.spendwise.core.FrequencyFilter
+import com.spendwise.core.com.spendwise.core.detector.LINK_TYPE_INVESTMENT_OUTFLOW
+import com.spendwise.core.ml.CategoryType
 import com.spendwise.domain.com.spendwise.feature.smsimport.data.DashboardMode
 import com.spendwise.domain.com.spendwise.feature.smsimport.ui.MonthlyComparisonCard
 import com.spendwise.domain.com.spendwise.feature.smsimport.ui.WalletInsightCard
 import com.spendwise.feature.smsimport.data.SmsEntity
+import com.spendwise.feature.smsimport.data.isExpense
 import com.spendwise.feature.smsimport.ui.SmsImportViewModel
+import com.spendwise.feature.smsimport.ui.SmsImportViewModel.InsightsUiState
 import com.spendwise.feature.smsimport.ui.UiTxnRow
+import com.spendwise.feature.smsimport.ui.matchesFrequency
 import java.time.YearMonth
 import java.time.format.DateTimeFormatter
 import kotlin.math.roundToInt
@@ -98,18 +110,17 @@ fun RedesignedDashboardScreen(
 ) {
     val uiState by viewModel.uiState.collectAsState()
     val progress by viewModel.importProgress.collectAsState()
+
+
     var expandedItemId by remember { mutableStateOf<Long?>(null) }
     val onMarkNotExpense: (SmsEntity, Boolean) -> Unit = { id, ignored ->
         viewModel.setIgnoredState(id, ignored)
     }
 
+
     val progressReclassify by viewModel.reclassifyProgress.collectAsState()
 
 
-
-    LaunchedEffect(Unit) {
-        viewModel.resetToCurrentMonth()
-    }
     // top-level loading / import handling (assumes app-level permission + import triggers)
     if (!progress.done) {
         // small inset progress UI — full screen handled elsewhere
@@ -133,6 +144,50 @@ fun RedesignedDashboardScreen(
             }
         }
         return
+    }
+    val applyRuleProgress by viewModel.applyRuleProgress.collectAsState()
+
+    var showApplyRuleDialog by remember { mutableStateOf(false) }
+    var selectedTx by remember { mutableStateOf<SmsEntity?>(null) }
+    val ctx = selectedTx?.let { viewModel.getSelfRuleContext(it) }
+    val person = ctx?.first
+    val bank = ctx?.second
+
+    val applyRuleTx by viewModel.applySelfRuleRequest.collectAsState()
+
+    LaunchedEffect(applyRuleTx) {
+        if (applyRuleTx != null) {
+            selectedTx = applyRuleTx
+            showApplyRuleDialog = true
+        }
+    }
+    val contextText = when {
+        person != null && bank != null ->
+            "Transfers to $person from $bank"
+
+        person != null ->
+            "Transfers to $person"
+
+        bank != null ->
+            "Transfers from $bank"
+
+        else ->
+            "Messages with the same format"
+    }
+    if(applyRuleTx!=null && showApplyRuleDialog) {
+
+        ApplySelfTransferRuleDialog(
+            ctxText = contextText,
+            onConfirmApplyAll = {
+                viewModel.applySelfTransferPattern(selectedTx!!)
+                viewModel.consumeApplySelfRuleRequest()
+                showApplyRuleDialog = false
+            },
+            onOnlyThis = {
+                viewModel.consumeApplySelfRuleRequest()
+                showApplyRuleDialog = false
+            }
+        )
     }
 
 
@@ -168,7 +223,36 @@ fun RedesignedDashboardScreen(
             )
         }
     ) { padding ->
+        if (applyRuleProgress != null) {
+            val (done, total) = applyRuleProgress!!
 
+            Box(
+                Modifier
+                    .fillMaxSize()
+                    .background(Color.Black.copy(alpha = 0.4f)),
+                contentAlignment = Alignment.Center
+            ) {
+                Card {
+                    Column(
+                        Modifier.padding(20.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        Text("Applying self-transfer rule")
+
+                        Spacer(Modifier.height(12.dp))
+
+                        LinearProgressIndicator(
+                            progress = if (total > 0) done.toFloat() / total else 0f,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+
+                        Spacer(Modifier.height(8.dp))
+
+                        Text("$done of $total messages")
+                    }
+                }
+            }
+        }
         LazyColumn(
             modifier = Modifier
                 .padding(padding)
@@ -224,25 +308,18 @@ fun RedesignedDashboardScreen(
             }
             item {
                 PeriodNavigator(
-                    mode = uiState.mode,
+                    mode = DashboardMode.MONTH,   // 🔒 FORCE month view
                     period = uiState.period,
+
                     onPrev = {
-                        val newPeriod = when (uiState.mode) {
-                            DashboardMode.MONTH -> uiState.period.minusMonths(1)
-                            DashboardMode.QUARTER -> uiState.period.previousQuarter()
-                            DashboardMode.YEAR -> uiState.period.minusYears(1)
-                        }
-                        viewModel.setPeriod(newPeriod)
+                        viewModel.setPeriod(uiState.period.minusMonths(1))
                     },
+
                     onNext = {
-                        val newPeriod = when (uiState.mode) {
-                            DashboardMode.MONTH -> uiState.period.plusMonths(1)
-                            DashboardMode.QUARTER -> uiState.period.nextQuarter()
-                            DashboardMode.YEAR -> uiState.period.plusYears(1)
-                        }
-                        viewModel.setPeriod(newPeriod)
+                        viewModel.setPeriod(uiState.period.plusMonths(1))
                     }
                 )
+
                 Spacer(Modifier.height(12.dp))
             }
 
@@ -251,7 +328,10 @@ fun RedesignedDashboardScreen(
                 SummaryHeader(
                     totalDebit = uiState.totalsDebit,
                     totalCredit = uiState.totalsCredit,
-                    onOpenInsights = { navController.navigate(Screen.Insights.route) }
+                    onOpenInsights = {
+                        viewModel.prepareInsightsFromDashboard()
+                        navController.navigate(Screen.Insights.route)
+                    }
                 )
                 Spacer(Modifier.height(12.dp))
             }
@@ -260,7 +340,10 @@ fun RedesignedDashboardScreen(
                 // Quick filters & actions row
                 QuickActionsRow(
                     showGroupedMerchants = uiState.showGroupedMerchants,
-                    onOpenInsights = { navController.navigate(Screen.Insights.route) },
+                    onOpenInsights = {
+                        viewModel.prepareInsightsFromDashboard()
+                        navController.navigate(Screen.Insights.route)
+                    },
                     onToggleGroupByMerchant = {
                         viewModel.toggleGroupByMerchant()
                     }
@@ -328,25 +411,29 @@ fun RedesignedDashboardScreen(
                                     if (expandedItemId == row.tx.id) null else row.tx.id
                                 viewModel.onMessageClicked(it)
                             },
-                            onMarkNotExpense = { sms, ignored ->
-                                onMarkNotExpense(sms, ignored)
+                            onChange = { freq ->
+                                viewModel.setExpenseFrequency(row.tx, freq)
                             },
-                            onMarkAsSelfTransfer = {
-                                viewModel.markAsSelfTransfer(it)
+
+                            onMarkAsSelfTransfer = { tx ->
+                                viewModel.markAsSelfTransfer(tx)
+                                viewModel.requestApplySelfRule(tx)
+                            },
+                            onDebugClick = {
+                                viewModel.onMessageClicked(row.tx)
+                                viewModel.debugReprocessSms(row.tx.id)
+                            },
+                            onChangeCategory = { tx, category ->
+                                viewModel.changeMerchantCategory(
+                                    merchant = tx.merchant ?: return@TransactionRow,
+                                    category = category
+                                )
                             },
                             onUndoSelfTransfer = {
                                 viewModel.undoSelfTransfer(it)
                             }
                         )
-                        TextButton(
-                            onClick = {
-                                viewModel.onMessageClicked(row.tx)
-                                viewModel.debugReprocessSms(row.tx.id)
 
-                            }
-                        ) {
-                            Text("Re-run classification (debug)")
-                        }
                         Spacer(Modifier.height(8.dp))
                     }
 
@@ -369,7 +456,10 @@ fun RedesignedDashboardScreen(
                     Column(modifier = Modifier.padding(12.dp)) {
                         Text("Want deeper insights?", style = MaterialTheme.typography.titleMedium)
                         Spacer(Modifier.height(6.dp))
-                        Button(onClick = { navController.navigate(Screen.Insights.route) }) {
+                        Button(onClick = {
+                            viewModel.prepareInsightsFromDashboard()
+                            navController.navigate(Screen.Insights.route)
+                        }) {
                             Text("Open Insights")
                         }
                     }
@@ -390,6 +480,44 @@ fun CategoryHeader(selectedType: String?) {
         modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
     )
 }
+
+@Composable
+fun ApplySelfTransferRuleDialog(
+    ctxText: String,
+    onConfirmApplyAll: () -> Unit,
+    onOnlyThis: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = { /* non-dismissible */ },
+        title = {
+            Text("Apply to similar transactions?")
+        },
+        text = {
+            Column {
+                Text(
+                    "We’ll mark other $ctxText as self transfers."
+                )
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    "This only affects messages with the same format.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = Color.Gray
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onConfirmApplyAll) {
+                Text("Apply to all")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onOnlyThis) {
+                Text("Only this one")
+            }
+        }
+    )
+}
+
 
 @Composable
 fun InternalTransferSectionHeader(
@@ -423,6 +551,136 @@ fun InternalTransferSectionHeader(
     Divider()
 }
 
+@Composable
+fun InsightsFrequencySelector(
+    uiState: SmsImportViewModel.InsightsUiState,
+    onChange: (FrequencyFilter) -> Unit
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            FrequencyChip(
+                filter = FrequencyFilter.MONTHLY_ONLY,
+                uiState = uiState,
+                onChange = onChange
+            )
+            FrequencyChip(
+                filter = FrequencyFilter.YEARLY_ONLY,
+                uiState = uiState,
+                onChange = onChange
+            )
+        }
+
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            FrequencyChip(
+                filter = FrequencyFilter.ALL_EXPENSES,
+                uiState = uiState,
+                onChange = onChange
+            )
+            FrequencyChip(
+                filter = FrequencyFilter.IRREGULAR_ONLY,
+                uiState = uiState,
+                onChange = onChange
+            )
+        }
+    }
+}
+
+fun FrequencyFilter.isEnabled(ui: InsightsUiState): Boolean =
+    when (this) {
+        FrequencyFilter.MONTHLY_ONLY -> ui.hasMonthlyData
+        FrequencyFilter.YEARLY_ONLY -> ui.hasYearlyData
+        FrequencyFilter.IRREGULAR_ONLY -> ui.hasIrregularData
+        FrequencyFilter.ALL_EXPENSES -> ui.hasAnyData
+    }
+
+@Composable
+fun MerchantCategorySelector(
+    currentCategory: String,
+    onChange: (CategoryType) -> Unit
+) {
+    var expanded by remember { mutableStateOf(false) }
+
+    Column {
+        Text(
+            text = "Category (applies to this merchant)",
+            style = MaterialTheme.typography.labelMedium
+        )
+
+        Spacer(Modifier.height(6.dp))
+
+        ExposedDropdownMenuBox(
+            expanded = expanded,
+            onExpandedChange = { expanded = !expanded }
+        ) {
+            OutlinedTextField(
+                value = currentCategory
+                    .lowercase()
+                    .replaceFirstChar { it.uppercase() },
+                onValueChange = {},
+                readOnly = true,
+                label = { Text("Category") },
+                trailingIcon = {
+                    ExposedDropdownMenuDefaults.TrailingIcon(expanded)
+                },
+                modifier = Modifier
+                    .menuAnchor()
+                    .fillMaxWidth()
+            )
+
+            ExposedDropdownMenu(
+                expanded = expanded,
+                onDismissRequest = { expanded = false }
+            ) {
+                CategoryType.values().forEach { category ->
+                    DropdownMenuItem(
+                        text = {
+                            Text(
+                                category.name
+                                    .lowercase()
+                                    .replaceFirstChar { it.uppercase() }
+                            )
+                        },
+                        onClick = {
+                            expanded = false
+                            onChange(category)
+                        }
+                    )
+                }
+            }
+        }
+    }
+}
+
+
+@Composable
+private fun FrequencyChip(
+    filter: FrequencyFilter,
+    uiState: InsightsUiState,
+    onChange: (FrequencyFilter) -> Unit
+) {
+    val enabled = filter.isEnabled(uiState)
+
+    FilterChip(
+        selected = uiState.frequency == filter,
+        enabled = enabled,
+        onClick = {
+            if (enabled) onChange(filter)
+        },
+        label = {
+            Text(
+                when (filter) {
+                    FrequencyFilter.MONTHLY_ONLY -> "Monthly"
+                    FrequencyFilter.ALL_EXPENSES -> "All"
+                    FrequencyFilter.YEARLY_ONLY -> "Yearly"
+                    FrequencyFilter.IRREGULAR_ONLY -> "Irregular"
+                }
+            )
+        }
+    )
+}
+
+
 /* -----------------------------------------------------------
    2) Insights screen: full-size pie chart + category breakdown
    - Timeframe toggle (Month / Quarter / Year)
@@ -433,18 +691,54 @@ fun InsightsScreen(
     navController: NavController,
     viewModel: SmsImportViewModel
 ) {
+    val freqFilter by viewModel.insightsFrequencyFilter.collectAsState()
+    val uiState by viewModel.uiState.collectAsState()
+
+
     // Reset filter whenever entering Insights
     LaunchedEffect(Unit) {
         viewModel.clearSelectedType()
+        viewModel.setInsightsFrequencyFilter(FrequencyFilter.MONTHLY_ONLY)
     }
+
 
     val totalSpend by viewModel.totalSpend.collectAsState()
 
-    val uiState by viewModel.uiState.collectAsState()
+    val filteredTxs = remember(
+        uiState.finalList,
+        freqFilter
+    ) {
+        uiState.finalList
+            .filter { !it.isNetZero } // remove internal transfers
+            .filter { tx ->
+                tx.isExpense() && tx.matchesFrequency(freqFilter)
+            }
+    }
+
+    val insightRows = remember(
+        filteredTxs,
+        uiState.sortConfig,
+        uiState.showGroupedMerchants
+    ) {
+        val sortedTxs = viewModel.sortTransactions(
+            list = filteredTxs,
+            config = uiState.sortConfig
+        )
+
+        if (!uiState.showGroupedMerchants) {
+            sortedTxs.map { UiTxnRow.Normal(it) }
+        } else {
+            viewModel.buildUiRows(
+                txs = sortedTxs,
+                sortConfig = uiState.sortConfig,
+                groupByMerchant = true
+            )
+        }
+    }
+
+
+    var selectedTx by remember { mutableStateOf<SmsEntity?>(null) }
     var expandedItemId by remember { mutableStateOf<Long?>(null) }
-
-    val topCategories by viewModel.topCategoriesFree.collectAsState()
-
     // Full categories for pie chart
     val categoriesAll by viewModel.categoryTotalsForPeriod.collectAsState()
 
@@ -452,13 +746,24 @@ fun InsightsScreen(
     val categoryInsight by viewModel.categoryInsight.collectAsState()
     val comparison by viewModel.periodComparison.collectAsState()
     val walletInsight by viewModel.walletInsight.collectAsState()
+    val insightsUi by viewModel.insightsUiState.collectAsState()
+
+
+
 
     Scaffold(
         topBar = {
             CenterAlignedTopAppBar(
                 title = { Text("Insights") },
                 navigationIcon = {
-                    IconButton(onClick = { navController.popBackStack() }) {
+                    IconButton(onClick = {
+                        viewModel.rememberInsightsContext(
+                            mode = uiState.mode,
+                            period = uiState.period
+                        )
+                        viewModel.restoreDashboardFromInsights()
+                        navController.popBackStack()
+                    }) {
                         Icon(
                             painter = painterResource(id = R.drawable.ic_menu_close_clear_cancel),
                             contentDescription = "Back"
@@ -506,6 +811,32 @@ fun InsightsScreen(
                                 text = "₹${totalSpend.roundToInt()}",
                                 style = MaterialTheme.typography.headlineMedium
                             )
+                            Spacer(Modifier.height(10.dp))
+                            InsightsFrequencySelector(
+                                uiState = insightsUi,
+                                onChange = viewModel::setInsightsFrequencyFilter
+                            )
+
+                            if (freqFilter != FrequencyFilter.MONTHLY_ONLY) {
+                                Text(
+                                    text = when (freqFilter) {
+                                        FrequencyFilter.ALL_EXPENSES ->
+                                            "Includes yearly and irregular expenses"
+
+                                        FrequencyFilter.YEARLY_ONLY ->
+                                            "Showing yearly expenses only"
+
+                                        FrequencyFilter.IRREGULAR_ONLY ->
+                                            "Showing irregular and one-time expenses"
+
+                                        else -> ""
+                                    },
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = Color.Gray,
+                                    modifier = Modifier.padding(top = 6.dp, bottom = 8.dp)
+                                )
+                            }
+
                             Spacer(Modifier.height(10.dp))
 
                             CategoryPieChart(
@@ -577,37 +908,27 @@ fun InsightsScreen(
 
                 Spacer(Modifier.height(12.dp))
             }
+            item {
+                if (freqFilter != FrequencyFilter.MONTHLY_ONLY) {
+                    Text(
+                        "Filtered by ${freqFilter.name.lowercase()} expenses",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = Color.Gray
+                    )
+                }
+            }
 
             items(
-                items = uiState.rows,
+                items = insightRows,
                 key = { row ->
                     when (row) {
                         is UiTxnRow.Normal -> "tx-${row.tx.id}"
                         is UiTxnRow.Grouped -> "group-${row.groupId}"
-                        is UiTxnRow.Section -> "section-${row.id}"
+                        else -> "row"
                     }
                 }
             ) { row ->
                 when (row) {
-
-                    is UiTxnRow.Section -> {
-                        InternalTransferSectionHeader(
-                            title = row.title,
-                            count = row.count,
-                            collapsed = row.collapsed,
-                            onToggle = {
-                                when (row.id) {
-                                    "main_transactions" ->
-                                        viewModel.toggleMainSection()
-
-                                    "internal_transfers" ->
-                                        viewModel.toggleInternalSection()
-                                }
-                            }
-                        )
-                        Spacer(Modifier.height(8.dp))
-                    }
-
                     is UiTxnRow.Normal -> {
                         TransactionRow(
                             sms = row.tx,
@@ -615,29 +936,47 @@ fun InsightsScreen(
                             onClick = {
                                 expandedItemId =
                                     if (expandedItemId == row.tx.id) null else row.tx.id
+
                                 viewModel.onMessageClicked(it)
                             },
-                            onMarkNotExpense = { sms, ignored ->
-                                viewModel.setIgnoredState(sms, ignored)
+                            onChange = { freq ->
+                                viewModel.setExpenseFrequency(row.tx, freq)
                             },
-                            onMarkAsSelfTransfer = { viewModel.markAsSelfTransfer(it) },
-                            onUndoSelfTransfer = { viewModel.undoSelfTransfer(it) }
+                            onMarkAsSelfTransfer = { tx ->
+                                viewModel.markAsSelfTransfer(tx)
+                                viewModel.requestApplySelfRule(tx)
+                            },
+                            onUndoSelfTransfer = {
+                                viewModel.undoSelfTransfer(it)
+                            },
+                            onChangeCategory = { tx, category ->
+                                viewModel.changeMerchantCategory(
+                                    merchant = tx.merchant ?: return@TransactionRow,
+                                    category = category
+                                )
+                            },
+                            onDebugClick = {
+                                viewModel.onMessageClicked(row.tx)
+                                viewModel.debugReprocessSms(row.tx.id)
+                            }
                         )
-                        Spacer(Modifier.height(8.dp))
                     }
 
                     is UiTxnRow.Grouped -> {
                         GroupedMerchantRow(
                             group = row,
                             viewModel = viewModel,
-                            onMarkNotExpense = { sms, ignored ->
-                                viewModel.setIgnoredState(sms, ignored)
-                            }
+                            onMarkNotExpense = { _, _ -> }
                         )
-                        Spacer(Modifier.height(8.dp))
+                    }
+
+                    // 🔒 Explicitly ignore sections in Insights
+                    is UiTxnRow.Section -> {
+                        // no-op (Insights does not show section headers)
                     }
                 }
             }
+
         }
     }
 }
@@ -737,7 +1076,6 @@ fun GroupedMerchantRow(
 ) {
     var expanded by remember { mutableStateOf(false) }
     var expandedItemId by remember { mutableStateOf<Long?>(null) }
-
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -794,12 +1132,26 @@ fun GroupedMerchantRow(
                         onClick = {
                             expandedItemId =
                                 if (expandedItemId == tx.id) null else tx.id
-                            viewModel.debugReprocessSms(tx.id)
                             viewModel.onMessageClicked(it)
                         },
-                        onMarkNotExpense = onMarkNotExpense,
-                        onMarkAsSelfTransfer = { viewModel.markAsSelfTransfer(it) },
-                        onUndoSelfTransfer = { viewModel.undoSelfTransfer(it) }
+                        onChange = { freq ->
+                            viewModel.setExpenseFrequency(tx, freq)
+                        },
+                        onMarkAsSelfTransfer = { tx ->
+                            viewModel.markAsSelfTransfer(tx)
+                            viewModel.requestApplySelfRule(tx)
+                        },
+                        onUndoSelfTransfer = { viewModel.undoSelfTransfer(it) },
+                        onChangeCategory = { tx, category ->
+                            viewModel.changeMerchantCategory(
+                                merchant = tx.merchant ?: return@TransactionRow,
+                                category = category
+                            )
+                        },
+                        onDebugClick = {
+                            viewModel.onMessageClicked(tx)
+                            viewModel.debugReprocessSms(tx.id)
+                        }
                     )
                     Spacer(Modifier.height(6.dp))
                 }
@@ -835,9 +1187,11 @@ private fun TransactionRowContent(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Column(modifier = Modifier
-                .weight(1f)
-                .padding(end = 12.dp)) {
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .padding(end = 12.dp)
+            ) {
                 Text(
                     text = sms.merchant ?: "Unknown",
                     style = MaterialTheme.typography.bodyLarge
@@ -849,18 +1203,18 @@ private fun TransactionRowContent(
                     color = Color.Gray
                 )
 
-                if ( sms.linkType == "INTERNAL_TRANSFER") {
+                if (sms.linkType == "INTERNAL_TRANSFER") {
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
                         modifier = Modifier.padding(bottom = 6.dp)
                     ) {
                         Icon(
-                            imageVector = Icons.Default.CompareArrows ,
+                            imageVector = Icons.Default.CompareArrows,
                             contentDescription = null,
                             tint = Color(0xFF2E7D32)
                         )
                         Text(
-                            text =  "Internal Transfer" ,
+                            text = "Internal Transfer",
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.primary,
                             modifier = Modifier.padding(start = 6.dp)
@@ -892,13 +1246,110 @@ private fun TransactionRowContent(
     }
 }
 
+@Composable
+fun ExpenseFrequencySelector(
+    current: String,
+    amount: Double,
+    onChange: (ExpenseFrequency) -> Unit
+) {
+    var expanded by remember { mutableStateOf(false) }
+
+    val currentEnum =
+        runCatching { ExpenseFrequency.valueOf(current) }
+            .getOrNull() ?: ExpenseFrequency.MONTHLY
+
+    // 🔒 Small amount rule
+    val isSmallAmount = amount < 1000.0
+
+    Column {
+        Text(
+            text = "Expense frequency",
+            style = MaterialTheme.typography.labelMedium
+        )
+
+        Spacer(Modifier.height(6.dp))
+
+        ExposedDropdownMenuBox(
+            expanded = expanded,
+            onExpandedChange = { expanded = !expanded }
+        ) {
+            OutlinedTextField(
+                value = currentEnum.displayName(),
+                onValueChange = {},
+                readOnly = true,
+                label = { Text("Frequency") },
+                trailingIcon = {
+                    ExposedDropdownMenuDefaults.TrailingIcon(expanded)
+                },
+                modifier = Modifier
+                    .menuAnchor()
+                    .fillMaxWidth()
+            )
+
+            ExposedDropdownMenu(
+                expanded = expanded,
+                onDismissRequest = { expanded = false }
+            ) {
+                ExpenseFrequency.values().forEach { freq ->
+
+                    val disabled =
+                        isSmallAmount &&
+                                (freq == ExpenseFrequency.YEARLY ||
+                                        freq == ExpenseFrequency.IRREGULAR)
+
+                    DropdownMenuItem(
+                        enabled = !disabled,
+                        text = {
+                            Text(
+                                text = freq.displayName(),
+                                color = if (disabled)
+                                    MaterialTheme.colorScheme.onSurfaceVariant
+                                else
+                                    MaterialTheme.colorScheme.onSurface
+                            )
+                        },
+                        onClick = {
+                            if (!disabled) {
+                                expanded = false
+                                onChange(freq)
+                            }
+                        }
+                    )
+                }
+            }
+        }
+
+        // Optional helper text
+        if (isSmallAmount) {
+            Spacer(Modifier.height(4.dp))
+            Text(
+                text = "Yearly / Irregular disabled for small amounts",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+    }
+}
+
+fun ExpenseFrequency.displayName(): String =
+    when (this) {
+        ExpenseFrequency.MONTHLY -> "Monthly"
+        ExpenseFrequency.YEARLY -> "Yearly"
+        ExpenseFrequency.IRREGULAR -> "Irregular"
+        ExpenseFrequency.ONE_TIME -> "One-time"
+    }
+
+private const val MIN_AMOUNT_FOR_FREQUENCY_SELECTOR = 1000.0
+
 
 @Composable
 fun TransactionRow(
     sms: SmsEntity,
     isExpanded: Boolean,
     onClick: (SmsEntity) -> Unit,
-    onMarkNotExpense: (SmsEntity, Boolean) -> Unit,
+    onDebugClick: () -> Unit,
+    onChange: (ExpenseFrequency) -> Unit,
+    onChangeCategory: (SmsEntity, CategoryType) -> Unit,
     onMarkAsSelfTransfer: (SmsEntity) -> Unit,
     onUndoSelfTransfer: (SmsEntity) -> Unit
 ) {
@@ -924,7 +1375,6 @@ fun TransactionRow(
             )
 
 
-
             // Expanded controls INSIDE same card
             if (isExpanded) {
                 Divider()
@@ -944,11 +1394,81 @@ fun TransactionRow(
                         Switch(
                             checked = sms.isNetZero && sms.linkType == "INTERNAL_TRANSFER",
                             onCheckedChange = { checked ->
-                                if (checked) onMarkAsSelfTransfer(sms)
+                                if (checked) {
+                                    onMarkAsSelfTransfer(sms)
+
+                                }
                                 else onUndoSelfTransfer(sms)
                             }
                         )
                     }
+
+                    if (sms.linkType == LINK_TYPE_INVESTMENT_OUTFLOW) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.padding(top = 2.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Filled.TrendingUp,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(14.dp)
+                            )
+                            Spacer(Modifier.width(4.dp))
+                            Text(
+                                text = "Investment • ${
+                                    sms.expenseFrequency.lowercase()
+                                        .replaceFirstChar { it.uppercase() }
+                                }",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                        }
+                    }
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+
+                        if (sms.expenseFrequency != ExpenseFrequency.MONTHLY.name) {
+                            Text(
+                                text = sms.expenseFrequency.lowercase()
+                                    .replaceFirstChar { it.uppercase() },
+                                style = MaterialTheme.typography.labelSmall,
+                                color = Color.Gray
+                            )
+                        }
+                    }
+                    TextButton(
+                        onClick = onDebugClick
+                    ) {
+                        Text("Re-run classification (debug)")
+                    }
+
+                    if (sms.amount >= MIN_AMOUNT_FOR_FREQUENCY_SELECTOR) {
+                        ExpenseFrequencySelector(
+                            current = sms.expenseFrequency,
+                            amount = sms.amount,
+                            onChange = onChange
+                        )
+                    }
+
+
+
+                    if (!sms.merchant.isNullOrBlank() && !sms.category.isNullOrBlank()) {
+                        Divider()
+
+                        MerchantCategorySelector(
+                            currentCategory = sms.category!!,
+                            onChange = { newCategory ->
+                                onChangeCategory(sms, newCategory)
+                            }
+                        )
+                    }
+
+
                 }
             }
         }

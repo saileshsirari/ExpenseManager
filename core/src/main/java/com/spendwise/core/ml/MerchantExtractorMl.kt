@@ -13,9 +13,26 @@ object MerchantExtractorMl {
         "mobikwik" to "MobiKwik Wallet"
     )
 
+
     private val personStopWords = setOf(
         "LIMITED", "LTD", "PRIVATE", "PVT", "LLP",
-        "ON", "OF", "FOR", "AND"
+        "ON", "OF", "FOR", "AND",
+        // 🔒 FD / FINANCIAL TERMS (NOT PEOPLE)
+        "fd",
+        "fd no",
+        "fixed",
+        "fixed deposit",
+        "term",
+        "term deposit",
+        "deposit",
+        "interest",
+        "maturity",
+        "loan",
+        "emi",
+        "installment",
+        "reinvestment",
+        "renewal"
+
     )
 
 
@@ -94,18 +111,54 @@ object MerchantExtractorMl {
         RegexOption.IGNORE_CASE
     )
 
-    private fun extractPersonName(body: String): String? {
-        val m = personNameRegex.find(body.lowercase()) ?: return null
+    private fun normalizeFinalMerchantName(input: String): String {
+        // 1️⃣ Remove trailing numbers (SWIGGY123 → SWIGGY)
+        var name = input.replace(Regex("\\d+$"), "")
+
+        // 2️⃣ Normalize spacing
+        name = name.replace(Regex("\\s+"), " ").trim()
+
+        // 3️⃣ Smart title case (preserve acronyms)
+        name = smartTitleCase(name)
+
+        // 4️⃣ Limit to max 2 words
+        val parts = name.split(" ").filter { it.isNotBlank() }
+        if (parts.size > 2) {
+            name = parts.take(2).joinToString(" ")
+        }
+
+        return name
+    }
+
+
+    fun extractPersonName(body: String): String? {
+
+        // 1️⃣ Strongest: credited-person (bank formats)
+        extractCreditedPerson(body)?.let { return it }
+
+        // 2️⃣ Fallback: to/from person (UPI, IMPS, NEFT)
+        extractToFromPerson(body)?.let { return it }
+
+        return null
+    }
+    private val toFromRegex = Regex(
+        "(to|from)\\s+(mr\\.?|mrs\\.?|ms\\.?|shri)?\\s*([A-Za-z][A-Za-z ]{2,50})",
+        RegexOption.IGNORE_CASE
+    )
+
+    private fun extractToFromPerson(body: String): String? {
+        val m = toFromRegex.find(body) ?: return null
         val raw = m.groupValues[3]
 
         val cleaned = raw
             .replace(Regex("[^A-Za-z ]"), "")
             .trim()
 
-        if (cleaned.split(" ").size > 3) return null // avoid long garbage matches
+        if (cleaned.split(" ").size > 3) return null
 
         return cleaned.uppercase()
     }
+
 
     // --------------------------------------------------------------------
     // MAIN EXTRACTION LOGIC
@@ -175,7 +228,7 @@ object MerchantExtractorMl {
         val walletMerchant = extractWalletMerchant(body)
         if (walletMerchant != null) {
             Log.d(TAG, "Wallet spend merchant → $walletMerchant")
-            return walletMerchant
+            return normalizeFinalMerchantName(walletMerchant)
         }
 
 
@@ -251,8 +304,10 @@ object MerchantExtractorMl {
                 val cleaned = normalize(posMatch.groupValues[1])
                 val pretty = smartTitleCase(cleaned)
                 Log.d(TAG, "POS merchant → $cleaned")
-                return cleanTrailingNoise(
-                    stripGatewayTokens(pretty)
+                return normalizeFinalMerchantName(
+                    cleanTrailingNoise(
+                        stripGatewayTokens(pretty)
+                    )
                 )
             }
         }
@@ -272,7 +327,7 @@ object MerchantExtractorMl {
             val pretty = smartTitleCase(cleaned)
             val finalName = cleanTrailingNoise(pretty)
             Log.d(TAG, "ON-merchant → $finalName")
-            return finalName
+            return normalizeFinalMerchantName(finalName)
         }
 
         // --------------------------------------------------------------------
@@ -283,7 +338,7 @@ object MerchantExtractorMl {
         merchantMap.forEach { (token, pretty) ->
             if (lower.contains(token)) {
                 Log.d(TAG, "Keyword merchant → $pretty")
-                return pretty
+                return normalizeFinalMerchantName(pretty)
             }
         }
 // WALLET SELF TRANSACTION (balance / deduction)
@@ -299,7 +354,8 @@ object MerchantExtractorMl {
             val cleaned = cleanSenderName(sender)
             if (cleaned.length > 2) {
                 Log.d(TAG, "BANK fallback merchant → $cleaned")
-                return cleaned
+                return normalizeFinalMerchantName(cleaned)
+
             }
         }
         Log.d(TAG, "Merchant not identified.")
@@ -340,7 +396,7 @@ object MerchantExtractorMl {
                 lower.contains(token) &&
                 lower.contains(" wallet")
             ) {
-                return pretty
+                return normalizeFinalMerchantName(pretty)
             }
         }
         return null
@@ -351,6 +407,7 @@ object MerchantExtractorMl {
         return raw
             .replace(Regex("[^A-Za-z0-9 &-]"), " ") // remove junk, KEEP CASE
             .replace(Regex("\\s+"), " ")             // collapse spaces
+            .replace("\r\n", "\n")
             .trim()
     }
 
@@ -375,7 +432,7 @@ object MerchantExtractorMl {
     fun extractCreditedPerson(body: String): String? {
         // Matches: "; SHAHEED CHAMAN  credited"
         val regex = Regex(
-            ";\\s*([A-Z][A-Z ]{2,40})\\s+credited",
+            "[;\\n]\\s*([A-Z][A-Z ]{2,40})\\s*credited\\b",
             RegexOption.IGNORE_CASE
         )
 
@@ -464,13 +521,19 @@ object MerchantExtractorMl {
             .split(" ")
             .filter { it.isNotBlank() }
             .joinToString(" ") { word ->
-                val w = word.uppercase()
+                val raw = word.trim()
+
                 when {
-                    w in acronyms -> w
-                    else -> w.lowercase().replaceFirstChar { it.uppercase() }
+                    raw.uppercase() in acronyms ->
+                        raw.uppercase()   // IRCTC, SBI
+
+                    else ->
+                        raw.lowercase()
+                            .replaceFirstChar { it.uppercase() } // Swiggy, Amazon
                 }
             }
     }
+
 
     private fun stripGatewayTokens(input: String): String {
         return input

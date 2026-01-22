@@ -2,10 +2,14 @@ package com.spendwise.feature.smsimport.repo
 
 import SmsMlPipeline
 import android.content.ContentResolver
+import com.spendwise.core.com.spendwise.core.ExpenseFrequency
+import com.spendwise.core.com.spendwise.core.detector.CATEGORY_INVESTMENT
+import com.spendwise.core.com.spendwise.core.detector.ClearingEntityInvestmentDetector
+import com.spendwise.core.com.spendwise.core.detector.LINK_TYPE_INVESTMENT_OUTFLOW
 import com.spendwise.core.com.spendwise.core.isCardBillPayment
-import com.spendwise.core.com.spendwise.core.isSingleSmsInternalTransfer
 import com.spendwise.core.com.spendwise.core.isSystemInfoDebit
 import com.spendwise.core.com.spendwise.core.isWalletCredit
+import com.spendwise.core.detector.InvestmentOutflowDetector
 import com.spendwise.core.linked.LinkedTransactionDetector
 import com.spendwise.core.ml.CategoryType
 import com.spendwise.core.ml.IgnorePatternBuilder
@@ -15,15 +19,21 @@ import com.spendwise.core.ml.RawSms
 import com.spendwise.core.ml.SenderType
 import com.spendwise.core.transfer.InternalTransferDetector
 import com.spendwise.domain.SmsRepository
+import com.spendwise.domain.com.spendwise.feature.smsimport.data.SmsTemplateMatcher
+import com.spendwise.domain.com.spendwise.feature.smsimport.data.SmsTemplateUtil
 import com.spendwise.domain.com.spendwise.feature.smsimport.data.localDate
 import com.spendwise.domain.com.spendwise.feature.smsimport.data.mapper.toDomain
+import com.spendwise.domain.com.spendwise.feature.smsimport.ui.ApplyRuleProgress
 import com.spendwise.feature.smsimport.SmsParser
 import com.spendwise.feature.smsimport.SmsReaderImpl
 import com.spendwise.feature.smsimport.data.AppDatabase
 import com.spendwise.feature.smsimport.data.ImportEvent
+import com.spendwise.feature.smsimport.data.LinkedPatternEntity
 import com.spendwise.feature.smsimport.data.SmsDao.SelfRecipientEntity
 import com.spendwise.feature.smsimport.data.SmsEntity
 import com.spendwise.feature.smsimport.data.UserMlOverride
+import com.spendwise.feature.smsimport.data.hasCreditedPartyInSameSms
+import com.spendwise.feature.smsimport.data.isSystemInfoDebit
 import com.spendwise.feature.smsimport.data.isWalletMerchantSpend
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
@@ -52,62 +62,6 @@ class SmsRepositoryImpl @Inject constructor(
             ?.get(2)
             ?.trim()
             ?.lowercase()
-    }
-
-    suspend fun autoLinkStrongSelfTransfers() {
-
-        val all = db.smsDao().getAllOnce()
-
-        val candidates = all.filter {
-            it.linkId == null &&
-                    it.amount >= PERSON_LINK_MIN_AMOUNT &&
-                    it.type in listOf("DEBIT", "CREDIT")
-        }
-
-        val used = mutableSetOf<Long>()
-
-        for (debit in candidates.filter { it.type == "DEBIT" }) {
-
-            if (debit.id in used) continue
-
-            val person = extractPerson(debit.body) ?: continue
-            val debitDate = debit.localDate()
-
-            val credit = candidates.firstOrNull { c ->
-                c.type == "CREDIT" &&
-                        c.id !in used &&
-                        c.amount == debit.amount &&
-                        extractPerson(c.body) == person &&
-                        kotlin.math.abs(
-                            java.time.temporal.ChronoUnit.DAYS.between(
-                                debitDate,
-                                c.localDate()
-                            )
-                        ) <= PERSON_LINK_WINDOW_DAYS
-            } ?: continue
-
-            val linkId = "SELF_${debit.id}_${credit.id}"
-
-            val updatedDebit = debit.copy(
-                isNetZero = true,
-                linkId = linkId,
-                linkType = "USER_SELF",
-                linkConfidence = 90
-            )
-
-            val updatedCredit = credit.copy(
-                isNetZero = true,
-                linkId = linkId,
-                linkType = "USER_SELF",
-                linkConfidence = 90
-            )
-
-            db.smsDao().update(updatedDebit)
-            db.smsDao().update(updatedCredit)
-
-            used += debit.id
-            used += credit.id
-        }
     }
 
 
@@ -145,24 +99,7 @@ class SmsRepositoryImpl @Inject constructor(
         for (sms in rawList) {
             val amount = SmsParser.parseAmount(sms.body) ?: continue
 // 🔒 INVESTMENT INFO SMS → NEVER A TRANSACTION
-            if (isInvestmentInfoSms(sms.body)) {
-                val infoEntity = SmsEntity(
-                    sender = sms.sender,
-                    body = sms.body,
-                    timestamp = sms.timestamp,
-                    amount = 0.0,                 // 👈 IMPORTANT
-                    merchant = null,
-                    type = "INFO",                // 👈 NOT DEBIT
-                    category = CategoryType.INVESTMENT.name,
-                    isNetZero = true,
-                    linkType = null,
-                    linkId = null,
-                    linkConfidence = 0
-                )
-
-                db.smsDao().insert(infoEntity)
-                continue
-            }
+            if (checkAndInsertIfIsInvestmentInfoSms(sms)) continue
 
             val result = SmsMlPipeline.classify(
                 raw = RawSms(sms.sender, sms.body, sms.timestamp),
@@ -191,12 +128,8 @@ class SmsRepositoryImpl @Inject constructor(
 
                 type = if (result.isCredit) "CREDIT" else "DEBIT",
                 category = result.category.name,
-                isNetZero =
-                    if (isWalletSpend) false else result.isSingleSmsInternal,
-                linkType =
-                    if (isWalletSpend) null
-                    else if (result.isSingleSmsInternal) "INTERNAL_TRANSFER"
-                    else null,
+                isNetZero = false,
+                linkType = null,
                 linkId =
                     if (isWalletSpend) null
                     else if (result.isSingleSmsInternal) "single:${sms.timestamp}"
@@ -211,183 +144,190 @@ class SmsRepositoryImpl @Inject constructor(
             if (id <= 0) continue
 
             val saved = db.smsDao().getById(id) ?: continue
-
-            // 🔒 NEVER run linker for wallet spends
-            if (!saved.isNetZero && !saved.isWalletMerchantSpend()) {
-                linkedDetector.process(saved.toDomain())
+// 🔒 RUN CANONICAL CLASSIFICATION PIPELINE
+            val classified = classifyAndLinkSingle(saved)
+            if (classified.linkType == LINK_TYPE_INVESTMENT_OUTFLOW) {
+                continue
+            }
+// 🔒 NEVER run linker for wallet spends
+            if (!classified.isNetZero && !classified.isWalletMerchantSpend()) {
+                linkedDetector.process(
+                    classified.toDomain(),
+                    selfRecipientProvider = { getSelfRecipients() })
             }
         }
-        autoLinkStrongSelfTransfers()
         emit(ImportEvent.Finished(db.smsDao().getAllOnce()))
     }
 
     // ------------------------------------------------------------
     // IMPORT ALL
     // ------------------------------------------------------------
-    override suspend fun importAll(resolverProvider: () -> ContentResolver): Flow<ImportEvent> =
-        flow {
-            val resolver = resolverProvider()
+    override suspend fun importAll(
+        resolverProvider: () -> ContentResolver
+    ): Flow<ImportEvent> = flow {
+      Log.enabled =false
+        val resolver = resolverProvider()
 
-            // -----------------------------
-            // READ ONLY LAST FEW MONTHS
-            // -----------------------------
+        val monthStart = LocalDate.now()
+            .minusYears(5)
+            .withDayOfMonth(1)
 
-            val monthStart = LocalDate.now().minusYears(5).withDayOfMonth(1)
-            val monthStartMillis = monthStart
+        val sinceMillis =
+            monthStart
                 .atStartOfDay(ZoneId.systemDefault())
                 .toEpochSecond() * 1000
 
-            Log.w("expense", "Importing SMS since: $monthStart  ($monthStartMillis)")
+        Log.w("expense", "Importing SMS since $monthStart ($sinceMillis)")
 
+        // ------------------------------------------------------------
+        // READ SMS ONCE
+        // ------------------------------------------------------------
+        val rawList = withContext(Dispatchers.IO) {
+            SmsReaderImpl(resolver).readSince(sinceMillis)
+        }
 
-            // -----------------------------
-            // READ RAW SMS
-            // -----------------------------
-            val rawList = withContext(Dispatchers.IO) {
-                SmsReaderImpl(resolver).readSince(monthStartMillis)
+        val total = rawList.size
+        Log.w("expense", "Total SMS read = $total")
+
+        // ------------------------------------------------------------
+        // PRELOAD DATA (CRITICAL OPTIMIZATION)
+        // ------------------------------------------------------------
+        val ignorePatterns = db.userMlOverrideDao()
+            .getIgnorePatterns()
+            .map { Regex(it) }
+
+        val linkedTemplates = db.smsDao().getAllLinkedPatterns()
+
+        var processed = 0
+
+        // ------------------------------------------------------------
+        // MAIN LOOP (NO EXTRA DB LOOKUPS)
+        // ------------------------------------------------------------
+        for (sms in rawList) {
+            processed++
+
+            val bodyLower = sms.body.lowercase()
+
+            // ---- ignore patterns ----
+            if (ignorePatterns.any { it.containsMatchIn(bodyLower) }) {
+                continue
             }
 
-            val ignorePatterns = db.userMlOverrideDao()
-                .getIgnorePatterns()
-                .map { Regex(it) }
+            // ---- investment INFO sms (never a transaction) ----
+            if (checkAndInsertIfIsInvestmentInfoSms(sms)) continue
 
-            val total = rawList.size
-            var processed = 0
+            val amount = SmsParser.parseAmount(sms.body)
+            if (amount == null || amount <= 0) continue
 
-            Log.w("expense", "Total SMS read: $total")
+            // --------------------------------------------------
+            // ML CLASSIFICATION
+            // --------------------------------------------------
+            val result = SmsMlPipeline.classify(
+                raw = RawSms(sms.sender, sms.body, sms.timestamp),
+                parsedAmount = amount,
+                overrideProvider = { key ->
+                    db.userMlOverrideDao().getValue(key)
+                },
+                selfRecipientProvider = { getSelfRecipients() }
+            ) ?: continue
 
+            val entity = SmsEntity(
+                sender = result.rawSms.sender,
+                body = result.rawSms.body,
+                timestamp = result.rawSms.timestamp,
+                amount = result.amount,
+                merchant = resolveMerchant(
+                    detectedMerchant = result.merchant,
+                    category = result.category
+                ),
+                type = if (result.isCredit) "CREDIT" else "DEBIT",
+                category = result.category.name,
+                isNetZero = false,
+                linkType = null,
+                linkId = null,
+                linkConfidence = 0
+            )
 
-            // ============================================================
-            // CLASSIFY & SAVE EACH SMS WITH PROGRESS UPDATES
-            // ============================================================
-            val classifiedEntities = mutableListOf<SmsEntity>()
+            val id = db.smsDao().insert(entity)
+            if (id <= 0) continue
 
-            for (sms in rawList) {
+            val saved = db.smsDao().getById(id) ?: continue
 
-                processed++
+            // --------------------------------------------------
+            // USER SELF TEMPLATE MATCH (FAST, IN-MEMORY)
+            // --------------------------------------------------
+            val normalized = SmsTemplateUtil.buildTemplate(saved.body)
+            if (linkedTemplates.any { it == normalized }) {
+                db.smsDao().updateLink(
+                    id = saved.id,
+                    linkId = null,
+                    linkType = "USER_SELF",
+                    linkConfidence = 100,
+                    isNetZero = true
+                )
+                continue
+            }
 
-                // ---- Progress update event ----
+            // --------------------------------------------------
+            // CANONICAL PIPELINE
+            // --------------------------------------------------
+            val classified = classifyAndLinkSingle(saved)
+
+            // --------------------------------------------------
+            // LINKING (SKIP WHEN POSSIBLE)
+            // --------------------------------------------------
+            if (
+                classified.linkType != LINK_TYPE_INVESTMENT_OUTFLOW &&
+                !classified.isNetZero &&
+                !classified.isWalletMerchantSpend()
+            ) {
+                linkedDetector.process(
+                    classified.toDomain(),
+                    selfRecipientProvider = { getSelfRecipients() }
+                )
+            }
+
+            // --------------------------------------------------
+            // PROGRESS (THROTTLED)
+            // --------------------------------------------------
+            if (processed % 200 == 0 || processed == total) {
                 emit(
                     ImportEvent.Progress(
                         total = total,
                         processed = processed,
-                        message = "Processing $processed of $total messages"
+                        message = "Processing messages"
                     )
                 )
-                // ---- ignore patterns ----
-                val bodyLower = sms.body.lowercase()
-
-                if (ignorePatterns.any { it.containsMatchIn(bodyLower) }) {
-                    continue
-                }
-
-                val amount = SmsParser.parseAmount(sms.body)
-                if (amount == null || amount <= 0) continue
-                // 🔒 INVESTMENT INFO SMS → NEVER A TRANSACTION
-                if (isInvestmentInfoSms(sms.body)) {
-                    classifiedEntities.add(
-                        SmsEntity(
-                            sender = sms.sender,
-                            body = sms.body,
-                            timestamp = sms.timestamp,
-                            amount = 0.0,
-                            merchant = null,
-                            type = "INFO",
-                            category = CategoryType.INVESTMENT.name,
-                            isNetZero = true,
-                            linkType = null,
-                            linkId = null,
-                            linkConfidence = 0
-                        )
-                    )
-                    continue
-                }
-
-
-                val result = SmsMlPipeline.classify(
-                    raw = RawSms(sms.sender, sms.body, sms.timestamp),
-                    parsedAmount = amount,
-                    overrideProvider = { key ->
-                        db.userMlOverrideDao().getValue(key)
-                    },
-                    selfRecipientProvider = {
-                        getSelfRecipients()
-                    }
-                ) ?: continue
-                val isWalletSpend =
-                    sms.body.contains("wallet", ignoreCase = true) &&
-                            sms.body.contains("paid", ignoreCase = true)
-
-                val entity = SmsEntity(
-                    sender = result.rawSms.sender,
-                    body = result.rawSms.body,
-                    timestamp = result.rawSms.timestamp,
-                    amount = result.amount,
-                    merchant = resolveMerchant(
-                        detectedMerchant = result.merchant,
-                        category = result.category
-                    ),
-                    type = if (result.isCredit) "CREDIT" else "DEBIT",
-                    category = result.category.name,
-
-                    // 🔒 APPLY INTERNAL TRANSFER DECISION HERE
-                    // 🔒 WALLET SPEND OVERRIDES INTERNAL TRANSFER
-                    isNetZero =
-                        if (isWalletSpend) false else result.isSingleSmsInternal,
-
-                    linkType =
-                        if (isWalletSpend) null
-                        else if (result.isSingleSmsInternal) "INTERNAL_TRANSFER"
-                        else null,
-
-                    linkId =
-                        if (isWalletSpend) null
-                        else if (result.isSingleSmsInternal) "single:${sms.timestamp}"
-                        else null,
-
-                    linkConfidence =
-                        if (isWalletSpend) 0
-                        else if (result.isSingleSmsInternal) 2
-                        else 0
-
-                )
-                classifiedEntities.add(entity)
-
             }
-
-
-            // ============================================================
-            // WRITE CLASSIFIED ENTITIES TO DB AND RUN LINKED DETECTOR
-            // ============================================================
-            withContext(Dispatchers.IO) {
-                for (entity in classifiedEntities) {
-
-                    // 1) Insert raw classified entity
-                    // 1) Insert raw classified entity
-                    val id = db.smsDao().insert(entity)
-
-// 2) Read inserted row
-                    val saved = db.smsDao().getById(id) ?: continue
-                    val isWalletSpend =
-                        saved.body.contains("wallet", ignoreCase = true) &&
-                                saved.body.contains("paid", ignoreCase = true)
-                    // 🔒 NEVER run linker for wallet spends
-                    if (!saved.isNetZero && !isWalletSpend) {
-                        linkedDetector.process(saved.toDomain())
-                    }
-
-                }
-            }
-
-
-            // ============================================================
-            // RETURN FINISHED EVENT WITH LIVE DATABASE CONTENT
-            // ============================================================
-            autoLinkStrongSelfTransfers()
-            val finalList = db.smsDao().getAllOnce() // you can create this function
-            emit(ImportEvent.Finished(finalList))
-
         }
+        Log.enabled = true
+
+        emit(ImportEvent.Finished(db.smsDao().getAllOnce()))
+    }
+
+
+    private suspend fun checkAndInsertIfIsInvestmentInfoSms(sms: RawSms): Boolean {
+        if (isInvestmentInfoSms(sms.body)) {
+            db.smsDao().insert(
+                SmsEntity(
+                    sender = sms.sender,
+                    body = sms.body,
+                    timestamp = sms.timestamp,
+                    amount = 0.0,
+                    merchant = null,
+                    type = "INFO",
+                    category = CategoryType.INVESTMENT.name,
+                    isNetZero = true,
+                    linkType = null,
+                    linkId = null,
+                    linkConfidence = 0
+                )
+            )
+            return true
+        }
+        return false
+
+    }
 
 
     // ------------------------------------------------------------
@@ -441,10 +381,29 @@ class SmsRepositoryImpl @Inject constructor(
     // ------------------------------------------------------------
     // CATEGORY OVERRIDE  (CORRECTED)
     // ------------------------------------------------------------
-    suspend fun saveCategoryOverride(merchant: String, newCategory: String) {
-        val normalized = MerchantExtractorMl.normalize(merchant)
+    // ------------------------------------------------------------
+// CATEGORY OVERRIDE  (ENUM-SAFE)
+// ------------------------------------------------------------
+    suspend fun changeMerchantCategory(
+        merchant: String,
+        newCategory: CategoryType
+    ) {
+        val key = MerchantCategoryOverride.keyFor(merchant)
+
+        Log.d("expense", "Category override: $key -> ${newCategory.name}")
+
+        // 1️⃣ Save override (future imports & reprocess)
         db.userMlOverrideDao().save(
-            UserMlOverride("category:$normalized", newCategory)
+            UserMlOverride(
+                key = key,
+                value = MerchantCategoryOverride.encode(newCategory)
+            )
+        )
+
+        // 2️⃣ Update existing transactions immediately
+        db.smsDao().updateCategoryForMerchant(
+            merchant = merchant,
+            category = newCategory.name
         )
     }
 
@@ -482,7 +441,6 @@ class SmsRepositoryImpl @Inject constructor(
             reclassifySingle(tx.id)   // ✅ FIX: pass ID
             onProgress(index + 1, total)
         }
-        autoLinkStrongSelfTransfers()
     }
 
     private fun isInvestmentInfoSms(body: String): Boolean {
@@ -499,6 +457,7 @@ class SmsRepositoryImpl @Inject constructor(
             "growth option"
         ).any { lower.contains(it) }
     }
+
     suspend fun reprocessSingleSms(id: Long): SmsEntity? {
         val tx = db.smsDao().getById(id) ?: return null
 
@@ -522,22 +481,91 @@ class SmsRepositoryImpl @Inject constructor(
         // 2️⃣ Run full pipeline
         return classifyAndLinkSingle(reset)
     }
-    private suspend fun classifyAndLinkSingle(tx: SmsEntity): SmsEntity {
 
-        val body = tx.body
+    val DAY_MS = 24L * 60L * 60L * 1000L
+
+    private fun isFdConfirmationSms(body: String): Boolean {
+        val text = body.lowercase()
+        return listOf(
+            "fd no",
+            "fd number",
+            "fd account number",
+            "your fd has been created",
+            "fd created successfully",
+            "term deposit account",
+            "fixed deposit account"
+        ).any { text.contains(it) }
+    }
+
+    private suspend fun classifyAndLinkSingle(original: SmsEntity): SmsEntity {
+
+        val body = original.body
         val amount = SmsParser.parseAmount(body) ?: 0.0
-        if (isSingleSmsInternalTransfer(tx.body)) {
-            Log.e("REPROCESS", "Single-SMS internal transfer detected")
+        var tx = original   // ✅ mutable working variable
+        val templates = db.smsDao().getAllLinkedPatterns()
+        for (tpl in templates) {
+            if (SmsTemplateMatcher.matches(tx.body, tpl)) {
+                val updated = tx.copy(
+                    isNetZero = true,
+                    linkType = "USER_SELF",
+                    linkConfidence = 100
+                )
+                db.smsDao().update(updated)
+                return updated   // 🔒 HARD STOP
+            }
+        }
 
+// --------------------------------------------------
+// INFO / SYSTEM ROUTING DEBIT (LOCKED RULE)
+        if (tx.isSystemInfoDebit()) {
+            val internal =
+                InternalTransferDetector.detect(
+                    senderType = SenderType.BANK,
+                    body = tx.body,
+                    amount = amount,
+                    selfRecipientProvider = { getSelfRecipients() }
+                )
+            if (internal != null) {
+                val updated = tx.copy(
+                    type = "DEBIT",
+                    isNetZero = true,
+                    linkType = "INTERNAL_TRANSFER",
+                    linkConfidence = 95
+                )
+                db.smsDao().update(updated)
+
+                Log.d(
+                    "SYSTEM_INFO",
+                    "Info/system debit detected → INTERNAL_TRANSFER, id=${tx.id}"
+                )
+
+                return updated
+            }
+        }
+
+// INVESTMENT OUTFLOW DETECTION (BODY-BASED, SAFE)
+        if (
+            tx.hasCreditedPartyInSameSms() &&
+            InvestmentOutflowDetector.isInvestmentOutflow(tx.body)
+        ) {
             val updated = tx.copy(
+                linkType = LINK_TYPE_INVESTMENT_OUTFLOW,
+                category = CATEGORY_INVESTMENT,
                 type = "DEBIT",
-                isNetZero = true,
-                linkType = "INTERNAL_TRANSFER",
-                linkConfidence = 95
+                isNetZero = false,
+                expenseFrequency = ExpenseFrequency.YEARLY.name
             )
+
             db.smsDao().update(updated)
+
+            Log.d(
+                "INVESTMENT",
+                "Detected INVESTMENT_OUTFLOW → YEARLY default, id=${tx.id}"
+            )
+
             return updated
         }
+
         Log.e("REPROCESS", "Parsed amount=$amount")
 
         // 🔒 1️⃣ INFO / system SMS
@@ -577,6 +605,37 @@ class SmsRepositoryImpl @Inject constructor(
             return updated
         }
 
+
+// --------------------------------------------------
+// CLEARING ENTITY INVESTMENT (NEW RULE)
+// --------------------------------------------------
+        if (
+            ClearingEntityInvestmentDetector.isClearingEntityInvestment(
+                senderType = SenderType.BANK,
+                txType = tx.type,            // 👈 explicit
+                body = tx.body,
+                amount = amount
+            )
+        ) {
+            val updated = tx.copy(
+                type = "DEBIT",
+                category = CategoryType.INVESTMENT.name,
+                isNetZero = false,
+                expenseFrequency = ExpenseFrequency.YEARLY.name,
+                linkType = "INVESTMENT_OUTFLOW",
+                linkConfidence = 70   // medium confidence
+            )
+
+            db.smsDao().update(updated)
+
+            Log.d(
+                "INVESTMENT",
+                "Clearing-entity investment detected → YEARLY (pending confirmation), id=${tx.id}"
+            )
+
+            return updated
+        }
+
         // 🔒 4️⃣ ML classification (LAST)
         val result = SmsMlPipeline.classify(
             raw = RawSms(tx.sender, body, tx.timestamp),
@@ -594,16 +653,35 @@ class SmsRepositoryImpl @Inject constructor(
         if (result != null) {
             Log.e("REPROCESS", "ML result=$result")
 
+            val overrideCategory =
+                MerchantCategoryOverride.decode(
+                    db.userMlOverrideDao().getValue(
+                        MerchantCategoryOverride.keyFor(
+                            result.merchant ?: tx.merchant ?: ""
+                        )
+                    )
+                )
+
+
+            val finalCategory =
+                overrideCategory ?: result.category
+
             val updated = tx.copy(
                 type = if (result.isCredit) "CREDIT" else "DEBIT",
-                category = result.category.name,
-                merchant = resolveMerchant(result.merchant, result.category)
+                category = if (tx.category == CategoryType.INVESTMENT.name &&
+                    tx.expenseFrequency == ExpenseFrequency.MONTHLY.name
+                ) {
+                    ExpenseFrequency.YEARLY.name
+                } else finalCategory.name,
+                merchant = resolveMerchant(result.merchant, finalCategory)
             )
 
             db.smsDao().update(updated)
 
             // 🔒 5️⃣ Internal transfer detector (AFTER ML)
-            linkedDetector.process(updated.toDomain())
+            linkedDetector.process(
+                updated.toDomain(),
+                selfRecipientProvider = { getSelfRecipients() })
 
             return db.smsDao().getById(tx.id)!!
         }
@@ -618,19 +696,6 @@ class SmsRepositoryImpl @Inject constructor(
     // ------------------------------------------------------------
     override suspend fun reclassifySingle(id: Long): SmsEntity? {
         val tx = db.smsDao().getById(id) ?: return null
-// 🔒 INFO SMS SHOULD NEVER BECOME DEBIT
-        if (isInvestmentInfoSms(tx.body)) {
-            val fixed = tx.copy(
-                amount = 0.0,
-                type = "INFO",
-                isNetZero = true,
-                linkType = null,
-                linkId = null,
-                linkConfidence = 0
-            )
-            db.smsDao().update(fixed)
-            return fixed
-        }
 
         // 🔒 Preserve user-declared self transfer
         val isUserSelfTransfer =
@@ -656,6 +721,7 @@ class SmsRepositoryImpl @Inject constructor(
             }
         ) ?: return null
 
+
         // 🔒 Re-run INTERNAL TRANSFER detection (system truth)
         val internalResult =
             InternalTransferDetector.detect(
@@ -665,49 +731,83 @@ class SmsRepositoryImpl @Inject constructor(
                 selfRecipientProvider = { getSelfRecipients() }
             )
 
+        // --------------------------------------------------
+// CLEARING ENTITY INVESTMENT (REPROCESS PATH)
+// --------------------------------------------------
+        val isClearingInvestment =
+            ClearingEntityInvestmentDetector.isClearingEntityInvestment(
+                senderType = SenderType.BANK,
+                txType = if (result.isCredit) "CREDIT" else "DEBIT",
+                body = tx.body,
+                amount = parsedAmount
+            )
+
+
         val updated = tx.copy(
             merchant = resolveMerchant(
                 detectedMerchant = result.merchant,
                 category = result.category
             ),
 
-            category = result.category.name,
-            type = if (result.isCredit) "CREDIT" else "DEBIT",
+            category =
+                when {
+                    isClearingInvestment -> CategoryType.INVESTMENT.name
+                    else -> result.category.name
+                },
 
-            // 🔒 INTERNAL TRANSFER MERGE (FINAL)
-            isNetZero =
-                if (isUserSelfTransfer)
-                    true
+            expenseFrequency =
+                if (isClearingInvestment)
+                    ExpenseFrequency.YEARLY.name
                 else
-                    internalResult != null,
+                    tx.expenseFrequency,
+
+            isNetZero =
+                when {
+                    isUserSelfTransfer -> true
+                    isClearingInvestment -> false
+                    else -> internalResult != null
+                },
 
             linkType =
-                if (isUserSelfTransfer)
-                    tx.linkType
-                else if (internalResult != null)
-                    "INTERNAL_TRANSFER"
-                else
-                    null,
+                when {
+                    isUserSelfTransfer -> tx.linkType
+                    isClearingInvestment -> LINK_TYPE_INVESTMENT_OUTFLOW
+                    internalResult != null -> "INTERNAL_TRANSFER"
+                    else -> null
+                },
+
+            linkConfidence =
+                when {
+                    isUserSelfTransfer -> tx.linkConfidence
+                    isClearingInvestment -> 70
+                    internalResult != null -> 2
+                    else -> 0
+                },
 
             linkId =
                 if (isUserSelfTransfer)
                     tx.linkId
                 else
                     null,
-
-            linkConfidence =
-                if (isUserSelfTransfer)
-                    tx.linkConfidence
-                else if (internalResult != null)
-                    2
-                else
-                    0
         )
 
         db.smsDao().update(updated)
         Log.d("expense", "Reclassified tx=$id merchant=${updated.merchant}")
 
-        return updated
+// 🔒 VERY IMPORTANT: re-run linker if eligible
+        if (
+            updated.linkType != LINK_TYPE_INVESTMENT_OUTFLOW &&
+            !updated.isNetZero &&
+            !updated.isWalletMerchantSpend()
+        ) {
+            linkedDetector.process(
+                updated.toDomain(),
+                selfRecipientProvider = { getSelfRecipients() }
+            )
+        }
+        Log.d("expense", "Reclassified tx=$id merchant=${updated.merchant}")
+        return db.smsDao().getById(id)
+
     }
 
 
@@ -791,11 +891,54 @@ class SmsRepositoryImpl @Inject constructor(
             isNetZero = true,
             linkType = "USER_SELF",          // IMPORTANT: distinguish from auto
             linkId = tx.id.toString(),
-            linkConfidence = 1
+            linkConfidence = 90
         )
 
         db.smsDao().update(updated)
     }
+
+    fun applySelfTransferPattern(
+        seedTx: SmsEntity
+    ): Flow<ApplyRuleProgress> = flow {
+
+        val smsDao = db.smsDao()
+
+        // 1️⃣ Build structural template
+        val template = SmsTemplateUtil.buildTemplate(seedTx.body)
+
+        // 2️⃣ Store template (idempotent)
+        smsDao.insertPattern(
+            LinkedPatternEntity(pattern = template)
+        )
+
+        // 3️⃣ Find candidate SMS
+        val candidates = smsDao.getAllDebitNonNetZero()
+        val total = candidates.size
+
+        var done = 0
+        emit(ApplyRuleProgress(done = 0, total = total))
+
+        // 4️⃣ Apply USER_SELF
+        candidates.forEach { tx ->
+            if (SmsTemplateMatcher.matches(tx.body, template)) {
+                smsDao.updateLink(
+                    id = tx.id,
+                    linkId = null,
+                    linkType = "USER_SELF",
+                    linkConfidence = 100,
+                    isNetZero = true
+                )
+            }
+
+            done++
+            if (done % 25 == 0 || done == total) {
+                emit(ApplyRuleProgress(done = done, total = total))
+            }
+        }
+    }
+
+
+
 
     suspend fun getSelfRecipients(): Set<String> {
         return db.smsDao()
@@ -823,6 +966,25 @@ class SmsRepositoryImpl @Inject constructor(
         if (person != null) {
             db.smsDao().deleteSelfRecipient(person)
         }
+    }
+
+    suspend fun setExpenseFrequency(
+        tx: SmsEntity,
+        frequency: ExpenseFrequency
+    ) {
+        val anchorYear =
+            when (frequency) {
+                ExpenseFrequency.YEARLY ->
+                    tx.localDate().year
+
+                else -> null
+            }
+
+        db.smsDao().updateExpenseFrequency(
+            id = tx.id,
+            frequency = frequency.name,
+            anchorYear = anchorYear
+        )
     }
 
 
