@@ -11,6 +11,7 @@ import com.spendwise.core.ml.SenderClassifierMl
 import com.spendwise.core.transfer.InternalTransferDetector
 import com.spendwise.core.transfer.SelfRecipientProvider
 import com.spendwise.core.transfer.TransferBuffer
+import com.spendwise.core.Logger as Log
 
 object SmsMlPipeline {
 
@@ -37,6 +38,7 @@ object SmsMlPipeline {
         if (intentType !in listOf(IntentType.DEBIT, IntentType.CREDIT, IntentType.REFUND)) return null
 
         // 🔥 2.5 INTERNAL TRANSFER DETECTION
+        Log.enabled =false
         val transferInfo = InternalTransferDetector.detect(
             senderType = senderType,
             body = raw.body,
@@ -78,7 +80,7 @@ object SmsMlPipeline {
             }
 
         val isCredit = intentType == IntentType.CREDIT || intentType == IntentType.REFUND
-
+        Log.enabled =true
         return ClassifiedTxn(
             rawSms = raw,
             senderType = senderType,

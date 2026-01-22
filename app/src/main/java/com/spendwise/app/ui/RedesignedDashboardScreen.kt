@@ -698,6 +698,7 @@ fun InsightsScreen(
     // Reset filter whenever entering Insights
     LaunchedEffect(Unit) {
         viewModel.clearSelectedType()
+        viewModel.setInsightsFrequencyFilter(FrequencyFilter.MONTHLY_ONLY)
     }
 
 

@@ -1,9 +1,9 @@
 package com.spendwise.core.transfer
 
-import com.spendwise.core.Logger as Log
 import com.spendwise.core.ml.MerchantExtractorMl
 import com.spendwise.core.ml.SenderType
 import com.spendwise.core.transfer.InternalTransferDetector.TransferInfo
+import com.spendwise.core.Logger as Log
 
 /**
  * Detects internal / cross-account transfers for ALL Indian banks.
@@ -59,6 +59,7 @@ object InternalTransferDetector {
         amount: Double,
         selfRecipientProvider: SelfRecipientProvider
     ): TransferInfo? {
+
         Log.e("ITD", "==============================")
         Log.e("ITD", "DETECT START")
         Log.e("ITD", "BODY = $body")
