@@ -285,20 +285,14 @@ class SmsImportViewModel @Inject constructor(
                     it.expenseFrequency == ExpenseFrequency.YEARLY.name
                 }
 
-            val hasIrregularData =
-                periodFiltered.any {
-                    it.expenseFrequency == ExpenseFrequency.IRREGULAR.name ||
-                            it.expenseFrequency == ExpenseFrequency.ONE_TIME.name
-                }
 
             val hasAnyData =
-                hasMonthlyData || hasYearlyData || hasIrregularData
+                hasMonthlyData || hasYearlyData
 
             InsightsUiState(
                 frequency = selectedFilter,
                 hasMonthlyData = hasMonthlyData,
                 hasYearlyData = hasYearlyData,
-                hasIrregularData = hasIrregularData,
                 hasAnyData = hasAnyData
             )
         }.stateIn(
@@ -308,7 +302,6 @@ class SmsImportViewModel @Inject constructor(
                 frequency = FrequencyFilter.MONTHLY_ONLY,
                 hasMonthlyData = false,
                 hasYearlyData = false,
-                hasIrregularData = false,
                 hasAnyData = false
             )
         )
@@ -318,7 +311,6 @@ class SmsImportViewModel @Inject constructor(
         val frequency: FrequencyFilter,
         val hasMonthlyData: Boolean,
         val hasYearlyData: Boolean,
-        val hasIrregularData: Boolean,
         val hasAnyData: Boolean
     )
 
@@ -1429,9 +1421,6 @@ private fun List<SmsEntity>.filterByPeriod(
         FrequencyFilter.YEARLY_ONLY ->
             freq == ExpenseFrequency.YEARLY.name
 
-        FrequencyFilter.IRREGULAR_ONLY ->
-            freq == ExpenseFrequency.IRREGULAR.name ||
-                    freq == ExpenseFrequency.ONE_TIME.name
     }
 }
 

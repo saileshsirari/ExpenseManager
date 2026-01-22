@@ -577,11 +577,7 @@ fun InsightsFrequencySelector(
                 uiState = uiState,
                 onChange = onChange
             )
-            FrequencyChip(
-                filter = FrequencyFilter.IRREGULAR_ONLY,
-                uiState = uiState,
-                onChange = onChange
-            )
+
         }
     }
 }
@@ -590,7 +586,6 @@ fun FrequencyFilter.isEnabled(ui: InsightsUiState): Boolean =
     when (this) {
         FrequencyFilter.MONTHLY_ONLY -> ui.hasMonthlyData
         FrequencyFilter.YEARLY_ONLY -> ui.hasYearlyData
-        FrequencyFilter.IRREGULAR_ONLY -> ui.hasIrregularData
         FrequencyFilter.ALL_EXPENSES -> ui.hasAnyData
     }
 
@@ -673,7 +668,6 @@ private fun FrequencyChip(
                     FrequencyFilter.MONTHLY_ONLY -> "Monthly"
                     FrequencyFilter.ALL_EXPENSES -> "All"
                     FrequencyFilter.YEARLY_ONLY -> "Yearly"
-                    FrequencyFilter.IRREGULAR_ONLY -> "Irregular"
                 }
             )
         }
@@ -825,9 +819,6 @@ fun InsightsScreen(
 
                                         FrequencyFilter.YEARLY_ONLY ->
                                             "Showing yearly expenses only"
-
-                                        FrequencyFilter.IRREGULAR_ONLY ->
-                                            "Showing irregular and one-time expenses"
 
                                         else -> ""
                                     },
@@ -1294,8 +1285,7 @@ fun ExpenseFrequencySelector(
 
                     val disabled =
                         isSmallAmount &&
-                                (freq == ExpenseFrequency.YEARLY ||
-                                        freq == ExpenseFrequency.IRREGULAR)
+                                (freq == ExpenseFrequency.YEARLY )
 
                     DropdownMenuItem(
                         enabled = !disabled,
@@ -1335,8 +1325,6 @@ fun ExpenseFrequency.displayName(): String =
     when (this) {
         ExpenseFrequency.MONTHLY -> "Monthly"
         ExpenseFrequency.YEARLY -> "Yearly"
-        ExpenseFrequency.IRREGULAR -> "Irregular"
-        ExpenseFrequency.ONE_TIME -> "One-time"
     }
 
 private const val MIN_AMOUNT_FOR_FREQUENCY_SELECTOR = 1000.0

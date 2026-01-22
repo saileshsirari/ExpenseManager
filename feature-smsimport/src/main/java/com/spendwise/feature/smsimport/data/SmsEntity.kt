@@ -98,10 +98,6 @@ private fun SmsEntity.matchesFrequency(
 
         FrequencyFilter.YEARLY_ONLY ->
             freq == ExpenseFrequency.YEARLY.name
-
-        FrequencyFilter.IRREGULAR_ONLY ->
-            freq == ExpenseFrequency.IRREGULAR.name ||
-                    freq == ExpenseFrequency.ONE_TIME.name
     }
 }
 fun SmsEntity.hasCreditedPartyInSameSms(): Boolean {
