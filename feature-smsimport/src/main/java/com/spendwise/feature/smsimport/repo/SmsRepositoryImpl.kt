@@ -4,8 +4,6 @@ import SmsMlPipeline
 import android.content.ContentResolver
 import com.spendwise.core.com.spendwise.core.ExpenseFrequency
 import com.spendwise.core.com.spendwise.core.detector.CATEGORY_INVESTMENT
-import com.spendwise.core.com.spendwise.core.detector.ClearingEntityInvestmentDetector
-import com.spendwise.core.com.spendwise.core.detector.LINK_TYPE_INVESTMENT_OUTFLOW
 import com.spendwise.core.com.spendwise.core.isCardBillPayment
 import com.spendwise.core.com.spendwise.core.isSystemInfoDebit
 import com.spendwise.core.com.spendwise.core.isWalletCredit
@@ -99,7 +97,6 @@ class SmsRepositoryImpl @Inject constructor(
         for (sms in rawList) {
             val amount = SmsParser.parseAmount(sms.body) ?: continue
 // 🔒 INVESTMENT INFO SMS → NEVER A TRANSACTION
-            if (checkAndInsertIfIsInvestmentInfoSms(sms)) continue
 
             val result = SmsMlPipeline.classify(
                 raw = RawSms(sms.sender, sms.body, sms.timestamp),
@@ -146,9 +143,6 @@ class SmsRepositoryImpl @Inject constructor(
             val saved = db.smsDao().getById(id) ?: continue
 // 🔒 RUN CANONICAL CLASSIFICATION PIPELINE
             val classified = classifyAndLinkSingle(saved)
-            if (classified.linkType == LINK_TYPE_INVESTMENT_OUTFLOW) {
-                continue
-            }
 // 🔒 NEVER run linker for wallet spends
             if (!classified.isNetZero && !classified.isWalletMerchantSpend()) {
                 linkedDetector.process(
@@ -214,7 +208,6 @@ class SmsRepositoryImpl @Inject constructor(
             }
 
             // ---- investment INFO sms (never a transaction) ----
-            if (checkAndInsertIfIsInvestmentInfoSms(sms)) continue
 
             val amount = SmsParser.parseAmount(sms.body)
             if (amount == null || amount <= 0) continue
@@ -277,7 +270,6 @@ class SmsRepositoryImpl @Inject constructor(
             // LINKING (SKIP WHEN POSSIBLE)
             // --------------------------------------------------
             if (
-                classified.linkType != LINK_TYPE_INVESTMENT_OUTFLOW &&
                 !classified.isNetZero &&
                 !classified.isWalletMerchantSpend()
             ) {
@@ -303,30 +295,6 @@ class SmsRepositoryImpl @Inject constructor(
         Log.enabled = true
 
         emit(ImportEvent.Finished(db.smsDao().getAllOnce()))
-    }
-
-
-    private suspend fun checkAndInsertIfIsInvestmentInfoSms(sms: RawSms): Boolean {
-        if (isInvestmentInfoSms(sms.body)) {
-            db.smsDao().insert(
-                SmsEntity(
-                    sender = sms.sender,
-                    body = sms.body,
-                    timestamp = sms.timestamp,
-                    amount = 0.0,
-                    merchant = null,
-                    type = "INFO",
-                    category = CategoryType.INVESTMENT.name,
-                    isNetZero = true,
-                    linkType = null,
-                    linkId = null,
-                    linkConfidence = 0
-                )
-            )
-            return true
-        }
-        return false
-
     }
 
 
@@ -549,11 +517,9 @@ class SmsRepositoryImpl @Inject constructor(
             InvestmentOutflowDetector.isInvestmentOutflow(tx.body)
         ) {
             val updated = tx.copy(
-                linkType = LINK_TYPE_INVESTMENT_OUTFLOW,
                 category = CATEGORY_INVESTMENT,
                 type = "DEBIT",
-                isNetZero = false,
-                expenseFrequency = ExpenseFrequency.YEARLY.name
+                isNetZero = false
             )
 
             db.smsDao().update(updated)
@@ -573,7 +539,7 @@ class SmsRepositoryImpl @Inject constructor(
             Log.e("REPROCESS", "INFO SMS detected")
 
             val updated = tx.copy(
-                type = "INFO",
+                type = "DEBIT",
                 isNetZero = true
             )
             db.smsDao().update(updated)
@@ -607,34 +573,6 @@ class SmsRepositoryImpl @Inject constructor(
 
 
 // --------------------------------------------------
-// CLEARING ENTITY INVESTMENT (NEW RULE)
-// --------------------------------------------------
-        if (
-            ClearingEntityInvestmentDetector.isClearingEntityInvestment(
-                senderType = SenderType.BANK,
-                txType = tx.type,            // 👈 explicit
-                body = tx.body,
-                amount = amount
-            )
-        ) {
-            val updated = tx.copy(
-                type = "DEBIT",
-                category = CategoryType.INVESTMENT.name,
-                isNetZero = false,
-                expenseFrequency = ExpenseFrequency.YEARLY.name,
-                linkType = "INVESTMENT_OUTFLOW",
-                linkConfidence = 70   // medium confidence
-            )
-
-            db.smsDao().update(updated)
-
-            Log.d(
-                "INVESTMENT",
-                "Clearing-entity investment detected → YEARLY (pending confirmation), id=${tx.id}"
-            )
-
-            return updated
-        }
 
         // 🔒 4️⃣ ML classification (LAST)
         val result = SmsMlPipeline.classify(
@@ -668,11 +606,7 @@ class SmsRepositoryImpl @Inject constructor(
 
             val updated = tx.copy(
                 type = if (result.isCredit) "CREDIT" else "DEBIT",
-                category = if (tx.category == CategoryType.INVESTMENT.name &&
-                    tx.expenseFrequency == ExpenseFrequency.MONTHLY.name
-                ) {
-                    ExpenseFrequency.YEARLY.name
-                } else finalCategory.name,
+                category =  finalCategory.name,
                 merchant = resolveMerchant(result.merchant, finalCategory)
             )
 
@@ -734,13 +668,6 @@ class SmsRepositoryImpl @Inject constructor(
         // --------------------------------------------------
 // CLEARING ENTITY INVESTMENT (REPROCESS PATH)
 // --------------------------------------------------
-        val isClearingInvestment =
-            ClearingEntityInvestmentDetector.isClearingEntityInvestment(
-                senderType = SenderType.BANK,
-                txType = if (result.isCredit) "CREDIT" else "DEBIT",
-                body = tx.body,
-                amount = parsedAmount
-            )
 
 
         val updated = tx.copy(
@@ -749,29 +676,15 @@ class SmsRepositoryImpl @Inject constructor(
                 category = result.category
             ),
 
-            category =
-                when {
-                    isClearingInvestment -> CategoryType.INVESTMENT.name
-                    else -> result.category.name
-                },
-
-            expenseFrequency =
-                if (isClearingInvestment)
-                    ExpenseFrequency.YEARLY.name
-                else
-                    tx.expenseFrequency,
-
             isNetZero =
                 when {
                     isUserSelfTransfer -> true
-                    isClearingInvestment -> false
                     else -> internalResult != null
                 },
 
             linkType =
                 when {
                     isUserSelfTransfer -> tx.linkType
-                    isClearingInvestment -> LINK_TYPE_INVESTMENT_OUTFLOW
                     internalResult != null -> "INTERNAL_TRANSFER"
                     else -> null
                 },
@@ -779,7 +692,6 @@ class SmsRepositoryImpl @Inject constructor(
             linkConfidence =
                 when {
                     isUserSelfTransfer -> tx.linkConfidence
-                    isClearingInvestment -> 70
                     internalResult != null -> 2
                     else -> 0
                 },
@@ -796,7 +708,6 @@ class SmsRepositoryImpl @Inject constructor(
 
 // 🔒 VERY IMPORTANT: re-run linker if eligible
         if (
-            updated.linkType != LINK_TYPE_INVESTMENT_OUTFLOW &&
             !updated.isNetZero &&
             !updated.isWalletMerchantSpend()
         ) {

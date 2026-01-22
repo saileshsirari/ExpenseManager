@@ -5,6 +5,7 @@ package com.spendwise.app.ui
 
 import android.R
 import android.os.Build
+import androidx.activity.compose.BackHandler
 import androidx.annotation.RequiresApi
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateContentSize
@@ -25,13 +26,11 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.TrendingUp
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.CompareArrows
 import androidx.compose.material.icons.filled.ExpandLess
@@ -80,13 +79,11 @@ import com.spendwise.app.ui.dashboard.CategoryPieChart
 import com.spendwise.app.ui.dashboard.DashboardModeSelector
 import com.spendwise.core.com.spendwise.core.ExpenseFrequency
 import com.spendwise.core.com.spendwise.core.FrequencyFilter
-import com.spendwise.core.com.spendwise.core.detector.LINK_TYPE_INVESTMENT_OUTFLOW
 import com.spendwise.core.ml.CategoryType
 import com.spendwise.domain.com.spendwise.feature.smsimport.data.DashboardMode
 import com.spendwise.domain.com.spendwise.feature.smsimport.ui.MonthlyComparisonCard
 import com.spendwise.domain.com.spendwise.feature.smsimport.ui.WalletInsightCard
 import com.spendwise.feature.smsimport.data.SmsEntity
-import com.spendwise.feature.smsimport.data.isExpense
 import com.spendwise.feature.smsimport.ui.SmsImportViewModel
 import com.spendwise.feature.smsimport.ui.SmsImportViewModel.InsightsUiState
 import com.spendwise.feature.smsimport.ui.UiTxnRow
@@ -146,7 +143,22 @@ fun RedesignedDashboardScreen(
         }
         return
     }
+    val fromInsights =
+        navController.currentBackStackEntry
+            ?.savedStateHandle
+            ?.getStateFlow("from_insights", false)
+            ?.collectAsState()
 
+    LaunchedEffect(fromInsights?.value) {
+        if (fromInsights?.value == true) {
+            viewModel.restoreDashboardFromInsights()
+
+            // 🔒 Consume the event
+            navController.currentBackStackEntry
+                ?.savedStateHandle
+                ?.set("from_insights", false)
+        }
+    }
 
     Scaffold(
         floatingActionButton = {
@@ -700,7 +712,9 @@ fun InsightsScreen(
 ) {
     val freqFilter by viewModel.insightsFrequencyFilter.collectAsState()
     val uiState by viewModel.uiState.collectAsState()
-
+    BackHandler {
+        exitInsights(navController,viewModel,viewModel.uiState.value.mode,viewModel.uiState.value.period)
+    }
 
     // Reset filter whenever entering Insights
     LaunchedEffect(Unit) {
@@ -711,40 +725,17 @@ fun InsightsScreen(
 
     val totalSpend by viewModel.totalSpend.collectAsState()
 
-    val filteredTxs = remember(
-        uiState.finalList,
-        freqFilter
-    ) {
-        uiState.finalList
-            .filter { !it.isNetZero } // remove internal transfers
-            .filter { tx ->
-                tx.isExpense() && tx.matchesFrequency(freqFilter)
+    val insightRows = remember(uiState.rows, freqFilter) {
+        uiState.rows.filter { row ->
+            when (row) {
+                is UiTxnRow.Section -> true
+                is UiTxnRow.Normal -> row.tx.matchesFrequency(freqFilter)
+                is UiTxnRow.Grouped ->
+                    row.children.any { it.matchesFrequency(freqFilter) }
             }
-    }
-
-    val insightRows = remember(
-        filteredTxs,
-        uiState.sortConfig,
-        uiState.showGroupedMerchants
-    ) {
-        val sortedTxs = viewModel.sortTransactions(
-            list = filteredTxs,
-            config = uiState.sortConfig
-        )
-
-        if (!uiState.showGroupedMerchants) {
-            sortedTxs.map { UiTxnRow.Normal(it) }
-        } else {
-            viewModel.buildUiRows(
-                txs = sortedTxs,
-                sortConfig = uiState.sortConfig,
-                groupByMerchant = true
-            )
         }
     }
 
-
-    var selectedTx by remember { mutableStateOf<SmsEntity?>(null) }
     var expandedItemId by remember { mutableStateOf<Long?>(null) }
     // Full categories for pie chart
     val categoriesAll by viewModel.categoryTotalsForPeriod.collectAsState()
@@ -764,12 +755,7 @@ fun InsightsScreen(
                 title = { Text("Insights") },
                 navigationIcon = {
                     IconButton(onClick = {
-                        viewModel.rememberInsightsContext(
-                            mode = uiState.mode,
-                            period = uiState.period
-                        )
-                        viewModel.restoreDashboardFromInsights()
-                        navController.popBackStack()
+                        exitInsights(navController,viewModel,viewModel.uiState.value.mode,viewModel.uiState.value.period)
                     }) {
                         Icon(
                             painter = painterResource(id = R.drawable.ic_menu_close_clear_cancel),
@@ -928,7 +914,8 @@ fun InsightsScreen(
                     when (row) {
                         is UiTxnRow.Normal -> "tx-${row.tx.id}"
                         is UiTxnRow.Grouped -> "group-${row.groupId}"
-                        else -> "row"
+                        is UiTxnRow.Section -> "section-${row.id}"
+
                     }
                 }
             ) { row ->
@@ -976,8 +963,22 @@ fun InsightsScreen(
 
                     // 🔒 Explicitly ignore sections in Insights
                     is UiTxnRow.Section -> {
-                        // no-op (Insights does not show section headers)
+                        InternalTransferSectionHeader(
+                            title = row.title,
+                            count = row.count,
+                            collapsed = row.collapsed,
+                            onToggle = {
+                                when (row.id) {
+                                    "main_transactions" ->
+                                        viewModel.toggleMainSection()
+                                    "internal_transfers" ->
+                                        viewModel.toggleInternalSection()
+                                }
+                            }
+                        )
+                        Spacer(Modifier.height(8.dp))
                     }
+
                 }
             }
 
@@ -1007,6 +1008,20 @@ fun SummaryHeader(totalDebit: Double, totalCredit: Double, onOpenInsights: () ->
             Text("₹${totalCredit.toInt()}", style = MaterialTheme.typography.titleMedium)
         }
     }
+}
+private fun exitInsights(navController: NavController, viewModel: SmsImportViewModel,
+                         mode: DashboardMode,
+                         period: YearMonth) {
+    // 🔒 Save current insights state
+    viewModel.rememberInsightsContext(
+        mode = mode,
+        period = period
+    )
+    navController.previousBackStackEntry
+        ?.savedStateHandle
+        ?.set("from_insights", true)
+
+    navController.popBackStack()
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -1207,8 +1222,11 @@ private fun TransactionRowContent(
                     color = Color.Gray
                 )
 
-                if (sms.linkType == "INTERNAL_TRANSFER") {
-                    Row(
+                if (sms.isNetZero &&
+                    (sms.linkType == "INTERNAL_TRANSFER" || sms.linkType == "USER_SELF")
+                ) {
+                    // show "Internal Transfer" badge
+                Row(
                         verticalAlignment = Alignment.CenterVertically,
                         modifier = Modifier.padding(bottom = 6.dp)
                     ) {
@@ -1393,8 +1411,9 @@ fun TransactionRow(
                     ) {
                         Text("Self transfer")
                         Switch(
-                            checked = sms.isNetZero && sms.linkType == "INTERNAL_TRANSFER",
-                            onCheckedChange = { checked ->
+                            checked = sms.isNetZero &&
+                                    (sms.linkType == "INTERNAL_TRANSFER" || sms.linkType == "USER_SELF"),
+                                    onCheckedChange = { checked ->
                                 if (checked) {
                                     onMarkAsSelfTransfer(sms)
                                 }
@@ -1403,28 +1422,7 @@ fun TransactionRow(
                         )
                     }
 
-                    if (sms.linkType == LINK_TYPE_INVESTMENT_OUTFLOW) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier.padding(top = 2.dp)
-                        ) {
-                            Icon(
-                                imageVector = Icons.AutoMirrored.Filled.TrendingUp,
-                                contentDescription = null,
-                                tint = MaterialTheme.colorScheme.primary,
-                                modifier = Modifier.size(14.dp)
-                            )
-                            Spacer(Modifier.width(4.dp))
-                            Text(
-                                text = "Investment • ${
-                                    sms.expenseFrequency.lowercase()
-                                        .replaceFirstChar { it.uppercase() }
-                                }",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.primary
-                            )
-                        }
-                    }
+
 
                     Row(
                         modifier = Modifier.fillMaxWidth(),

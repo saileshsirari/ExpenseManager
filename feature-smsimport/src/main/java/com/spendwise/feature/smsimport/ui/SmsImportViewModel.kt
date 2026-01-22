@@ -8,7 +8,6 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.spendwise.core.com.spendwise.core.ExpenseFrequency
 import com.spendwise.core.com.spendwise.core.FrequencyFilter
-import com.spendwise.core.com.spendwise.core.detector.LINK_TYPE_INVESTMENT_OUTFLOW
 import com.spendwise.core.ml.CategoryType
 import com.spendwise.core.ml.MerchantExtractorMl
 import com.spendwise.core.ml.MlReasonBundle
@@ -533,7 +532,7 @@ class SmsImportViewModel @Inject constructor(
     val uiState: StateFlow<DashboardUiState> =
         combine(items, uiInputs) { list, input ->
 
-            Log.d("expense", "input.mode ${input.mode}")
+            Log.d("expense", "items ${items.value.size}")
 
             // -------------------------------------------------
             // 1) Base list — ALL transactions from DB
@@ -569,14 +568,12 @@ class SmsImportViewModel @Inject constructor(
             val monthlyExpenses =
                 finalList.filter {
                     it.isExpense() &&
-                            it.linkType != LINK_TYPE_INVESTMENT_OUTFLOW &&
-                            it.expenseFrequency == ExpenseFrequency.MONTHLY.name
+                            it.matchesFrequency(insightsFrequencyFilter.value)
                 }
 
-            val monthlyInternalTransfers =
+            val internalTransfers =
                 finalList.filter {
-                    it.isNetZero &&
-                            it.expenseFrequency == ExpenseFrequency.MONTHLY.name
+                    it.isNetZero
                 }
 
 
@@ -625,7 +622,7 @@ class SmsImportViewModel @Inject constructor(
                 sortTransactions(monthlyExpenses, input.sortConfig)
 
             val sortedInternal =
-                sortTransactions(monthlyInternalTransfers, input.sortConfig)
+                sortTransactions(internalTransfers, input.sortConfig)
 
             // -------------------------------------------------
             // 10) MAIN rows (expenses + credits)
