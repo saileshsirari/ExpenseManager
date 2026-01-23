@@ -107,7 +107,8 @@ class SmsImportViewModel @Inject constructor(
         }
 
 
-    private val _isPro = MutableStateFlow(false)
+
+    private val _isPro = MutableStateFlow(true)
     val isPro: StateFlow<Boolean> = _isPro
     private val _showPaywall = MutableStateFlow(false)
     fun onUpgradeClicked() {
@@ -1299,6 +1300,26 @@ class SmsImportViewModel @Inject constructor(
     val applySelfRuleRequest =
         _applySelfRuleRequest.asSharedFlow()
 
+    val monthlyTrendBars: StateFlow<List<MonthlyBar>> =
+        items.map { list ->
+            list
+                .filter { it.isCountedAsExpense() }
+                .groupBy {
+                    val d = it.localDate()
+                    YearMonth.of(d.year, d.month)
+                }
+                .map { (ym, txs) ->
+                    MonthlyBar(
+                        month = ym,
+                        total = txs.sumOf { it.amount }
+                    )
+                }
+                .sortedBy { it.month }   // oldest → newest
+        }.stateIn(
+            viewModelScope,
+            SharingStarted.Eagerly,
+            emptyList()
+        )
 
     fun requestApplySelfRule(tx: SmsEntity) {
         val canSuggest = canSuggestSelfRule(tx)
@@ -1482,5 +1503,9 @@ fun SmsEntity.matchesFrequency(
 
     }
 }
+data class MonthlyBar(
+    val month: YearMonth,
+    val total: Double
+)
 
 

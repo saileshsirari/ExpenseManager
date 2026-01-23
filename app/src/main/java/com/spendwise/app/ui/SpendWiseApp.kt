@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Scaffold
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.core.content.ContextCompat
@@ -74,7 +75,8 @@ fun SpendWiseApp() {
             composable(Screen.Insights.route) {
                 InsightsScreen(
                     navController = navController,
-                    viewModel = viewModel
+                    viewModel = viewModel,
+                    isPro = viewModel.isPro.collectAsState().value
                 )
             }
 

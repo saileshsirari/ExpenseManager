@@ -22,13 +22,16 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
@@ -69,9 +72,13 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
 import androidx.navigation.NavController
 import com.spendwise.app.navigation.Screen
@@ -84,7 +91,7 @@ import com.spendwise.domain.com.spendwise.feature.smsimport.data.DashboardMode
 import com.spendwise.domain.com.spendwise.feature.smsimport.ui.MonthlyComparisonCard
 import com.spendwise.domain.com.spendwise.feature.smsimport.ui.WalletInsightCard
 import com.spendwise.feature.smsimport.data.SmsEntity
-import com.spendwise.feature.smsimport.ui.ProLockType
+import com.spendwise.feature.smsimport.ui.MonthlyBar
 import com.spendwise.feature.smsimport.ui.SmsImportViewModel
 import com.spendwise.feature.smsimport.ui.SmsImportViewModel.InsightsUiState
 import com.spendwise.feature.smsimport.ui.UiTxnRow
@@ -730,6 +737,143 @@ fun ProExplainDialog(
     )
 }
 
+@Composable
+fun MonthlyTrendBarChart(
+    bars: List<MonthlyBar>,
+    isPro: Boolean,
+    onMonthSelected: (YearMonth) -> Unit,
+    onUpgrade: () -> Unit
+) {
+    if (!isPro) {
+        LockedTrendPreview(onUpgrade)
+        return
+    }
+
+    val max = bars.maxOfOrNull { it.total } ?: 1.0
+    val density = LocalDensity.current
+    val listState = rememberLazyListState()
+
+    LaunchedEffect(bars.size) {
+        if (bars.isNotEmpty()) {
+            listState.scrollToItem(bars.lastIndex)
+        }
+    }
+
+    LazyRow(
+        state = listState,
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(220.dp),
+        contentPadding = PaddingValues(horizontal = 16.dp),
+        horizontalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        items(bars) { bar ->
+            MonthlyBarItem(
+                bar = bar,
+                max = max,
+                onClick = { onMonthSelected(bar.month) }
+            )
+        }
+    }
+}
+@Composable
+private fun MonthlyBarItem(
+    bar: MonthlyBar,
+    max: Double,
+    onClick: () -> Unit
+) {
+    fun formatRupeesCompact(amount: Double): String {
+        return when {
+            amount >= 1_00_000 ->
+                "₹${(amount / 1_00_000).roundToInt()}L"
+
+            amount >= 1_000 ->
+                "₹${(amount / 1_000).roundToInt()}K"
+
+            else ->
+                "₹${amount.roundToInt()}"
+        }
+    }
+    val heightRatio = (bar.total / max).coerceIn(0.05, 1.0)
+    val barHeight = 160.dp * heightRatio.toFloat()
+
+    Column(
+        modifier = Modifier
+            .width(42.dp)
+            .fillMaxHeight()
+            .clickable { onClick() },
+        verticalArrangement = Arrangement.Bottom,
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+
+        // 🔹 VALUE LABEL (NEW)
+        Text(
+            text = formatRupeesCompact(bar.total),
+            style = MaterialTheme.typography.labelSmall.copy(
+                fontSize = 10.sp
+            ),
+            color = Color(0xFF9E9E9E), // slightly lighter gray
+            textAlign = TextAlign.Center,
+            modifier = Modifier.padding(bottom = 2.dp)
+        )
+
+
+        // 🔹 BAR
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(barHeight)
+                .clip(RoundedCornerShape(10.dp))
+                .background(Color(0xFF5B6CFF))
+        )
+
+        Spacer(Modifier.height(8.dp))
+
+        // 🔹 MONTH
+        Text(
+            text = bar.month.month.name
+                .take(3)
+                .lowercase()
+                .replaceFirstChar { it.uppercase() },
+            style = MaterialTheme.typography.labelSmall,
+            color = Color.Gray
+        )
+
+        Text(
+            text = "'${bar.month.year % 100}",
+            style = MaterialTheme.typography.labelSmall,
+            color = Color.Gray
+        )
+    }
+}
+
+@Composable
+fun LockedTrendPreview(onUpgrade: () -> Unit) {
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(200.dp)
+            .clip(RoundedCornerShape(16.dp))
+            .background(Color(0xFF1E1E1E))
+            .clickable { onUpgrade() },
+        contentAlignment = Alignment.Center
+    ) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Text(
+                "Monthly trends are Pro",
+                color = Color.White,
+                style = MaterialTheme.typography.titleMedium
+            )
+            Spacer(Modifier.height(6.dp))
+            Text(
+                "See spending patterns across months.\nYour data stays the same.",
+                color = Color.Gray,
+                style = MaterialTheme.typography.bodySmall,
+                textAlign = TextAlign.Center
+            )
+        }
+    }
+}
 
 /* -----------------------------------------------------------
    2) Insights screen: full-size pie chart + category breakdown
@@ -739,7 +883,8 @@ fun ProExplainDialog(
 @Composable
 fun InsightsScreen(
     navController: NavController,
-    viewModel: SmsImportViewModel
+    viewModel: SmsImportViewModel,
+    isPro: Boolean
 ) {
     val freqFilter by viewModel.insightsFrequencyFilter.collectAsState()
     val uiState by viewModel.uiState.collectAsState()
@@ -779,7 +924,7 @@ fun InsightsScreen(
     val insightsUi by viewModel.insightsUiState.collectAsState()
 
     var lockedMode by remember { mutableStateOf<DashboardMode?>(null) }
-
+    val monthlyBars by viewModel.monthlyTrendBars.collectAsState()
 
 
 
@@ -835,6 +980,25 @@ fun InsightsScreen(
                 )
             }
 
+            // ----------------------------
+            // 🔹 Monthly Trends
+            // ----------------------------
+            item {
+                MonthlyTrendBarChart(
+                    bars = monthlyBars,
+                    isPro = isPro,
+                    onMonthSelected = { month ->
+                        viewModel.setMode(DashboardMode.MONTH) // safe no-op if already month
+                        viewModel.setPeriod(month)
+                    },
+                    onUpgrade = {
+                        viewModel.onUpgradeClicked()
+                    }
+                )
+
+                Spacer(Modifier.height(24.dp))
+
+            }
 
             /* -------------------------------------------------------------
                 CATEGORY PIE CHART
@@ -851,6 +1015,8 @@ fun InsightsScreen(
                                 style = MaterialTheme.typography.headlineMedium
                             )
                             Spacer(Modifier.height(10.dp))
+
+
                             InsightsFrequencySelector(
                                 uiState = insightsUi,
                                 onChange = viewModel::setInsightsFrequencyFilter,
