@@ -776,6 +776,43 @@ fun MonthlyTrendBarChart(
         }
     }
 }
+
+@Composable
+fun CollapsibleSectionHeader(
+    title: String,
+    collapsed: Boolean,
+    subtitle: String? = null,
+    onToggle: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable { onToggle() }
+            .padding(vertical = 12.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column {
+            Text(title, style = MaterialTheme.typography.titleMedium)
+            subtitle?.let {
+                Text(
+                    it,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = Color.Gray
+                )
+            }
+        }
+
+        Icon(
+            imageVector =
+                if (collapsed) Icons.Default.ExpandMore
+                else Icons.Default.ExpandLess,
+            contentDescription = null
+        )
+    }
+}
+
+
 @Composable
 private fun MonthlyBarItem(
     bar: MonthlyBar,
@@ -925,6 +962,7 @@ fun InsightsScreen(
 
     var lockedMode by remember { mutableStateOf<DashboardMode?>(null) }
     val monthlyBars by viewModel.monthlyTrendBars.collectAsState()
+    val categoryCollapsed by viewModel.categoryCollapsed.collectAsState()
 
 
 
@@ -1000,84 +1038,122 @@ fun InsightsScreen(
 
             }
 
-            /* -------------------------------------------------------------
-                CATEGORY PIE CHART
-            ------------------------------------------------------------- */
-            item {
-                Card(modifier = Modifier.fillMaxWidth()) {
-                    Column(modifier = Modifier.padding(12.dp)) {
-                        Text("Category Breakdown", style = MaterialTheme.typography.titleMedium)
-                        Spacer(Modifier.height(8.dp))
 
-                        if (categoriesAll.isNotEmpty()) {
-                            Text(
-                                text = "₹${totalSpend.roundToInt()}",
-                                style = MaterialTheme.typography.headlineMedium
-                            )
-                            Spacer(Modifier.height(10.dp))
-
-
-                            InsightsFrequencySelector(
-                                uiState = insightsUi,
-                                onChange = viewModel::setInsightsFrequencyFilter,
-                            )
-
-
-                            if (freqFilter != FrequencyFilter.MONTHLY_ONLY) {
-                                Text(
-                                    text = when (freqFilter) {
-                                        FrequencyFilter.ALL_EXPENSES ->
-                                            "Includes yearly and irregular expenses"
-
-                                        FrequencyFilter.YEARLY_ONLY ->
-                                            "Showing yearly expenses only"
-
-                                        else -> ""
-                                    },
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = Color.Gray,
-                                    modifier = Modifier.padding(top = 6.dp, bottom = 8.dp)
-                                )
-                            }
-
-                            Spacer(Modifier.height(10.dp))
-
-                            CategoryPieChart(
-                                data = categoriesAll.map { it.total },
-                                labels = categoriesAll.map { it.name },
-                                colors = categoriesAll.map { it.color },
-                                selectedLabel = uiState.selectedType,
-                                onSliceClick = { clicked ->
-                                    viewModel.setSelectedTypeSafe(clicked)
-                                }
-
-                            )
-                            Spacer(Modifier.height(12.dp))
-
-                            CategoryHeader(uiState.selectedType)
-
-
-                        } else {
-                            Text(
-                                "No category data found",
-                                style = MaterialTheme.typography.bodyMedium
-                            )
-                        }
-                    }
-                }
-                Spacer(Modifier.height(16.dp))
-            }
 
             /* -------------------------------------------------------------
                 CATEGORY LIST
             ------------------------------------------------------------- */
+
             item {
-                CategoryListCard(
-                    title = "Spending by category",
-                    items = categoryInsight.items,
-                    locked = categoryInsight.isLocked,
-                    onUpgrade = { viewModel.onUpgradeClicked() }
-                )
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(16.dp)
+                ) {
+                    Column(modifier = Modifier.padding(12.dp)) {
+
+                        // ----------------------------
+                        // HEADER (always visible)
+                        // ----------------------------
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { viewModel.toggleCategoryCollapsed() },
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column {
+                                Text(
+                                    "Category breakdown",
+                                    style = MaterialTheme.typography.titleMedium
+                                )
+
+                                Text(
+                                    "₹${totalSpend.roundToInt()}",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = Color.Gray
+                                )
+                            }
+
+                            Icon(
+                                imageVector =
+                                    if (categoryCollapsed)
+                                        Icons.Default.ExpandMore
+                                    else
+                                        Icons.Default.ExpandLess,
+                                contentDescription = null
+                            )
+                        }
+
+                        // ----------------------------
+                        // COLLAPSIBLE CONTENT
+                        // ----------------------------
+                        AnimatedVisibility(
+                            visible = !categoryCollapsed,
+                            enter = expandVertically() + fadeIn(),
+                            exit = shrinkVertically() + fadeOut()
+                        ) {
+
+                            Column {
+
+                                Divider(modifier = Modifier.padding(vertical = 8.dp))
+
+                                // 🔹 Frequency selector (FREE)
+                                InsightsFrequencySelector(
+                                    uiState = insightsUi,
+                                    onChange = viewModel::setInsightsFrequencyFilter
+                                )
+
+                                if (freqFilter != FrequencyFilter.MONTHLY_ONLY) {
+                                    Text(
+                                        text = when (freqFilter) {
+                                            FrequencyFilter.ALL_EXPENSES ->
+                                                "Includes yearly and irregular expenses"
+
+                                            FrequencyFilter.YEARLY_ONLY ->
+                                                "Showing yearly expenses only"
+
+                                            else -> ""
+                                        },
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = Color.Gray,
+                                        modifier = Modifier.padding(top = 6.dp, bottom = 8.dp)
+                                    )
+                                }
+
+                                Spacer(Modifier.height(8.dp))
+
+                                // 🔹 Pie chart
+                                if (categoriesAll.isNotEmpty()) {
+                                    CategoryPieChart(
+                                        data = categoriesAll.map { it.total },
+                                        labels = categoriesAll.map { it.name },
+                                        colors = categoriesAll.map { it.color },
+                                        selectedLabel = uiState.selectedType,
+                                        onSliceClick = { clicked ->
+                                            viewModel.setSelectedTypeSafe(clicked)
+                                        }
+                                    )
+                                } else {
+                                    Text(
+                                        "No category data found",
+                                        style = MaterialTheme.typography.bodyMedium
+                                    )
+                                }
+
+                                Spacer(Modifier.height(12.dp))
+
+                                // 🔹 Category list (with Pro preview logic)
+                                CategoryListCard(
+                                    title = null, // header already shown
+                                    items = categoryInsight.items,
+                                    locked = categoryInsight.isLocked,
+                                    onUpgrade = { viewModel.onUpgradeClicked() }
+                                )
+                            }
+                        }
+                    }
+                }
+
                 Spacer(Modifier.height(16.dp))
             }
 

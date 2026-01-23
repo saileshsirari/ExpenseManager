@@ -106,6 +106,12 @@ class SmsImportViewModel @Inject constructor(
             else -> ""
         }
 
+    private val _categoryCollapsed = MutableStateFlow(true)
+    val categoryCollapsed = _categoryCollapsed.asStateFlow()
+
+    fun toggleCategoryCollapsed() {
+        _categoryCollapsed.value = !_categoryCollapsed.value
+    }
 
 
     private val _isPro = MutableStateFlow(true)
