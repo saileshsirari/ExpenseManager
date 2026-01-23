@@ -3,6 +3,8 @@ package com.spendwise.feature.smsimport.repo
 import SmsMlPipeline
 import android.content.ContentResolver
 import com.spendwise.core.com.spendwise.core.ExpenseFrequency
+import com.spendwise.core.com.spendwise.core.NetZeroDebugLogger
+import com.spendwise.core.com.spendwise.core.NetZeroReason
 import com.spendwise.core.com.spendwise.core.detector.CATEGORY_INVESTMENT
 import com.spendwise.core.com.spendwise.core.isCardBillPayment
 import com.spendwise.core.com.spendwise.core.isSystemInfoDebit
@@ -163,7 +165,7 @@ class SmsRepositoryImpl @Inject constructor(
         val resolver = resolverProvider()
 
         val monthStart = LocalDate.now()
-            .minusYears(5)
+            .minusYears(1)
             .withDayOfMonth(1)
 
         val sinceMillis =
@@ -257,6 +259,11 @@ class SmsRepositoryImpl @Inject constructor(
                     linkType = "USER_SELF",
                     linkConfidence = 100,
                     isNetZero = true
+                )
+
+                NetZeroDebugLogger.log(
+                    txId = saved.id,
+                    reason = NetZeroReason.USER_SELF
                 )
                 continue
             }
@@ -478,6 +485,12 @@ class SmsRepositoryImpl @Inject constructor(
                     linkType = "USER_SELF",
                     linkConfidence = 100
                 )
+
+                NetZeroDebugLogger.log(
+                    txId = tx.id,
+                    reason = NetZeroReason.USER_SELF,
+                    extra = "classifyAndLinkSingle_7"
+                )
                 db.smsDao().update(updated)
                 return updated   // 🔒 HARD STOP
             }
@@ -499,6 +512,12 @@ class SmsRepositoryImpl @Inject constructor(
                     isNetZero = true,
                     linkType = "INTERNAL_TRANSFER",
                     linkConfidence = 95
+                )
+
+                NetZeroDebugLogger.log(
+                    txId = tx.id,
+                    reason = NetZeroReason.USER_SELF,
+                    extra = "classifyAndLinkSingle_4"
                 )
                 db.smsDao().update(updated)
 
@@ -542,6 +561,12 @@ class SmsRepositoryImpl @Inject constructor(
                 type = "DEBIT",
                 isNetZero = true
             )
+
+            NetZeroDebugLogger.log(
+                txId = tx.id,
+                reason = NetZeroReason.USER_SELF,
+                extra = "classifyAndLinkSingle_2"
+            )
             db.smsDao().update(updated)
             return updated
         }
@@ -555,6 +580,12 @@ class SmsRepositoryImpl @Inject constructor(
                 category = CategoryType.CREDIT_CARD_PAYMENT.name,
                 isNetZero = true
             )
+
+            NetZeroDebugLogger.log(
+                txId = tx.id,
+                reason = NetZeroReason.USER_SELF,
+                extra = "classifyAndLinkSingle_1"
+            )
             db.smsDao().update(updated)
             return updated
         }
@@ -566,6 +597,12 @@ class SmsRepositoryImpl @Inject constructor(
             val updated = tx.copy(
                 type = "CREDIT",
                 isNetZero = true
+            )
+
+            NetZeroDebugLogger.log(
+                txId = tx.id,
+                reason = NetZeroReason.WALLET_TOPUP,
+                extra = "classifyAndLinkSingle 12"
             )
             db.smsDao().update(updated)
             return updated
@@ -678,7 +715,15 @@ class SmsRepositoryImpl @Inject constructor(
 
             isNetZero =
                 when {
-                    isUserSelfTransfer -> true
+                    isUserSelfTransfer -> true.also {
+
+                    NetZeroDebugLogger.log(
+                        txId = tx.id,
+                        reason =  NetZeroReason.USER_SELF,
+                        extra = "reclassifySingle"
+                    )
+
+                }
                     else -> internalResult != null
                 },
 
@@ -805,6 +850,13 @@ class SmsRepositoryImpl @Inject constructor(
             linkConfidence = 90
         )
 
+
+        NetZeroDebugLogger.log(
+            txId = tx.id,
+            reason = NetZeroReason.USER_SELF,
+            extra = "markAsSelfTransfer"
+        )
+
         db.smsDao().update(updated)
     }
 
@@ -838,6 +890,11 @@ class SmsRepositoryImpl @Inject constructor(
                     linkType = "USER_SELF",
                     linkConfidence = 100,
                     isNetZero = true
+                )
+
+                NetZeroDebugLogger.log(
+                    txId = tx.id,
+                    reason = NetZeroReason.USER_SELF
                 )
             }
 

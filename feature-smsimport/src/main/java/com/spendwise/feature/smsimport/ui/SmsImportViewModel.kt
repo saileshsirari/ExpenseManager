@@ -932,6 +932,7 @@ class SmsImportViewModel @Inject constructor(
     }
 
     suspend fun importAll(resolverProvider: () -> ContentResolver) {
+        Log.enabled =false
 
         repo.importAll(resolverProvider).collect { event ->
 
@@ -971,7 +972,7 @@ class SmsImportViewModel @Inject constructor(
         viewModelScope.launch {
 
             // 1️⃣ Print the clicked SMS raw body
-            Log.d("expense", "\n------ CLICKED SMS ------")
+            Log.d("expense", "\n------ CLICKED SMS ------txId=${tx.id}")
             Log.d("expense", tx.body)
             Log.d(
                 "expense",
