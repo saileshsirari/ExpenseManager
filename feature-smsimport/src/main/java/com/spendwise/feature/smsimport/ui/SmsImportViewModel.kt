@@ -86,9 +86,28 @@ class SmsImportViewModel @Inject constructor(
     fun setInsightsFrequencyFilter(filter: FrequencyFilter) {
         _insightsFrequencyFilter.value = filter
     }
+    // 🔒 Dashboard period gates
+    fun canUseDashboardMode(mode: DashboardMode): Boolean {
+        return when (mode) {
+            DashboardMode.MONTH -> true
+            DashboardMode.QUARTER,
+            DashboardMode.YEAR -> isPro.value
+        }
+    }
+
+    fun explainDashboardModeLock(mode: DashboardMode): String =
+        when (mode) {
+            DashboardMode.QUARTER ->
+                "Quarter view shows spending patterns across months.\nYour transactions remain unchanged."
+
+            DashboardMode.YEAR ->
+                "Year view reveals long-term trends.\nNo money is hidden."
+
+            else -> ""
+        }
 
 
-    private val _isPro = MutableStateFlow(true)
+    private val _isPro = MutableStateFlow(false)
     val isPro: StateFlow<Boolean> = _isPro
     private val _showPaywall = MutableStateFlow(false)
     fun onUpgradeClicked() {
@@ -905,6 +924,11 @@ class SmsImportViewModel @Inject constructor(
     fun updateSort(sort: SortConfig) = update { it.copy(sortConfig = sort) }
 
     fun setMode(newMode: DashboardMode) {
+
+        if (!canUseDashboardMode(newMode)) {
+            onUpgradeClicked()
+            return
+        }
         update {
             _insightsFrequencyFilter.value =
                 if (newMode == DashboardMode.YEAR)
@@ -932,7 +956,7 @@ class SmsImportViewModel @Inject constructor(
     }
 
     suspend fun importAll(resolverProvider: () -> ContentResolver) {
-        Log.enabled =false
+        Log.enabled = false
 
         repo.importAll(resolverProvider).collect { event ->
 
@@ -1348,8 +1372,23 @@ class SmsImportViewModel @Inject constructor(
         val bank = extractBankName(tx)
         return person to bank
     }
-}
 
+    // ---- Pro gates (LOCKED rules) ----
+    fun canUseYearlyView(): Boolean = isPro.value
+
+    fun explainWhyLocked(type: ProLockType): String =
+        when (type) {
+            ProLockType.YEARLY ->
+                "Yearly view reveals long-term patterns across" +
+                        " months.\nYour transactions are unchanged."
+        }
+
+
+
+}
+enum class ProLockType {
+    YEARLY,
+}
 sealed class UiTxnRow {
     data class Normal(val tx: SmsEntity) : UiTxnRow()
 

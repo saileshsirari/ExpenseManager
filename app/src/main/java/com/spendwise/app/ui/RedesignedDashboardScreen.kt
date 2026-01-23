@@ -76,7 +76,7 @@ import androidx.compose.ui.zIndex
 import androidx.navigation.NavController
 import com.spendwise.app.navigation.Screen
 import com.spendwise.app.ui.dashboard.CategoryPieChart
-import com.spendwise.app.ui.dashboard.DashboardModeSelector
+import com.spendwise.app.ui.dashboard.DashboardModeSelectorProAware
 import com.spendwise.core.com.spendwise.core.ExpenseFrequency
 import com.spendwise.core.com.spendwise.core.FrequencyFilter
 import com.spendwise.core.ml.CategoryType
@@ -84,6 +84,7 @@ import com.spendwise.domain.com.spendwise.feature.smsimport.data.DashboardMode
 import com.spendwise.domain.com.spendwise.feature.smsimport.ui.MonthlyComparisonCard
 import com.spendwise.domain.com.spendwise.feature.smsimport.ui.WalletInsightCard
 import com.spendwise.feature.smsimport.data.SmsEntity
+import com.spendwise.feature.smsimport.ui.ProLockType
 import com.spendwise.feature.smsimport.ui.SmsImportViewModel
 import com.spendwise.feature.smsimport.ui.SmsImportViewModel.InsightsUiState
 import com.spendwise.feature.smsimport.ui.UiTxnRow
@@ -578,7 +579,7 @@ fun InternalTransferSectionHeader(
 
 @Composable
 fun InsightsFrequencySelector(
-    uiState: SmsImportViewModel.InsightsUiState,
+    uiState: InsightsUiState,
     onChange: (FrequencyFilter) -> Unit
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -602,10 +603,11 @@ fun InsightsFrequencySelector(
                 uiState = uiState,
                 onChange = onChange
             )
-
         }
     }
 }
+
+
 
 fun FrequencyFilter.isEnabled(ui: InsightsUiState): Boolean =
     when (this) {
@@ -679,14 +681,12 @@ private fun FrequencyChip(
     uiState: InsightsUiState,
     onChange: (FrequencyFilter) -> Unit
 ) {
-    val enabled = filter.isEnabled(uiState)
+    val enabledByData = filter.isEnabled(uiState)
 
     FilterChip(
         selected = uiState.frequency == filter,
-        enabled = enabled,
-        onClick = {
-            if (enabled) onChange(filter)
-        },
+        enabled = enabledByData,
+        onClick = { onChange(filter) },
         label = {
             Text(
                 when (filter) {
@@ -695,6 +695,37 @@ private fun FrequencyChip(
                     FrequencyFilter.YEARLY_ONLY -> "Yearly"
                 }
             )
+        }
+    )
+}
+
+
+
+@Composable
+fun ProExplainDialog(
+    title: String,
+    message: String,
+    onUpgrade: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(title) },
+        text = {
+            Text(
+                message,
+                style = MaterialTheme.typography.bodyMedium
+            )
+        },
+        confirmButton = {
+            TextButton(onClick = onUpgrade) {
+                Text("Upgrade to Pro")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Not now")
+            }
         }
     )
 }
@@ -736,6 +767,7 @@ fun InsightsScreen(
         }
     }
 
+
     var expandedItemId by remember { mutableStateOf<Long?>(null) }
     // Full categories for pie chart
     val categoriesAll by viewModel.categoryTotalsForPeriod.collectAsState()
@@ -745,6 +777,8 @@ fun InsightsScreen(
     val comparison by viewModel.periodComparison.collectAsState()
     val walletInsight by viewModel.walletInsight.collectAsState()
     val insightsUi by viewModel.insightsUiState.collectAsState()
+
+    var lockedMode by remember { mutableStateOf<DashboardMode?>(null) }
 
 
 
@@ -767,7 +801,17 @@ fun InsightsScreen(
         }
     ) { padding ->
         ApplySelfTransferUiHost(viewModel)
-
+        if (lockedMode != null) {
+            ProExplainDialog(
+                title = "${lockedMode!!.name.lowercase().replaceFirstChar { it.uppercase() }} view is Pro",
+                message = viewModel.explainDashboardModeLock(lockedMode!!),
+                onUpgrade = {
+                    lockedMode = null
+                    viewModel.onUpgradeClicked()
+                },
+                onDismiss = { lockedMode = null }
+            )
+        }
         LazyColumn(
             modifier = Modifier
                 .padding(padding)
@@ -775,9 +819,11 @@ fun InsightsScreen(
         ) {
 
             item {
-                DashboardModeSelector(
-                    mode = uiState.mode,
-                    onModeChange = viewModel::setMode
+                DashboardModeSelectorProAware(
+                    current = uiState.mode,
+                    isPro = viewModel.isPro.collectAsState().value,
+                    onChange = viewModel::setMode,
+                    onLocked = { lockedMode = it }
                 )
             }
             item {
@@ -807,8 +853,9 @@ fun InsightsScreen(
                             Spacer(Modifier.height(10.dp))
                             InsightsFrequencySelector(
                                 uiState = insightsUi,
-                                onChange = viewModel::setInsightsFrequencyFilter
+                                onChange = viewModel::setInsightsFrequencyFilter,
                             )
+
 
                             if (freqFilter != FrequencyFilter.MONTHLY_ONLY) {
                                 Text(
