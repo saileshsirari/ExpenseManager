@@ -21,9 +21,21 @@ fun isPayZappWalletTopup(body: String?): Boolean {
             )
 }
 
- fun isWalletCredit(body: String?): Boolean {
-    if (body == null) return false
+fun isWalletCredit(body: String?): Boolean {
+    if (body.isNullOrBlank()) return false
     val b = body.lowercase()
+
+    // 🔒 Hard reject any debit semantics
+    val debitKeywords = listOf(
+        "debited",
+        "debit",
+        "spent",
+        "paid",
+        "used",
+        "deducted",
+        "withdrawn"
+    )
+    if (debitKeywords.any { it in b }) return false
 
     val walletKeywords = listOf(
         "amazon pay",
@@ -33,22 +45,23 @@ fun isPayZappWalletTopup(body: String?): Boolean {
         "phonepe",
         "mobikwik",
         "freecharge",
-        "ola financial",
         "ola money"
     )
 
     val creditKeywords = listOf(
         "credited",
         "loaded",
-        "added",
+        "wallet credited",
+        "added to wallet",
         "top up",
         "top-up",
-        "balance"
+        "money added"
     )
 
     return walletKeywords.any { it in b } &&
             creditKeywords.any { it in b }
 }
+
 
  fun isBillPayment(body: String?): Boolean {
     if (body == null) return false

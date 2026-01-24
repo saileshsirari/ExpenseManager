@@ -5,6 +5,7 @@ package com.spendwise.app.ui
 
 import android.R
 import android.os.Build
+import androidx.activity.compose.BackHandler
 import androidx.annotation.RequiresApi
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateContentSize
@@ -21,17 +22,18 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.TrendingUp
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.CompareArrows
 import androidx.compose.material.icons.filled.ExpandLess
@@ -70,22 +72,27 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.compose.ui.zIndex
 import androidx.navigation.NavController
 import com.spendwise.app.navigation.Screen
 import com.spendwise.app.ui.dashboard.CategoryPieChart
-import com.spendwise.app.ui.dashboard.DashboardModeSelector
+import com.spendwise.app.ui.dashboard.DashboardModeSelectorProAware
 import com.spendwise.core.com.spendwise.core.ExpenseFrequency
 import com.spendwise.core.com.spendwise.core.FrequencyFilter
-import com.spendwise.core.com.spendwise.core.detector.LINK_TYPE_INVESTMENT_OUTFLOW
 import com.spendwise.core.ml.CategoryType
 import com.spendwise.domain.com.spendwise.feature.smsimport.data.DashboardMode
+import com.spendwise.domain.com.spendwise.feature.smsimport.data.OlderImportProgress
 import com.spendwise.domain.com.spendwise.feature.smsimport.ui.MonthlyComparisonCard
 import com.spendwise.domain.com.spendwise.feature.smsimport.ui.WalletInsightCard
 import com.spendwise.feature.smsimport.data.SmsEntity
-import com.spendwise.feature.smsimport.data.isExpense
+import com.spendwise.feature.smsimport.ui.MonthlyBar
 import com.spendwise.feature.smsimport.ui.SmsImportViewModel
 import com.spendwise.feature.smsimport.ui.SmsImportViewModel.InsightsUiState
 import com.spendwise.feature.smsimport.ui.UiTxnRow
@@ -123,74 +130,44 @@ fun RedesignedDashboardScreen(
 
     // top-level loading / import handling (assumes app-level permission + import triggers)
     if (!progress.done) {
-        // small inset progress UI — full screen handled elsewhere
-        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        Box(
+            modifier = Modifier.fillMaxSize(),
+            contentAlignment = Alignment.Center
+        ) {
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                 CircularProgressIndicator()
                 Spacer(Modifier.height(12.dp))
-                Text("Importing messages — ${progress.processed}/${progress.total}")
+                Text(
+                    if (progress.total > 0)
+                        "Messages — ${progress.processed}/${progress.total}"
+                    else
+                        "Preparing messages…"
+                )
             }
         }
         return
     }
 
+    val isOlderImportRunning by viewModel.isOlderImportRunning.collectAsState()
 
-    if (uiState.isLoading) {
-        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                CircularProgressIndicator()
-                Spacer(Modifier.height(8.dp))
-                Text("Preparing dashboard…")
-            }
-        }
-        return
-    }
-    val applyRuleProgress by viewModel.applyRuleProgress.collectAsState()
+    val olderProgress by viewModel.olderImportProgress.collectAsState()
 
-    var showApplyRuleDialog by remember { mutableStateOf(false) }
-    var selectedTx by remember { mutableStateOf<SmsEntity?>(null) }
-    val ctx = selectedTx?.let { viewModel.getSelfRuleContext(it) }
-    val person = ctx?.first
-    val bank = ctx?.second
+    val fromInsights =
+        navController.currentBackStackEntry
+            ?.savedStateHandle
+            ?.getStateFlow("from_insights", false)
+            ?.collectAsState()
 
-    val applyRuleTx by viewModel.applySelfRuleRequest.collectAsState()
+    LaunchedEffect(fromInsights?.value) {
+        if (fromInsights?.value == true) {
+            viewModel.restoreDashboardFromInsights()
 
-    LaunchedEffect(applyRuleTx) {
-        if (applyRuleTx != null) {
-            selectedTx = applyRuleTx
-            showApplyRuleDialog = true
+            // 🔒 Consume the event
+            navController.currentBackStackEntry
+                ?.savedStateHandle
+                ?.set("from_insights", false)
         }
     }
-    val contextText = when {
-        person != null && bank != null ->
-            "Transfers to $person from $bank"
-
-        person != null ->
-            "Transfers to $person"
-
-        bank != null ->
-            "Transfers from $bank"
-
-        else ->
-            "Messages with the same format"
-    }
-    if(applyRuleTx!=null && showApplyRuleDialog) {
-
-        ApplySelfTransferRuleDialog(
-            ctxText = contextText,
-            onConfirmApplyAll = {
-                viewModel.applySelfTransferPattern(selectedTx!!)
-                viewModel.consumeApplySelfRuleRequest()
-                showApplyRuleDialog = false
-            },
-            onOnlyThis = {
-                viewModel.consumeApplySelfRuleRequest()
-                showApplyRuleDialog = false
-            }
-        )
-    }
-
-
 
     Scaffold(
         floatingActionButton = {
@@ -223,36 +200,8 @@ fun RedesignedDashboardScreen(
             )
         }
     ) { padding ->
-        if (applyRuleProgress != null) {
-            val (done, total) = applyRuleProgress!!
 
-            Box(
-                Modifier
-                    .fillMaxSize()
-                    .background(Color.Black.copy(alpha = 0.4f)),
-                contentAlignment = Alignment.Center
-            ) {
-                Card {
-                    Column(
-                        Modifier.padding(20.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally
-                    ) {
-                        Text("Applying self-transfer rule")
-
-                        Spacer(Modifier.height(12.dp))
-
-                        LinearProgressIndicator(
-                            progress = if (total > 0) done.toFloat() / total else 0f,
-                            modifier = Modifier.fillMaxWidth()
-                        )
-
-                        Spacer(Modifier.height(8.dp))
-
-                        Text("$done of $total messages")
-                    }
-                }
-            }
-        }
+        ApplySelfTransferUiHost(viewModel)
         LazyColumn(
             modifier = Modifier
                 .padding(padding)
@@ -260,6 +209,15 @@ fun RedesignedDashboardScreen(
                 .fillMaxSize(),
             contentPadding = PaddingValues(bottom = 56.dp)
         ) {
+
+            if (isOlderImportRunning) {
+                item {
+                    BackgroundImportStrip(
+                        message = "Loading older messages…",
+                        progress = olderProgress
+                    )
+                }
+            }
             // 🔒 RECLASSIFY PROGRESS (VISIBLE & SAFE)
             progressReclassify?.let { (done, total) ->
                 item {
@@ -471,6 +429,165 @@ fun RedesignedDashboardScreen(
 }
 
 @Composable
+fun BackgroundImportStrip(
+    message: String,
+    progress: OlderImportProgress?
+) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(bottom = 12.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceVariant
+        ),
+        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+    ) {
+        Column(
+            modifier = Modifier.padding(12.dp)
+        ) {
+
+            // 🔹 Title / message
+            Text(
+                text = message,
+                style = MaterialTheme.typography.bodySmall
+            )
+
+            Spacer(Modifier.height(6.dp))
+
+            // 🔹 Progress bar
+            when {
+                progress == null -> {
+                    // Indeterminate (rare)
+                    LinearProgressIndicator(
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+
+                progress.total > 0 -> {
+                    LinearProgressIndicator(
+                        progress =
+                            (progress.processed.toFloat() / progress.total)
+                                .coerceIn(0f, 1f),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+
+                else -> {
+                    // Unknown total → indeterminate
+                    LinearProgressIndicator(
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+            }
+
+            // 🔹 Count text (optional, small & subtle)
+            progress?.let {
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    text =
+                        if (it.total > 0)
+                            "${it.processed} / ${it.total} messages processed"
+                        else
+                            "${it.processed} messages processed",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+    }
+}
+
+
+
+@Composable
+fun ApplySelfTransferUiHost(
+    viewModel: SmsImportViewModel
+) {
+    var selectedTx by remember { mutableStateOf<SmsEntity?>(null) }
+    var showDialog by remember { mutableStateOf(false) }
+
+    val applyRuleProgress by viewModel.applyRuleProgress.collectAsState()
+    val previewCount by viewModel.selfRulePreviewCount.collectAsState()
+
+    // 🔒 EVENT collector (SharedFlow)
+    LaunchedEffect(Unit) {
+        viewModel.applySelfRuleRequest.collect { tx ->
+            selectedTx = tx
+            showDialog = true
+            viewModel.computeSelfTransferPreview(tx)
+        }
+    }
+
+    // 🔒 GLOBAL OVERLAY LAYER
+    if (showDialog || applyRuleProgress != null) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(Color.Black.copy(alpha = 0.45f))
+                .zIndex(999f),   // 🔥 critical
+            contentAlignment = Alignment.Center
+        ) {
+
+            // -----------------------------------
+            // APPLY IN PROGRESS
+            // -----------------------------------
+            if (applyRuleProgress != null) {
+                val (done, total) = applyRuleProgress!!
+
+                Card(
+                    shape = RoundedCornerShape(16.dp),
+                    modifier = Modifier.padding(24.dp)
+                ) {
+                    Column(
+                        modifier = Modifier.padding(20.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        Text(
+                            "Applying self-transfer rule",
+                            style = MaterialTheme.typography.titleMedium
+                        )
+
+                        Spacer(Modifier.height(12.dp))
+
+                        LinearProgressIndicator(
+                            progress =
+                                if (total > 0) done.toFloat() / total else 0f,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+
+                        Spacer(Modifier.height(8.dp))
+
+                        Text(
+                            "$done of $total messages",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = Color.Gray
+                        )
+                    }
+                }
+            }
+
+            // -----------------------------------
+            // APPLY RULE DIALOG
+            // -----------------------------------
+            else if (showDialog && selectedTx != null) {
+                ApplySelfTransferRuleDialog(
+                    previewCount = previewCount,
+                    onConfirmApplyAll = {
+                        viewModel.applySelfTransferPattern(selectedTx!!)
+                        viewModel.clearSelfTransferPreview()
+                        showDialog = false
+                    },
+                    onOnlyThis = {
+                        viewModel.clearSelfTransferPreview()
+                        showDialog = false
+                    }
+                )
+            }
+        }
+    }
+}
+
+@Composable
 fun CategoryHeader(selectedType: String?) {
     if (selectedType == null) return
 
@@ -483,23 +600,21 @@ fun CategoryHeader(selectedType: String?) {
 
 @Composable
 fun ApplySelfTransferRuleDialog(
-    ctxText: String,
+    previewCount: Int?,
     onConfirmApplyAll: () -> Unit,
     onOnlyThis: () -> Unit
 ) {
     AlertDialog(
         onDismissRequest = { /* non-dismissible */ },
-        title = {
-            Text("Apply to similar transactions?")
-        },
+        title = { Text("Apply to similar transactions?") },
         text = {
             Column {
+                if (previewCount != null) {
+                    Text("This will affect $previewCount messages.")
+                    Spacer(Modifier.height(8.dp))
+                }
                 Text(
-                    "We’ll mark other $ctxText as self transfers."
-                )
-                Spacer(Modifier.height(8.dp))
-                Text(
-                    "This only affects messages with the same format.",
+                    "Only messages with the same format will be marked as self-transfer.",
                     style = MaterialTheme.typography.bodySmall,
                     color = Color.Gray
                 )
@@ -517,6 +632,7 @@ fun ApplySelfTransferRuleDialog(
         }
     )
 }
+
 
 
 @Composable
@@ -553,7 +669,7 @@ fun InternalTransferSectionHeader(
 
 @Composable
 fun InsightsFrequencySelector(
-    uiState: SmsImportViewModel.InsightsUiState,
+    uiState: InsightsUiState,
     onChange: (FrequencyFilter) -> Unit
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -577,10 +693,11 @@ fun InsightsFrequencySelector(
                 uiState = uiState,
                 onChange = onChange
             )
-
         }
     }
 }
+
+
 
 fun FrequencyFilter.isEnabled(ui: InsightsUiState): Boolean =
     when (this) {
@@ -654,14 +771,12 @@ private fun FrequencyChip(
     uiState: InsightsUiState,
     onChange: (FrequencyFilter) -> Unit
 ) {
-    val enabled = filter.isEnabled(uiState)
+    val enabledByData = filter.isEnabled(uiState)
 
     FilterChip(
         selected = uiState.frequency == filter,
-        enabled = enabled,
-        onClick = {
-            if (enabled) onChange(filter)
-        },
+        enabled = enabledByData,
+        onClick = { onChange(filter) },
         label = {
             Text(
                 when (filter) {
@@ -675,6 +790,211 @@ private fun FrequencyChip(
 }
 
 
+
+@Composable
+fun ProExplainDialog(
+    title: String,
+    message: String,
+    onUpgrade: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(title) },
+        text = {
+            Text(
+                message,
+                style = MaterialTheme.typography.bodyMedium
+            )
+        },
+        confirmButton = {
+            TextButton(onClick = onUpgrade) {
+                Text("Upgrade to Pro")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Not now")
+            }
+        }
+    )
+}
+
+@Composable
+fun MonthlyTrendBarChart(
+    bars: List<MonthlyBar>,
+    isPro: Boolean,
+    onMonthSelected: (YearMonth) -> Unit,
+    onUpgrade: () -> Unit
+) {
+    if (!isPro) {
+        LockedTrendPreview(onUpgrade)
+        return
+    }
+
+    val max = bars.maxOfOrNull { it.total } ?: 1.0
+    val density = LocalDensity.current
+    val listState = rememberLazyListState()
+
+    LaunchedEffect(bars.size) {
+        if (bars.isNotEmpty()) {
+            listState.scrollToItem(bars.lastIndex)
+        }
+    }
+
+    LazyRow(
+        state = listState,
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(220.dp),
+        contentPadding = PaddingValues(horizontal = 16.dp),
+        horizontalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        items(bars) { bar ->
+            MonthlyBarItem(
+                bar = bar,
+                max = max,
+                onClick = { onMonthSelected(bar.month) }
+            )
+        }
+    }
+}
+
+@Composable
+fun CollapsibleSectionHeader(
+    title: String,
+    collapsed: Boolean,
+    subtitle: String? = null,
+    onToggle: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable { onToggle() }
+            .padding(vertical = 12.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column {
+            Text(title, style = MaterialTheme.typography.titleMedium)
+            subtitle?.let {
+                Text(
+                    it,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = Color.Gray
+                )
+            }
+        }
+
+        Icon(
+            imageVector =
+                if (collapsed) Icons.Default.ExpandMore
+                else Icons.Default.ExpandLess,
+            contentDescription = null
+        )
+    }
+}
+
+
+@Composable
+private fun MonthlyBarItem(
+    bar: MonthlyBar,
+    max: Double,
+    onClick: () -> Unit
+) {
+    fun formatRupeesCompact(amount: Double): String {
+        return when {
+            amount >= 1_00_000 ->
+                "₹${(amount / 1_00_000).roundToInt()}L"
+
+            amount >= 1_000 ->
+                "₹${(amount / 1_000).roundToInt()}K"
+
+            else ->
+                "₹${amount.roundToInt()}"
+        }
+    }
+    val heightRatio = (bar.total / max).coerceIn(0.05, 1.0)
+    val barHeight = 160.dp * heightRatio.toFloat()
+
+    Column(
+        modifier = Modifier
+            .width(42.dp)
+            .fillMaxHeight()
+            .clickable { onClick() },
+        verticalArrangement = Arrangement.Bottom,
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+
+        // 🔹 VALUE LABEL (NEW)
+        Text(
+            text = formatRupeesCompact(bar.total),
+            style = MaterialTheme.typography.labelSmall.copy(
+                fontSize = 10.sp
+            ),
+            color = Color(0xFF9E9E9E), // slightly lighter gray
+            textAlign = TextAlign.Center,
+            modifier = Modifier.padding(bottom = 2.dp)
+        )
+
+
+        // 🔹 BAR
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(barHeight)
+                .clip(RoundedCornerShape(10.dp))
+                .background(Color(0xFF5B6CFF))
+        )
+
+        Spacer(Modifier.height(8.dp))
+
+        // 🔹 MONTH
+        Text(
+            text = bar.month.month.name
+                .take(3)
+                .lowercase()
+                .replaceFirstChar { it.uppercase() },
+            style = MaterialTheme.typography.labelSmall,
+            color = Color.Gray
+        )
+
+        Text(
+            text = "'${bar.month.year % 100}",
+            style = MaterialTheme.typography.labelSmall,
+            color = Color.Gray
+        )
+    }
+}
+
+@Composable
+fun LockedTrendPreview(onUpgrade: () -> Unit) {
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(200.dp)
+            .clip(RoundedCornerShape(16.dp))
+            .background(Color(0xFF1E1E1E))
+            .clickable { onUpgrade() },
+        contentAlignment = Alignment.Center
+    ) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Text(
+                "Monthly trends are Pro",
+                color = Color.White,
+                style = MaterialTheme.typography.titleMedium
+            )
+            Spacer(Modifier.height(6.dp))
+            Text(
+                "See spending patterns across months.\nYour data stays the same.",
+                color = Color.Gray,
+                style = MaterialTheme.typography.bodySmall,
+                textAlign = TextAlign.Center
+            )
+        }
+    }
+}
+
 /* -----------------------------------------------------------
    2) Insights screen: full-size pie chart + category breakdown
    - Timeframe toggle (Month / Quarter / Year)
@@ -683,11 +1003,14 @@ private fun FrequencyChip(
 @Composable
 fun InsightsScreen(
     navController: NavController,
-    viewModel: SmsImportViewModel
+    viewModel: SmsImportViewModel,
+    isPro: Boolean
 ) {
     val freqFilter by viewModel.insightsFrequencyFilter.collectAsState()
     val uiState by viewModel.uiState.collectAsState()
-
+    BackHandler {
+        exitInsights(navController,viewModel,viewModel.uiState.value.mode,viewModel.uiState.value.period)
+    }
 
     // Reset filter whenever entering Insights
     LaunchedEffect(Unit) {
@@ -698,40 +1021,18 @@ fun InsightsScreen(
 
     val totalSpend by viewModel.totalSpend.collectAsState()
 
-    val filteredTxs = remember(
-        uiState.finalList,
-        freqFilter
-    ) {
-        uiState.finalList
-            .filter { !it.isNetZero } // remove internal transfers
-            .filter { tx ->
-                tx.isExpense() && tx.matchesFrequency(freqFilter)
+    val insightRows = remember(uiState.rows, freqFilter) {
+        uiState.rows.filter { row ->
+            when (row) {
+                is UiTxnRow.Section -> true
+                is UiTxnRow.Normal -> row.tx.matchesFrequency(freqFilter)
+                is UiTxnRow.Grouped ->
+                    row.children.any { it.matchesFrequency(freqFilter) }
             }
-    }
-
-    val insightRows = remember(
-        filteredTxs,
-        uiState.sortConfig,
-        uiState.showGroupedMerchants
-    ) {
-        val sortedTxs = viewModel.sortTransactions(
-            list = filteredTxs,
-            config = uiState.sortConfig
-        )
-
-        if (!uiState.showGroupedMerchants) {
-            sortedTxs.map { UiTxnRow.Normal(it) }
-        } else {
-            viewModel.buildUiRows(
-                txs = sortedTxs,
-                sortConfig = uiState.sortConfig,
-                groupByMerchant = true
-            )
         }
     }
 
 
-    var selectedTx by remember { mutableStateOf<SmsEntity?>(null) }
     var expandedItemId by remember { mutableStateOf<Long?>(null) }
     // Full categories for pie chart
     val categoriesAll by viewModel.categoryTotalsForPeriod.collectAsState()
@@ -742,6 +1043,11 @@ fun InsightsScreen(
     val walletInsight by viewModel.walletInsight.collectAsState()
     val insightsUi by viewModel.insightsUiState.collectAsState()
 
+    var lockedMode by remember { mutableStateOf<DashboardMode?>(null) }
+    val monthlyBars by viewModel.monthlyTrendBars.collectAsState()
+    val categoryCollapsed by viewModel.categoryCollapsed.collectAsState()
+    val importMessage by viewModel.importMessage.collectAsState()
+
 
 
 
@@ -751,12 +1057,7 @@ fun InsightsScreen(
                 title = { Text("Insights") },
                 navigationIcon = {
                     IconButton(onClick = {
-                        viewModel.rememberInsightsContext(
-                            mode = uiState.mode,
-                            period = uiState.period
-                        )
-                        viewModel.restoreDashboardFromInsights()
-                        navController.popBackStack()
+                        exitInsights(navController,viewModel,viewModel.uiState.value.mode,viewModel.uiState.value.period)
                     }) {
                         Icon(
                             painter = painterResource(id = R.drawable.ic_menu_close_clear_cancel),
@@ -767,7 +1068,22 @@ fun InsightsScreen(
             )
         }
     ) { padding ->
+        ApplySelfTransferUiHost(viewModel)
+        if (lockedMode != null) {
+            ProExplainDialog(
+                title = "${lockedMode!!.name.lowercase().replaceFirstChar { it.uppercase() }} view is Pro",
+                message = viewModel.explainDashboardModeLock(lockedMode!!),
+                onUpgrade = {
+                    lockedMode = null
+                    viewModel.onUpgradeClicked()
+                },
+                onDismiss = { lockedMode = null }
+            )
+        }
 
+
+        val isOlderImportRunning by viewModel.isOlderImportRunning.collectAsState()
+        val olderProgress by viewModel.olderImportProgress.collectAsState()
 
         LazyColumn(
             modifier = Modifier
@@ -775,10 +1091,21 @@ fun InsightsScreen(
                 .padding(16.dp)
         ) {
 
+            if (isOlderImportRunning) {
+                item {
+                    BackgroundImportStrip(
+                        message = "Loading older messages…",
+                        progress = olderProgress
+                    )
+                }
+            }
+
             item {
-                DashboardModeSelector(
-                    mode = uiState.mode,
-                    onModeChange = viewModel::setMode
+                DashboardModeSelectorProAware(
+                    current = uiState.mode,
+                    isPro = viewModel.isPro.collectAsState().value,
+                    onChange = viewModel::setMode,
+                    onLocked = { lockedMode = it }
                 )
             }
             item {
@@ -790,82 +1117,142 @@ fun InsightsScreen(
                 )
             }
 
-
-            /* -------------------------------------------------------------
-                CATEGORY PIE CHART
-            ------------------------------------------------------------- */
+            // ----------------------------
+            // 🔹 Monthly Trends
+            // ----------------------------
             item {
-                Card(modifier = Modifier.fillMaxWidth()) {
-                    Column(modifier = Modifier.padding(12.dp)) {
-                        Text("Category Breakdown", style = MaterialTheme.typography.titleMedium)
-                        Spacer(Modifier.height(8.dp))
-
-                        if (categoriesAll.isNotEmpty()) {
-                            Text(
-                                text = "₹${totalSpend.roundToInt()}",
-                                style = MaterialTheme.typography.headlineMedium
-                            )
-                            Spacer(Modifier.height(10.dp))
-                            InsightsFrequencySelector(
-                                uiState = insightsUi,
-                                onChange = viewModel::setInsightsFrequencyFilter
-                            )
-
-                            if (freqFilter != FrequencyFilter.MONTHLY_ONLY) {
-                                Text(
-                                    text = when (freqFilter) {
-                                        FrequencyFilter.ALL_EXPENSES ->
-                                            "Includes yearly and irregular expenses"
-
-                                        FrequencyFilter.YEARLY_ONLY ->
-                                            "Showing yearly expenses only"
-
-                                        else -> ""
-                                    },
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = Color.Gray,
-                                    modifier = Modifier.padding(top = 6.dp, bottom = 8.dp)
-                                )
-                            }
-
-                            Spacer(Modifier.height(10.dp))
-
-                            CategoryPieChart(
-                                data = categoriesAll.map { it.total },
-                                labels = categoriesAll.map { it.name },
-                                colors = categoriesAll.map { it.color },
-                                selectedLabel = uiState.selectedType,
-                                onSliceClick = { clicked ->
-                                    viewModel.setSelectedTypeSafe(clicked)
-                                }
-
-                            )
-                            Spacer(Modifier.height(12.dp))
-
-                            CategoryHeader(uiState.selectedType)
-
-
-                        } else {
-                            Text(
-                                "No category data found",
-                                style = MaterialTheme.typography.bodyMedium
-                            )
-                        }
+                MonthlyTrendBarChart(
+                    bars = monthlyBars,
+                    isPro = isPro,
+                    onMonthSelected = { month ->
+                        viewModel.setMode(DashboardMode.MONTH) // safe no-op if already month
+                        viewModel.setPeriod(month)
+                    },
+                    onUpgrade = {
+                        viewModel.onUpgradeClicked()
                     }
-                }
-                Spacer(Modifier.height(16.dp))
+                )
+
+                Spacer(Modifier.height(24.dp))
+
             }
+
+
 
             /* -------------------------------------------------------------
                 CATEGORY LIST
             ------------------------------------------------------------- */
+
             item {
-                CategoryListCard(
-                    title = "Spending by category",
-                    items = categoryInsight.items,
-                    locked = categoryInsight.isLocked,
-                    onUpgrade = { viewModel.onUpgradeClicked() }
-                )
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(16.dp)
+                ) {
+                    Column(modifier = Modifier.padding(12.dp)) {
+
+                        // ----------------------------
+                        // HEADER (always visible)
+                        // ----------------------------
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { viewModel.toggleCategoryCollapsed() },
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column {
+                                Text(
+                                    "Category breakdown",
+                                    style = MaterialTheme.typography.titleMedium
+                                )
+
+                                Text(
+                                    "₹${totalSpend.roundToInt()}",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = Color.Gray
+                                )
+                            }
+
+                            Icon(
+                                imageVector =
+                                    if (categoryCollapsed)
+                                        Icons.Default.ExpandMore
+                                    else
+                                        Icons.Default.ExpandLess,
+                                contentDescription = null
+                            )
+                        }
+
+                        // ----------------------------
+                        // COLLAPSIBLE CONTENT
+                        // ----------------------------
+                        AnimatedVisibility(
+                            visible = !categoryCollapsed,
+                            enter = expandVertically() + fadeIn(),
+                            exit = shrinkVertically() + fadeOut()
+                        ) {
+
+                            Column {
+
+                                Divider(modifier = Modifier.padding(vertical = 8.dp))
+
+                                // 🔹 Frequency selector (FREE)
+                                InsightsFrequencySelector(
+                                    uiState = insightsUi,
+                                    onChange = viewModel::setInsightsFrequencyFilter
+                                )
+
+                                if (freqFilter != FrequencyFilter.MONTHLY_ONLY) {
+                                    Text(
+                                        text = when (freqFilter) {
+                                            FrequencyFilter.ALL_EXPENSES ->
+                                                "Includes yearly and irregular expenses"
+
+                                            FrequencyFilter.YEARLY_ONLY ->
+                                                "Showing yearly expenses only"
+
+                                            else -> ""
+                                        },
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = Color.Gray,
+                                        modifier = Modifier.padding(top = 6.dp, bottom = 8.dp)
+                                    )
+                                }
+
+                                Spacer(Modifier.height(8.dp))
+
+                                // 🔹 Pie chart
+                                if (categoriesAll.isNotEmpty()) {
+                                    CategoryPieChart(
+                                        data = categoriesAll.map { it.total },
+                                        labels = categoriesAll.map { it.name },
+                                        colors = categoriesAll.map { it.color },
+                                        selectedLabel = uiState.selectedType,
+                                        onSliceClick = { clicked ->
+                                            viewModel.setSelectedTypeSafe(clicked)
+                                        }
+                                    )
+                                } else {
+                                    Text(
+                                        "No category data found",
+                                        style = MaterialTheme.typography.bodyMedium
+                                    )
+                                }
+
+                                Spacer(Modifier.height(12.dp))
+
+                                // 🔹 Category list (with Pro preview logic)
+                                CategoryListCard(
+                                    title = null, // header already shown
+                                    items = categoryInsight.items,
+                                    locked = categoryInsight.isLocked,
+                                    onUpgrade = { viewModel.onUpgradeClicked() }
+                                )
+                            }
+                        }
+                    }
+                }
+
                 Spacer(Modifier.height(16.dp))
             }
 
@@ -915,7 +1302,8 @@ fun InsightsScreen(
                     when (row) {
                         is UiTxnRow.Normal -> "tx-${row.tx.id}"
                         is UiTxnRow.Grouped -> "group-${row.groupId}"
-                        else -> "row"
+                        is UiTxnRow.Section -> "section-${row.id}"
+
                     }
                 }
             ) { row ->
@@ -963,8 +1351,22 @@ fun InsightsScreen(
 
                     // 🔒 Explicitly ignore sections in Insights
                     is UiTxnRow.Section -> {
-                        // no-op (Insights does not show section headers)
+                        InternalTransferSectionHeader(
+                            title = row.title,
+                            count = row.count,
+                            collapsed = row.collapsed,
+                            onToggle = {
+                                when (row.id) {
+                                    "main_transactions" ->
+                                        viewModel.toggleMainSection()
+                                    "internal_transfers" ->
+                                        viewModel.toggleInternalSection()
+                                }
+                            }
+                        )
+                        Spacer(Modifier.height(8.dp))
                     }
+
                 }
             }
 
@@ -994,6 +1396,20 @@ fun SummaryHeader(totalDebit: Double, totalCredit: Double, onOpenInsights: () ->
             Text("₹${totalCredit.toInt()}", style = MaterialTheme.typography.titleMedium)
         }
     }
+}
+private fun exitInsights(navController: NavController, viewModel: SmsImportViewModel,
+                         mode: DashboardMode,
+                         period: YearMonth) {
+    // 🔒 Save current insights state
+    viewModel.rememberInsightsContext(
+        mode = mode,
+        period = period
+    )
+    navController.previousBackStackEntry
+        ?.savedStateHandle
+        ?.set("from_insights", true)
+
+    navController.popBackStack()
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -1194,8 +1610,11 @@ private fun TransactionRowContent(
                     color = Color.Gray
                 )
 
-                if (sms.linkType == "INTERNAL_TRANSFER") {
-                    Row(
+                if (sms.isNetZero &&
+                    (sms.linkType == "INTERNAL_TRANSFER" || sms.linkType == "USER_SELF")
+                ) {
+                    // show "Internal Transfer" badge
+                Row(
                         verticalAlignment = Alignment.CenterVertically,
                         modifier = Modifier.padding(bottom = 6.dp)
                     ) {
@@ -1380,39 +1799,18 @@ fun TransactionRow(
                     ) {
                         Text("Self transfer")
                         Switch(
-                            checked = sms.isNetZero && sms.linkType == "INTERNAL_TRANSFER",
-                            onCheckedChange = { checked ->
+                            checked = sms.isNetZero &&
+                                    (sms.linkType == "INTERNAL_TRANSFER" || sms.linkType == "USER_SELF"),
+                                    onCheckedChange = { checked ->
                                 if (checked) {
                                     onMarkAsSelfTransfer(sms)
-
                                 }
                                 else onUndoSelfTransfer(sms)
                             }
                         )
                     }
 
-                    if (sms.linkType == LINK_TYPE_INVESTMENT_OUTFLOW) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier.padding(top = 2.dp)
-                        ) {
-                            Icon(
-                                imageVector = Icons.AutoMirrored.Filled.TrendingUp,
-                                contentDescription = null,
-                                tint = MaterialTheme.colorScheme.primary,
-                                modifier = Modifier.size(14.dp)
-                            )
-                            Spacer(Modifier.width(4.dp))
-                            Text(
-                                text = "Investment • ${
-                                    sms.expenseFrequency.lowercase()
-                                        .replaceFirstChar { it.uppercase() }
-                                }",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.primary
-                            )
-                        }
-                    }
+
 
                     Row(
                         modifier = Modifier.fillMaxWidth(),

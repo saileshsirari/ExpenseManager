@@ -31,6 +31,9 @@ interface SmsDao {
     @Query("SELECT MAX(timestamp) FROM sms")
     suspend fun getLastTimestamp(): Long?
 
+    @Query("SELECT MIN(timestamp) FROM sms")
+    suspend fun getOldestTimestamp(): Long?
+
     @Query("SELECT * FROM sms WHERE id = :id LIMIT 1")
     suspend fun getById(id: Long): SmsEntity?
 
@@ -215,5 +218,9 @@ WHERE type = 'DEBIT'
   AND isNetZero = 0
 """)
     suspend fun getAllDebitNonNetZero(): List<SmsEntity>
+
+
+    @Query("SELECT COUNT(*) FROM sms WHERE timestamp < :timestamp")
+    suspend fun countOlderThan(timestamp: Long): Int
 
 }

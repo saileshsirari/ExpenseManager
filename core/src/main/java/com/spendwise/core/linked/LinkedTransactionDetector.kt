@@ -1,5 +1,7 @@
 package com.spendwise.core.linked
 
+import com.spendwise.core.com.spendwise.core.NetZeroDebugLogger
+import com.spendwise.core.com.spendwise.core.NetZeroReason
 import com.spendwise.core.com.spendwise.core.isBillPayment
 import com.spendwise.core.com.spendwise.core.isCardBillPayment
 import com.spendwise.core.com.spendwise.core.isCreditCardSpend
@@ -179,6 +181,11 @@ class LinkedTransactionDetector(
             linkType = "INTERNAL_TRANSFER",
             confidence = confidence,
             isNetZero = true
+        )
+        NetZeroDebugLogger.log(
+            txId = tx.id,
+            reason = NetZeroReason.TEMPLATE_MATCH,
+            extra = "tx.id=${tx.id}"
         )
     }
 

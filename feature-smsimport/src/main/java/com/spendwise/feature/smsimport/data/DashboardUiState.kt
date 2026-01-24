@@ -23,8 +23,7 @@ data class DashboardUiState(
     val totalsCredit: Double = 0.0,
     val debitCreditTotals: Map<String, Double> = emptyMap(),
 
-    val barData: Map<Int, Double> = emptyMap(),
-    val isLoading: Boolean = true
+    val barData: Map<Int, Double> = emptyMap()
 )
 fun DashboardUiState.periodLabel(): String =
     when (mode) {

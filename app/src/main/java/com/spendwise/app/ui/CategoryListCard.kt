@@ -28,7 +28,7 @@ import com.spendwise.domain.com.spendwise.feature.smsimport.data.CategoryTotal
 
 @Composable
 fun CategoryListCard(
-    title: String = "Spending by category",
+    title: String? = "Spending by category",
     items: List<CategoryTotal>,
     locked: Boolean,
     onUpgrade: () -> Unit
@@ -43,7 +43,7 @@ fun CategoryListCard(
 
             // 🔹 Header
             Text(
-                text = title,
+                text = title?:"Spending by category",
                 style = MaterialTheme.typography.titleMedium
             )
 
