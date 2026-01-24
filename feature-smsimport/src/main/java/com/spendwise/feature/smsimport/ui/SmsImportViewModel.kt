@@ -15,6 +15,7 @@ import com.spendwise.core.ml.SenderClassifierMl
 import com.spendwise.domain.com.spendwise.feature.smsimport.data.CategoryTotal
 import com.spendwise.domain.com.spendwise.feature.smsimport.data.DashboardMode
 import com.spendwise.domain.com.spendwise.feature.smsimport.data.DashboardUiState
+import com.spendwise.domain.com.spendwise.feature.smsimport.data.OlderImportProgress
 import com.spendwise.domain.com.spendwise.feature.smsimport.data.SortConfig
 import com.spendwise.domain.com.spendwise.feature.smsimport.data.SortField
 import com.spendwise.domain.com.spendwise.feature.smsimport.data.SortOrder
@@ -23,6 +24,7 @@ import com.spendwise.domain.com.spendwise.feature.smsimport.data.localDate
 import com.spendwise.domain.com.spendwise.feature.smsimport.ui.ApplyRuleProgress
 import com.spendwise.domain.com.spendwise.feature.smsimport.ui.InsightBlock
 import com.spendwise.feature.smsimport.data.ImportEvent
+import com.spendwise.feature.smsimport.data.ImportEvent.OlderImportTick
 import com.spendwise.feature.smsimport.data.SmsEntity
 import com.spendwise.feature.smsimport.data.isExpense
 import com.spendwise.feature.smsimport.data.isWalletTopUp
@@ -67,25 +69,35 @@ class SmsImportViewModel @Inject constructor(
 
     private var lastInsightsMode: DashboardMode? = null
     private var lastInsightsPeriod: YearMonth? = null
+    private val _isOlderImportRunning = MutableStateFlow(false)
+    val isOlderImportRunning = _isOlderImportRunning.asStateFlow()
+    private val _olderImportTick =
+        MutableStateFlow<OlderImportProgress?>(null)
+
+    val olderImportProgress =
+        _olderImportTick.asStateFlow()
 
     private val _items = MutableStateFlow<List<SmsEntity>>(emptyList())
     val items: StateFlow<List<SmsEntity>> = _items
     private val _selectedExplanation = MutableStateFlow<MlReasonBundle?>(null)
-    val selectedExplanation = _selectedExplanation
-    val mainSectionCollapsed: Boolean = false
     private val _uiInputs = MutableStateFlow(UiInputs())
     private val uiInputs = _uiInputs.asStateFlow()
-    private val _importProgress = MutableStateFlow(ImportProgress())
+    private val _importProgress = MutableStateFlow(ImportProgress(done = true))
     val importProgress = _importProgress.asStateFlow()
     private val _insightsFrequencyFilter =
         MutableStateFlow(FrequencyFilter.MONTHLY_ONLY)
 
     val insightsFrequencyFilter =
         _insightsFrequencyFilter.asStateFlow()
+    private val _importMessage = MutableStateFlow<String?>(null)
+    val importMessage = _importMessage.asStateFlow()
+    private val _isLoading = MutableStateFlow(true)
+    val isLoading = _isLoading.asStateFlow()
 
     fun setInsightsFrequencyFilter(filter: FrequencyFilter) {
         _insightsFrequencyFilter.value = filter
     }
+
     // 🔒 Dashboard period gates
     fun canUseDashboardMode(mode: DashboardMode): Boolean {
         return when (mode) {
@@ -753,8 +765,7 @@ class SmsImportViewModel @Inject constructor(
                 totalsCredit = totalCredit,
                 debitCreditTotals = debitCreditTotals,
                 showGroupedMerchants = input.showGroupedMerchants,
-                barData = barData,
-                isLoading = input.isLoading
+                barData = barData
             )
         }
             .flowOn(Dispatchers.Default)
@@ -960,34 +971,6 @@ class SmsImportViewModel @Inject constructor(
 
     private fun update(block: (UiInputs) -> UiInputs) {
         _uiInputs.value = block(_uiInputs.value)
-    }
-
-    suspend fun importAll(resolverProvider: () -> ContentResolver) {
-        Log.enabled = false
-
-        repo.importAll(resolverProvider).collect { event ->
-
-            when (event) {
-
-                is ImportEvent.Progress -> {
-                    _importProgress.value = ImportProgress(
-                        total = event.total,
-                        processed = event.processed,
-                        message = event.message,
-                        done = false
-                    )
-                }
-
-                is ImportEvent.Finished -> {
-                    _items.value = event.list
-                    prefs.importCompleted = true
-                    update { it.copy(isLoading = false) }
-                    _importProgress.value = _importProgress.value.copy(done = true)
-                }
-
-
-            }
-        }
     }
 
     fun setExpenseFrequency(
@@ -1225,50 +1208,78 @@ class SmsImportViewModel @Inject constructor(
 
     fun startImportIfNeeded(resolverProvider: () -> ContentResolver) {
         viewModelScope.launch {
+            // 1️⃣ First-ever run OR recent data missing
+            if (!prefs.recentImportCompleted) {
 
-            update { it.copy(isLoading = true) }
-
-            if (!prefs.importCompleted) {
+                // block UI until RecentReady
                 _importProgress.value = ImportProgress(done = false)
 
-                importAll(resolverProvider)   // ← SUSPEND, awaited
-
-            } else {
-                repo.importIncremental(resolverProvider).collect { event ->
-                    when (event) {
-                        is ImportEvent.Progress -> {
-                            _importProgress.value = ImportProgress(
-                                total = event.total,
-                                processed = event.processed,
-                                message = event.message,
-                                done = false
-                            )
-                        }
-
-                        is ImportEvent.Finished -> {
-                            _items.value = event.list
-                            _importProgress.value =
-                                _importProgress.value.copy(done = true)
-                        }
-                    }
+                repo.importAll(resolverProvider).collect { event ->
+                    handleImportEvent(event)
                 }
 
+                // importAll guarantees RecentReady before finishing
+                prefs.recentImportCompleted = true
+                return@launch
             }
 
-            update { it.copy(isLoading = false) }
+            // 2️⃣ App usable, but older history still pending
+            if (!prefs.olderImportCompleted) {
+                // DO NOT block UI
+                repo.importAll(resolverProvider).collect { event ->
+                    handleImportEvent(event)
+                }
+                return@launch
+            }
+
+            // 3️⃣ Normal launch → incremental import
+            repo.importIncremental(resolverProvider).collect { event ->
+                handleImportEvent(event)
+            }
         }
     }
 
+    private fun handleImportEvent(event: ImportEvent) {
+        when (event) {
 
-    fun loadExistingData() {
-        viewModelScope.launch {
-            val list = repo.loadExisting()
-            _items.value = list
+            is ImportEvent.Progress -> {
+                _importProgress.value =
+                    _importProgress.value.copy(
+                        processed = event.processed,
+                        total = event.total,
+                        message = event.message,
+                        done = false
+                    )
+            }
 
-            update { it.copy(isLoading = false) }
+            ImportEvent.RecentReady -> {
+                _importProgress.value =
+                    _importProgress.value.copy(done = true)
+                prefs.recentImportCompleted = true
+            }
 
-            // Required for second+ launch (no import progress)
-            _importProgress.value = _importProgress.value.copy(done = true)
+            ImportEvent.OlderImportStarted -> {
+                _isOlderImportRunning.value = true
+                _olderImportTick.value = null
+            }
+
+            is OlderImportTick -> {
+                _olderImportTick.value =
+                    OlderImportProgress(
+                        processed = event.processed,
+                        total = event.estimatedTotal
+                    )
+            }
+
+            ImportEvent.OlderImportFinished -> {
+                _isOlderImportRunning.value = false
+                _olderImportTick.value = null
+                prefs.olderImportCompleted = true
+            }
+
+            is ImportEvent.Finished -> {
+                _items.value = event.list
+            }
         }
     }
 
@@ -1411,11 +1422,12 @@ class SmsImportViewModel @Inject constructor(
         }
 
 
-
 }
+
 enum class ProLockType {
     YEARLY,
 }
+
 sealed class UiTxnRow {
     data class Normal(val tx: SmsEntity) : UiTxnRow()
 
@@ -1509,6 +1521,7 @@ fun SmsEntity.matchesFrequency(
 
     }
 }
+
 data class MonthlyBar(
     val month: YearMonth,
     val total: Double

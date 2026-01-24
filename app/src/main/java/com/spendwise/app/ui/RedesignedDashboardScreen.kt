@@ -88,6 +88,7 @@ import com.spendwise.core.com.spendwise.core.ExpenseFrequency
 import com.spendwise.core.com.spendwise.core.FrequencyFilter
 import com.spendwise.core.ml.CategoryType
 import com.spendwise.domain.com.spendwise.feature.smsimport.data.DashboardMode
+import com.spendwise.domain.com.spendwise.feature.smsimport.data.OlderImportProgress
 import com.spendwise.domain.com.spendwise.feature.smsimport.ui.MonthlyComparisonCard
 import com.spendwise.domain.com.spendwise.feature.smsimport.ui.WalletInsightCard
 import com.spendwise.feature.smsimport.data.SmsEntity
@@ -129,28 +130,28 @@ fun RedesignedDashboardScreen(
 
     // top-level loading / import handling (assumes app-level permission + import triggers)
     if (!progress.done) {
-        // small inset progress UI — full screen handled elsewhere
-        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        Box(
+            modifier = Modifier.fillMaxSize(),
+            contentAlignment = Alignment.Center
+        ) {
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                 CircularProgressIndicator()
                 Spacer(Modifier.height(12.dp))
-                Text("Importing messages — ${progress.processed}/${progress.total}")
+                Text(
+                    if (progress.total > 0)
+                        "Messages — ${progress.processed}/${progress.total}"
+                    else
+                        "Preparing messages…"
+                )
             }
         }
         return
     }
 
+    val isOlderImportRunning by viewModel.isOlderImportRunning.collectAsState()
 
-    if (uiState.isLoading) {
-        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                CircularProgressIndicator()
-                Spacer(Modifier.height(8.dp))
-                Text("Preparing dashboard…")
-            }
-        }
-        return
-    }
+    val olderProgress by viewModel.olderImportProgress.collectAsState()
+
     val fromInsights =
         navController.currentBackStackEntry
             ?.savedStateHandle
@@ -199,6 +200,7 @@ fun RedesignedDashboardScreen(
             )
         }
     ) { padding ->
+
         ApplySelfTransferUiHost(viewModel)
         LazyColumn(
             modifier = Modifier
@@ -207,6 +209,15 @@ fun RedesignedDashboardScreen(
                 .fillMaxSize(),
             contentPadding = PaddingValues(bottom = 56.dp)
         ) {
+
+            if (isOlderImportRunning) {
+                item {
+                    BackgroundImportStrip(
+                        message = "Loading older messages…",
+                        progress = olderProgress
+                    )
+                }
+            }
             // 🔒 RECLASSIFY PROGRESS (VISIBLE & SAFE)
             progressReclassify?.let { (done, total) ->
                 item {
@@ -416,6 +427,78 @@ fun RedesignedDashboardScreen(
         }
     }
 }
+
+@Composable
+fun BackgroundImportStrip(
+    message: String,
+    progress: OlderImportProgress?
+) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(bottom = 12.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceVariant
+        ),
+        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+    ) {
+        Column(
+            modifier = Modifier.padding(12.dp)
+        ) {
+
+            // 🔹 Title / message
+            Text(
+                text = message,
+                style = MaterialTheme.typography.bodySmall
+            )
+
+            Spacer(Modifier.height(6.dp))
+
+            // 🔹 Progress bar
+            when {
+                progress == null -> {
+                    // Indeterminate (rare)
+                    LinearProgressIndicator(
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+
+                progress.total > 0 -> {
+                    LinearProgressIndicator(
+                        progress =
+                            (progress.processed.toFloat() / progress.total)
+                                .coerceIn(0f, 1f),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+
+                else -> {
+                    // Unknown total → indeterminate
+                    LinearProgressIndicator(
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+            }
+
+            // 🔹 Count text (optional, small & subtle)
+            progress?.let {
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    text =
+                        if (it.total > 0)
+                            "${it.processed} / ${it.total} messages processed"
+                        else
+                            "${it.processed} messages processed",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+    }
+}
+
+
+
 @Composable
 fun ApplySelfTransferUiHost(
     viewModel: SmsImportViewModel
@@ -963,6 +1046,8 @@ fun InsightsScreen(
     var lockedMode by remember { mutableStateOf<DashboardMode?>(null) }
     val monthlyBars by viewModel.monthlyTrendBars.collectAsState()
     val categoryCollapsed by viewModel.categoryCollapsed.collectAsState()
+    val importMessage by viewModel.importMessage.collectAsState()
+
 
 
 
@@ -995,11 +1080,25 @@ fun InsightsScreen(
                 onDismiss = { lockedMode = null }
             )
         }
+
+
+        val isOlderImportRunning by viewModel.isOlderImportRunning.collectAsState()
+        val olderProgress by viewModel.olderImportProgress.collectAsState()
+
         LazyColumn(
             modifier = Modifier
                 .padding(padding)
                 .padding(16.dp)
         ) {
+
+            if (isOlderImportRunning) {
+                item {
+                    BackgroundImportStrip(
+                        message = "Loading older messages…",
+                        progress = olderProgress
+                    )
+                }
+            }
 
             item {
                 DashboardModeSelectorProAware(
