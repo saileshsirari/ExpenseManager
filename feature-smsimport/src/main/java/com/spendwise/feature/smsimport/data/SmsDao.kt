@@ -222,5 +222,7 @@ WHERE type = 'DEBIT'
 
     @Query("SELECT COUNT(*) FROM sms WHERE timestamp < :timestamp")
     suspend fun countOlderThan(timestamp: Long): Int
+    @Query("SELECT COUNT(*) FROM sms WHERE sender = :sender")
+    suspend fun countBySender(sender: String): Int
 
 }

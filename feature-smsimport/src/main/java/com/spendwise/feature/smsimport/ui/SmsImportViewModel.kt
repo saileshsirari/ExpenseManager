@@ -2,11 +2,13 @@ package com.spendwise.feature.smsimport.ui
 
 import android.content.ContentResolver
 import android.content.Context
+import android.icu.number.Precision.currency
 import android.os.Build
 import androidx.annotation.RequiresApi
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.spendwise.core.com.spendwise.core.AppDefaults
+import com.spendwise.core.com.spendwise.core.DebugFlags
 import com.spendwise.core.com.spendwise.core.ExpenseFrequency
 import com.spendwise.core.com.spendwise.core.FrequencyFilter
 import com.spendwise.core.ml.CategoryType
@@ -429,6 +431,23 @@ class SmsImportViewModel @Inject constructor(
 
     val periodComparison: StateFlow<InsightBlock.Comparison> =
         combine(items, uiInputs, isPro) { list, input, pro ->
+            val periodTx =
+                list
+                    .filterByPeriod(input.mode, input.period)
+                    .filter { it.isCountedAsExpense() }
+
+            val currencies =
+                periodTx.map { it.currencyCode }.distinct()
+
+            // 🔒 MULTI-CURRENCY → DISABLE COMPARISON
+            if (currencies.size > 1) {
+                return@combine InsightBlock.Comparison(
+                    title = "Compared to previous period",
+                    value = null,
+                    delta = null,
+                    isLocked = false
+                )
+            }
 
             val effectiveFilter =
                 if (input.mode == DashboardMode.YEAR)
@@ -490,52 +509,71 @@ class SmsImportViewModel @Inject constructor(
     /**
      * Total amount routed via wallets in current period
      */
-    val walletRoutedAmount: StateFlow<Double> =
+    val walletRoutedAmount: StateFlow<Map<String, Double>> =
         combine(items, uiInputs) { list, input ->
 
             list
                 .filterByPeriod(input.mode, input.period)
                 .filter { it.isWalletTopUp() }
-                .sumOf { it.amount }
+                .groupBy { it.currencyCode }
+                .mapValues { (_, txs) ->
+                    txs.sumOf { it.amount }
+                }
 
         }.stateIn(
             viewModelScope,
             SharingStarted.Eagerly,
-            0.0
+            emptyMap()
         )
+
 
     val walletInsight: StateFlow<InsightBlock.WalletInsight> =
         combine(
-            walletRoutedAmount,   // total routed via wallets
+            walletRoutedAmount,   // Map<String, Double>
             isPro
-        ) { walletAmount, pro ->
+        ) { walletByCurrency, pro ->
 
-            val hasWalletActivity = walletAmount > 0.0
+            if (walletByCurrency.isEmpty()) {
+                return@combine InsightBlock.WalletInsight(
+                    amount = null,
+                    currencyCode = null,
+                    isLocked = false
+                )
+            }
+
+            // 🔒 MULTI-CURRENCY → disable insight (no lying)
+            if (walletByCurrency.size > 1) {
+                return@combine InsightBlock.WalletInsight(
+                    amount = null,
+                    currencyCode = null,
+                    isLocked = false
+                )
+            }
+
+            // Single currency (safe)
+            val (currency, amount) = walletByCurrency.entries.first()
 
             when {
-                // No wallet usage → show unlocked explanation
-                !hasWalletActivity -> InsightBlock.WalletInsight(
-                    summary = "No wallet activity this period",
-                    isLocked = false
-                )
-
-                // Pro user → full insight
                 pro -> InsightBlock.WalletInsight(
-                    summary = "₹${walletAmount.toInt()} routed via wallets",
+                    amount = amount,
+                    currencyCode = currency,
                     isLocked = false
                 )
 
-                // Free user → preview
                 else -> InsightBlock.WalletInsight(
-                    summary = null,
+                    amount = null,
+                    currencyCode = currency,
                     isLocked = true
                 )
             }
+
         }.stateIn(
             viewModelScope,
             SharingStarted.Eagerly,
-            InsightBlock.WalletInsight(null, false)
+            InsightBlock.WalletInsight(null, null, false)
         )
+
+
 
 
     data class ImportProgress(
@@ -612,6 +650,27 @@ class SmsImportViewModel @Inject constructor(
                     it.isExpense() &&
                             it.matchesFrequency(insightsFrequencyFilter.value)
                 }
+
+            // -------------------------------------------------
+// 5.1) Totals by currency (future-proof, not yet used)
+// -------------------------------------------------
+            val totalsByCurrency =
+                monthlyExpenses
+                    .groupBy { it.currencyCode }
+                    .mapValues { (_, txns) ->
+                        val debit =
+                            txns
+                                .filter { it.type.equals("DEBIT", true) }
+                                .sumOf { it.amount }
+
+                        val credit =
+                            txns
+                                .filter { it.type.equals("CREDIT", true) }
+                                .sumOf { it.amount }
+
+                        debit to credit
+                    }
+
 
             val internalTransfers =
                 finalList.filter {
@@ -750,8 +809,20 @@ class SmsImportViewModel @Inject constructor(
                         visibleMainRows +
                         visibleInternalRows
 
-            val  currencyCode =
-                list.firstOrNull()?.currencyCode ?: AppDefaults.DEFAULT_CURRENCY
+            val distinctCurrencies =
+                if (DebugFlags.FORCE_MULTI_CURRENCY && finalList.isNotEmpty()) {
+                    listOf("INR", "USD")
+                } else {
+                    finalList.map { it.currencyCode }.distinct()
+                }
+
+            val currencyCode =
+                distinctCurrencies.firstOrNull() ?: AppDefaults.DEFAULT_CURRENCY
+
+
+
+            val isMultiCurrency =
+                distinctCurrencies.size > 1
             // -------------------------------------------------
             // 13) UI State
             // -------------------------------------------------
@@ -766,12 +837,12 @@ class SmsImportViewModel @Inject constructor(
                 showIgnored = input.showIgnored,
                 finalList = finalList,
                 sortedList = sortedExpenses,
-                totalsDebit = totalDebit,
-                totalsCredit = totalCredit,
                 debitCreditTotals = debitCreditTotals,
                 showGroupedMerchants = input.showGroupedMerchants,
                 barData = barData,
-                currencyCode = currencyCode
+                currencyCode = currencyCode,
+                isMultiCurrency = isMultiCurrency,
+                totalsByCurrency = totalsByCurrency
             )
         }
             .flowOn(Dispatchers.Default)

@@ -3,6 +3,7 @@ package com.spendwise.feature.smsimport.repo
 import SmsMlPipeline
 import android.content.ContentResolver
 import androidx.room.withTransaction
+import com.spendwise.core.com.spendwise.core.DebugFlags
 import com.spendwise.core.com.spendwise.core.ExpenseFrequency
 import com.spendwise.core.com.spendwise.core.NetZeroDebugLogger
 import com.spendwise.core.com.spendwise.core.NetZeroReason
@@ -96,7 +97,9 @@ class SmsRepositoryImpl @Inject constructor(
         val rawList = withContext(Dispatchers.IO) {
             SmsReaderImpl(resolver).readSince(lastTs + 1000)
         }
-
+        if (DebugFlags.INSERT_FAKE_FOREIGN_SMS) {
+            insertFakeForeignCurrencySmsIfNeeded()
+        }
         if (rawList.isEmpty()) {
             emit(ImportEvent.Finished(db.smsDao().getAllOnce()))
             return@flow
@@ -112,8 +115,47 @@ class SmsRepositoryImpl @Inject constructor(
         }
 
 
+
+
         emit(ImportEvent.Finished(db.smsDao().getAllOnce()))
     }
+
+    private suspend fun insertFakeForeignCurrencySmsIfNeeded() {
+        val alreadyInserted =
+            db.smsDao().countBySender("DEBUG_USD") > 0
+        if (alreadyInserted) return
+
+        val now = System.currentTimeMillis()
+
+        val fake = SmsEntity(
+            sender = "DEBUG_USD",
+            senderNormalized = "debugusd",
+            body = "Test foreign transaction",
+            timestamp = now - 2 * 24 * 60 * 60 * 1000, // 2 days ago
+            rawHash = RawHashUtil.compute(
+                sender = "DEBUG_USD",
+                body = "Test foreign transaction",
+                timestamp = now
+            ),
+            sourceType = SourceType.SMS.name,
+            countryCode = "US",
+            currencyCode = "USD",
+            processingVersion = ProcessingVersions.CURRENT,
+            amount = 120.0,
+            merchant = "Amazon US",
+            type = "DEBIT",
+            category = "SHOPPING",
+            isNetZero = false,
+            linkType = null,
+            linkId = null,
+            linkConfidence = 0,
+            isIgnored = false,
+            updatedAt = now
+        )
+
+        db.smsDao().insert(fake)
+    }
+
 
     // ------------------------------------------------------------
     // IMPORT ALL

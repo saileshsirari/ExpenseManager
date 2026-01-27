@@ -61,5 +61,16 @@ Your data stays the same.
 
     <!-- Generic -->
     <string name="label_unknown">Unknown</string>
+    <string name="multi_currency_block_title">
+Multiple currencies detected
+</string>
+
+    <string name="multi_currency_block_body">
+This month contains transactions in different currencies.
+Totals are shown per transaction only.
+</string>
+    <string name="wallet_routed_summary">
+%1$s routed via wallets
+</string>
 
 </resources>

@@ -28,9 +28,11 @@ sealed class InsightBlock {
     ) : InsightBlock()
 
     data class WalletInsight(
-        val summary: String?,
+        val amount: Double?,
+        val currencyCode: String?,
         val isLocked: Boolean
-    ) : InsightBlock()
+    )
+
 }
 
 @Composable
@@ -66,17 +68,18 @@ fun MonthlyComparisonCard(
 }
 @Composable
 fun WalletInsightCard(
-    insight: InsightBlock.WalletInsight,
+    walletInsight: InsightBlock.WalletInsight,
     onUpgrade: () -> Unit
 ) {
+    if (walletInsight.amount != null && walletInsight.currencyCode != null) {
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp)) {
             Text("Wallet usage", style = MaterialTheme.typography.titleMedium)
             Spacer(Modifier.height(8.dp))
 
             when {
-                !insight.isLocked -> {
-                    Text(insight.summary ?: "No wallet activity this period")
+                !walletInsight.isLocked -> {
+                    Text(walletInsight.amount?.toString() ?: "No wallet activity this period")
                 }
                 else -> {
                     Text("Understand how wallets route your money")
@@ -87,5 +90,6 @@ fun WalletInsightCard(
                 }
             }
         }
+    }
     }
 }

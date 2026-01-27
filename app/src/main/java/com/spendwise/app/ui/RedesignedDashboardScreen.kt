@@ -291,18 +291,47 @@ fun RedesignedDashboardScreen(
             }
 
             item {
-                // Summary header: totals + mini donut (optional) + quick actions
-                SummaryHeader(
-                    totalDebit = uiState.totalsDebit,
-                    totalCredit = uiState.totalsCredit,
-                    currencyCode = uiState.currencyCode,
-                    onOpenInsights = {
-                        viewModel.prepareInsightsFromDashboard()
-                        navController.navigate(Screen.Insights.route)
+
+                val totalsByCurrency = uiState.totalsByCurrency
+
+                when {
+                    totalsByCurrency.size <= 1 -> {
+                        val (currency, totals) =
+                            totalsByCurrency.entries.firstOrNull()
+                                ?.let { it.key to it.value }
+                                ?: (uiState.currencyCode to (0.0 to 0.0))
+
+                        val totalDebit = totals.first
+                        val totalCredit = totals.second
+
+                        SummaryHeader(
+                            totalDebit = totalDebit,
+                            totalCredit = totalCredit,
+                            currencyCode = currency,
+                            onOpenInsights = {
+                                viewModel.prepareInsightsFromDashboard()
+                                navController.navigate(Screen.Insights.route)
+                            }
+                        )
                     }
-                )
+
+                    else -> {
+                        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                            totalsByCurrency.forEach { (currency, totals) ->
+                                CurrencySummaryRow(
+                                    currencyCode = currency,
+                                    totalDebit = totals.first,
+                                    totalCredit = totals.second
+                                )
+                            }
+                        }
+                    }
+                }
+
+
                 Spacer(Modifier.height(12.dp))
             }
+
 
             item {
                 // Quick filters & actions row
@@ -435,6 +464,477 @@ fun RedesignedDashboardScreen(
                     }
                 }
                 Spacer(Modifier.height(24.dp))
+            }
+        }
+    }
+}
+/* -----------------------------------------------------------
+   2) Insights screen: full-size pie chart + category breakdown
+   - Timeframe toggle (Month / Quarter / Year)
+   - Category list sorted by amount
+   ----------------------------------------------------------- */
+@Composable
+fun InsightsScreen(
+    navController: NavController,
+    viewModel: SmsImportViewModel,
+    isPro: Boolean
+) {
+    val freqFilter by viewModel.insightsFrequencyFilter.collectAsState()
+    val uiState by viewModel.uiState.collectAsState()
+    BackHandler {
+        exitInsights(
+            navController,
+            viewModel,
+            viewModel.uiState.value.mode,
+            viewModel.uiState.value.period
+        )
+    }
+
+    // Reset filter whenever entering Insights
+    LaunchedEffect(Unit) {
+        viewModel.clearSelectedType()
+        viewModel.setInsightsFrequencyFilter(FrequencyFilter.MONTHLY_ONLY)
+    }
+
+
+    val totalSpend by viewModel.totalSpend.collectAsState()
+
+    val insightRows = remember(uiState.rows, freqFilter) {
+        uiState.rows.filter { row ->
+            when (row) {
+                is UiTxnRow.Section -> true
+                is UiTxnRow.Normal -> row.tx.matchesFrequency(freqFilter)
+                is UiTxnRow.Grouped ->
+                    row.children.any { it.matchesFrequency(freqFilter) }
+            }
+        }
+    }
+
+
+    var expandedItemId by remember { mutableStateOf<Long?>(null) }
+    // Full categories for pie chart
+    val categoriesAll by viewModel.categoryTotalsForPeriod.collectAsState()
+
+    // Filtered categories (if selectedType is applied)
+    val categoryInsight by viewModel.categoryInsight.collectAsState()
+    val comparison by viewModel.periodComparison.collectAsState()
+    val walletInsight by viewModel.walletInsight.collectAsState()
+    val insightsUi by viewModel.insightsUiState.collectAsState()
+
+    var lockedMode by remember { mutableStateOf<DashboardMode?>(null) }
+    val monthlyBars by viewModel.monthlyTrendBars.collectAsState()
+    val categoryCollapsed by viewModel.categoryCollapsed.collectAsState()
+    val importMessage by viewModel.importMessage.collectAsState()
+
+
+
+
+    Scaffold(
+        topBar = {
+            CenterAlignedTopAppBar(
+                title = { Text("Insights") },
+                navigationIcon = {
+                    IconButton(onClick = {
+                        exitInsights(
+                            navController,
+                            viewModel,
+                            viewModel.uiState.value.mode,
+                            viewModel.uiState.value.period
+                        )
+                    }) {
+                        Icon(
+                            painter = painterResource(id = androidR.drawable.ic_menu_close_clear_cancel),
+                            contentDescription = "Back"
+                        )
+                    }
+                }
+            )
+        }
+    ) { padding ->
+        ApplySelfTransferUiHost(viewModel)
+        if (lockedMode != null) {
+            ProExplainDialog(
+                title = "${
+                    lockedMode!!.name.lowercase().replaceFirstChar { it.uppercase() }
+                } view is Pro",
+                message = viewModel.explainDashboardModeLock(lockedMode!!),
+                onUpgrade = {
+                    lockedMode = null
+                    viewModel.onUpgradeClicked()
+                },
+                onDismiss = { lockedMode = null }
+            )
+        }
+
+
+        val isOlderImportRunning by viewModel.isOlderImportRunning.collectAsState()
+        val olderProgress by viewModel.olderImportProgress.collectAsState()
+
+
+        LazyColumn(
+            modifier = Modifier
+                .padding(padding)
+                .padding(16.dp)
+        ) {
+            if (uiState.isMultiCurrency) {
+                item {
+                    InfoStrip(
+                        title = stringResource(R.string.multi_currency_block_title),
+                        body = stringResource(R.string.multi_currency_block_body)
+                    )
+                }
+            }
+
+            if (isOlderImportRunning) {
+                item {
+                    BackgroundImportStrip(
+                        message = "Loading older messages…",
+                        progress = olderProgress
+                    )
+                }
+            }
+
+            item {
+                DashboardModeSelectorProAware(
+                    current = uiState.mode,
+                    isPro = viewModel.isPro.collectAsState().value,
+                    onChange = viewModel::setMode,
+                    onLocked = { lockedMode = it }
+                )
+            }
+            item {
+                PeriodNavigator(
+                    mode = uiState.mode,
+                    period = uiState.period,
+                    onPrev = viewModel::prevPeriod,
+                    onNext = viewModel::nextPeriod
+                )
+            }
+
+            // ----------------------------
+            // 🔹 Monthly Trends
+            // ----------------------------
+            if (!uiState.isMultiCurrency) {
+                item {
+
+                    MonthlyTrendBarChart(
+                        bars = monthlyBars,
+                        isPro = isPro,
+                        currencyCode = uiState.currencyCode,
+                        onMonthSelected = { month ->
+                            viewModel.setMode(DashboardMode.MONTH) // safe no-op if already month
+                            viewModel.setPeriod(month)
+                        },
+                        onUpgrade = {
+                            viewModel.onUpgradeClicked()
+                        }
+                    )
+
+                    Spacer(Modifier.height(24.dp))
+
+                }
+            }
+
+
+            /* -------------------------------------------------------------
+                CATEGORY LIST
+            ------------------------------------------------------------- */
+            if (uiState.isMultiCurrency) {
+                item {
+                    InfoStrip(
+                        title = stringResource(R.string.multi_currency_block_title),
+                        body = stringResource(R.string.multi_currency_block_body)
+                    )
+                }
+            } else {
+                item {
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(16.dp)
+                    ) {
+                        Column(modifier = Modifier.padding(12.dp)) {
+
+                            // ----------------------------
+                            // HEADER (always visible)
+                            // ----------------------------
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable { viewModel.toggleCategoryCollapsed() },
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column {
+                                    Text(
+                                        "Category breakdown",
+                                        style = MaterialTheme.typography.titleMedium
+                                    )
+
+                                    Text(
+                                        "₹${totalSpend.roundToInt()}",
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        color = Color.Gray
+                                    )
+                                }
+
+                                Icon(
+                                    imageVector =
+                                        if (categoryCollapsed)
+                                            Icons.Default.ExpandMore
+                                        else
+                                            Icons.Default.ExpandLess,
+                                    contentDescription = null
+                                )
+                            }
+
+                            // ----------------------------
+                            // COLLAPSIBLE CONTENT
+                            // ----------------------------
+                            AnimatedVisibility(
+                                visible = !categoryCollapsed,
+                                enter = expandVertically() + fadeIn(),
+                                exit = shrinkVertically() + fadeOut()
+                            ) {
+
+                                Column {
+
+                                    Divider(modifier = Modifier.padding(vertical = 8.dp))
+
+                                    // 🔹 Frequency selector (FREE)
+                                    InsightsFrequencySelector(
+                                        uiState = insightsUi,
+                                        onChange = viewModel::setInsightsFrequencyFilter
+                                    )
+
+                                    if (freqFilter != FrequencyFilter.MONTHLY_ONLY) {
+                                        Text(
+                                            text = when (freqFilter) {
+                                                FrequencyFilter.ALL_EXPENSES ->
+                                                    "Includes yearly and irregular expenses"
+
+                                                FrequencyFilter.YEARLY_ONLY ->
+                                                    "Showing yearly expenses only"
+
+                                                else -> ""
+                                            },
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = Color.Gray,
+                                            modifier = Modifier.padding(top = 6.dp, bottom = 8.dp)
+                                        )
+                                    }
+
+                                    Spacer(Modifier.height(8.dp))
+                                    if (uiState.isMultiCurrency) {
+                                        InfoStrip(
+                                            title = stringResource(R.string.multi_currency_block_title),
+                                            body = stringResource(R.string.multi_currency_block_body)
+                                        )
+                                    } else {
+                                        // 🔹 Pie chart
+                                        if (categoriesAll.isNotEmpty()) {
+                                            CategoryPieChart(
+                                                data = categoriesAll.map { it.total },
+                                                labels = categoriesAll.map { it.name },
+                                                colors = categoriesAll.map { it.color },
+                                                selectedLabel = uiState.selectedType,
+                                                onSliceClick = { clicked ->
+                                                    viewModel.setSelectedTypeSafe(clicked)
+                                                }
+                                            )
+                                        } else {
+                                            Text(
+                                                "No category data found",
+                                                style = MaterialTheme.typography.bodyMedium
+                                            )
+                                        }
+                                    }
+
+                                    Spacer(Modifier.height(12.dp))
+
+
+                                    // 🔹 Category list (with Pro preview logic)
+                                    CategoryListCard(
+                                        title = null, // header already shown
+                                        items = categoryInsight.items,
+                                        locked = categoryInsight.isLocked,
+                                        onUpgrade = { viewModel.onUpgradeClicked() }
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    Spacer(Modifier.height(16.dp))
+                }
+            }
+
+            item {
+                MonthlyComparisonCard(
+                    comparison = comparison,
+                    onUpgrade = { viewModel.onUpgradeClicked() }
+                )
+                Spacer(Modifier.height(16.dp))
+            }
+
+            item {
+                WalletInsightCard(
+                    walletInsight = walletInsight,
+                    onUpgrade = { viewModel.onUpgradeClicked() }
+                )
+                Spacer(Modifier.height(16.dp))
+            }
+
+
+            item {
+                // Sorting
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    SortHeader(
+                        sortConfig = uiState.sortConfig,
+                        onSortChange = { viewModel.updateSort(it) }
+                    )
+                }
+
+                Spacer(Modifier.height(12.dp))
+            }
+            item {
+                if (freqFilter != FrequencyFilter.MONTHLY_ONLY) {
+                    Text(
+                        "Filtered by ${freqFilter.name.lowercase()} expenses",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = Color.Gray
+                    )
+                }
+            }
+
+            items(
+                items = insightRows,
+                key = { row ->
+                    when (row) {
+                        is UiTxnRow.Normal -> "tx-${row.tx.id}"
+                        is UiTxnRow.Grouped -> "group-${row.groupId}"
+                        is UiTxnRow.Section -> "section-${row.id}"
+
+                    }
+                }
+            ) { row ->
+                when (row) {
+                    is UiTxnRow.Normal -> {
+                        TransactionRow(
+                            sms = row.tx,
+                            isExpanded = expandedItemId == row.tx.id,
+                            onClick = {
+                                expandedItemId =
+                                    if (expandedItemId == row.tx.id) null else row.tx.id
+
+                                viewModel.onMessageClicked(it)
+                            },
+                            onChange = { freq ->
+                                viewModel.setExpenseFrequency(row.tx, freq)
+                            },
+                            onMarkAsSelfTransfer = { tx ->
+                                viewModel.markAsSelfTransfer(tx)
+                                viewModel.requestApplySelfRule(tx)
+                            },
+                            onUndoSelfTransfer = {
+                                viewModel.undoSelfTransfer(it)
+                            },
+                            onChangeCategory = { tx, category ->
+                                viewModel.changeMerchantCategory(
+                                    merchant = tx.merchant ?: return@TransactionRow,
+                                    category = category
+                                )
+                            },
+                            hasNeverUsedSelfTransfer = viewModel.hasNeverUsedSelfTransfer,
+                            onDebugClick = {
+                                viewModel.onMessageClicked(row.tx)
+                                viewModel.debugReprocessSms(row.tx.id)
+                            }
+                        )
+                    }
+
+                    is UiTxnRow.Grouped -> {
+                        GroupedMerchantRow(
+                            group = row,
+                            viewModel = viewModel,
+                            onMarkNotExpense = { _, _ -> }
+                        )
+                    }
+
+                    // 🔒 Explicitly ignore sections in Insights
+                    is UiTxnRow.Section -> {
+                        InternalTransferSectionHeader(
+                            title = row.title,
+                            count = row.count,
+                            collapsed = row.collapsed,
+                            onToggle = {
+                                when (row.id) {
+                                    "main_transactions" ->
+                                        viewModel.toggleMainSection()
+
+                                    "internal_transfers" ->
+                                        viewModel.toggleInternalSection()
+                                }
+                            }
+                        )
+                        Spacer(Modifier.height(8.dp))
+                    }
+
+                }
+            }
+
+        }
+    }
+}
+
+@Composable
+fun CurrencySummaryRow(
+    currencyCode: String,
+    totalDebit: Double,
+    totalCredit: Double
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(12.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceVariant
+        )
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(12.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+
+            Text(
+                text = currencyCode,
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.primary
+            )
+
+            Column(horizontalAlignment = Alignment.End) {
+                Text(
+                    MoneyFormatter.format(
+                        amount = totalDebit,
+                        currencyCode = currencyCode
+                    ),
+                    style = MaterialTheme.typography.bodyMedium
+                )
+
+                if (totalCredit > 0) {
+                    Text(
+                        MoneyFormatter.format(
+                            amount = totalCredit,
+                            currencyCode = currencyCode
+                        ),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = Color.Gray
+                    )
+                }
             }
         }
     }
@@ -876,6 +1376,50 @@ fun MonthlyTrendBarChart(
         }
     }
 }
+@Composable
+fun InfoStrip(
+    title: String,
+    body: String,
+    modifier: Modifier = Modifier
+) {
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .background(
+                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f),
+                shape = RoundedCornerShape(8.dp)
+            )
+            .padding(12.dp),
+        verticalAlignment = Alignment.Top
+    ) {
+        Icon(
+            imageVector = Icons.Outlined.Info,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier
+                .size(18.dp)
+                .padding(top = 2.dp)
+        )
+
+        Spacer(modifier = Modifier.width(10.dp))
+
+        Column {
+            Text(
+                text = title,
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurface
+            )
+
+            Spacer(modifier = Modifier.height(2.dp))
+
+            Text(
+                text = body,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+    }
+}
 
 @Composable
 fun CollapsibleSectionHeader(
@@ -1005,398 +1549,7 @@ fun LockedTrendPreview(onUpgrade: () -> Unit) {
     }
 }
 
-/* -----------------------------------------------------------
-   2) Insights screen: full-size pie chart + category breakdown
-   - Timeframe toggle (Month / Quarter / Year)
-   - Category list sorted by amount
-   ----------------------------------------------------------- */
-@Composable
-fun InsightsScreen(
-    navController: NavController,
-    viewModel: SmsImportViewModel,
-    isPro: Boolean
-) {
-    val freqFilter by viewModel.insightsFrequencyFilter.collectAsState()
-    val uiState by viewModel.uiState.collectAsState()
-    BackHandler {
-        exitInsights(
-            navController,
-            viewModel,
-            viewModel.uiState.value.mode,
-            viewModel.uiState.value.period
-        )
-    }
 
-    // Reset filter whenever entering Insights
-    LaunchedEffect(Unit) {
-        viewModel.clearSelectedType()
-        viewModel.setInsightsFrequencyFilter(FrequencyFilter.MONTHLY_ONLY)
-    }
-
-
-    val totalSpend by viewModel.totalSpend.collectAsState()
-
-    val insightRows = remember(uiState.rows, freqFilter) {
-        uiState.rows.filter { row ->
-            when (row) {
-                is UiTxnRow.Section -> true
-                is UiTxnRow.Normal -> row.tx.matchesFrequency(freqFilter)
-                is UiTxnRow.Grouped ->
-                    row.children.any { it.matchesFrequency(freqFilter) }
-            }
-        }
-    }
-
-
-    var expandedItemId by remember { mutableStateOf<Long?>(null) }
-    // Full categories for pie chart
-    val categoriesAll by viewModel.categoryTotalsForPeriod.collectAsState()
-
-    // Filtered categories (if selectedType is applied)
-    val categoryInsight by viewModel.categoryInsight.collectAsState()
-    val comparison by viewModel.periodComparison.collectAsState()
-    val walletInsight by viewModel.walletInsight.collectAsState()
-    val insightsUi by viewModel.insightsUiState.collectAsState()
-
-    var lockedMode by remember { mutableStateOf<DashboardMode?>(null) }
-    val monthlyBars by viewModel.monthlyTrendBars.collectAsState()
-    val categoryCollapsed by viewModel.categoryCollapsed.collectAsState()
-    val importMessage by viewModel.importMessage.collectAsState()
-
-
-
-
-    Scaffold(
-        topBar = {
-            CenterAlignedTopAppBar(
-                title = { Text("Insights") },
-                navigationIcon = {
-                    IconButton(onClick = {
-                        exitInsights(
-                            navController,
-                            viewModel,
-                            viewModel.uiState.value.mode,
-                            viewModel.uiState.value.period
-                        )
-                    }) {
-                        Icon(
-                            painter = painterResource(id = androidR.drawable.ic_menu_close_clear_cancel),
-                            contentDescription = "Back"
-                        )
-                    }
-                }
-            )
-        }
-    ) { padding ->
-        ApplySelfTransferUiHost(viewModel)
-        if (lockedMode != null) {
-            ProExplainDialog(
-                title = "${
-                    lockedMode!!.name.lowercase().replaceFirstChar { it.uppercase() }
-                } view is Pro",
-                message = viewModel.explainDashboardModeLock(lockedMode!!),
-                onUpgrade = {
-                    lockedMode = null
-                    viewModel.onUpgradeClicked()
-                },
-                onDismiss = { lockedMode = null }
-            )
-        }
-
-
-        val isOlderImportRunning by viewModel.isOlderImportRunning.collectAsState()
-        val olderProgress by viewModel.olderImportProgress.collectAsState()
-
-        LazyColumn(
-            modifier = Modifier
-                .padding(padding)
-                .padding(16.dp)
-        ) {
-
-            if (isOlderImportRunning) {
-                item {
-                    BackgroundImportStrip(
-                        message = "Loading older messages…",
-                        progress = olderProgress
-                    )
-                }
-            }
-
-            item {
-                DashboardModeSelectorProAware(
-                    current = uiState.mode,
-                    isPro = viewModel.isPro.collectAsState().value,
-                    onChange = viewModel::setMode,
-                    onLocked = { lockedMode = it }
-                )
-            }
-            item {
-                PeriodNavigator(
-                    mode = uiState.mode,
-                    period = uiState.period,
-                    onPrev = viewModel::prevPeriod,
-                    onNext = viewModel::nextPeriod
-                )
-            }
-
-            // ----------------------------
-            // 🔹 Monthly Trends
-            // ----------------------------
-            item {
-                MonthlyTrendBarChart(
-                    bars = monthlyBars,
-                    isPro = isPro,
-                    currencyCode = uiState.currencyCode,
-                    onMonthSelected = { month ->
-                        viewModel.setMode(DashboardMode.MONTH) // safe no-op if already month
-                        viewModel.setPeriod(month)
-                    },
-                    onUpgrade = {
-                        viewModel.onUpgradeClicked()
-                    }
-                )
-
-                Spacer(Modifier.height(24.dp))
-
-            }
-
-
-            /* -------------------------------------------------------------
-                CATEGORY LIST
-            ------------------------------------------------------------- */
-
-            item {
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(16.dp)
-                ) {
-                    Column(modifier = Modifier.padding(12.dp)) {
-
-                        // ----------------------------
-                        // HEADER (always visible)
-                        // ----------------------------
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable { viewModel.toggleCategoryCollapsed() },
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Column {
-                                Text(
-                                    "Category breakdown",
-                                    style = MaterialTheme.typography.titleMedium
-                                )
-
-                                Text(
-                                    "₹${totalSpend.roundToInt()}",
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    color = Color.Gray
-                                )
-                            }
-
-                            Icon(
-                                imageVector =
-                                    if (categoryCollapsed)
-                                        Icons.Default.ExpandMore
-                                    else
-                                        Icons.Default.ExpandLess,
-                                contentDescription = null
-                            )
-                        }
-
-                        // ----------------------------
-                        // COLLAPSIBLE CONTENT
-                        // ----------------------------
-                        AnimatedVisibility(
-                            visible = !categoryCollapsed,
-                            enter = expandVertically() + fadeIn(),
-                            exit = shrinkVertically() + fadeOut()
-                        ) {
-
-                            Column {
-
-                                Divider(modifier = Modifier.padding(vertical = 8.dp))
-
-                                // 🔹 Frequency selector (FREE)
-                                InsightsFrequencySelector(
-                                    uiState = insightsUi,
-                                    onChange = viewModel::setInsightsFrequencyFilter
-                                )
-
-                                if (freqFilter != FrequencyFilter.MONTHLY_ONLY) {
-                                    Text(
-                                        text = when (freqFilter) {
-                                            FrequencyFilter.ALL_EXPENSES ->
-                                                "Includes yearly and irregular expenses"
-
-                                            FrequencyFilter.YEARLY_ONLY ->
-                                                "Showing yearly expenses only"
-
-                                            else -> ""
-                                        },
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = Color.Gray,
-                                        modifier = Modifier.padding(top = 6.dp, bottom = 8.dp)
-                                    )
-                                }
-
-                                Spacer(Modifier.height(8.dp))
-
-                                // 🔹 Pie chart
-                                if (categoriesAll.isNotEmpty()) {
-                                    CategoryPieChart(
-                                        data = categoriesAll.map { it.total },
-                                        labels = categoriesAll.map { it.name },
-                                        colors = categoriesAll.map { it.color },
-                                        selectedLabel = uiState.selectedType,
-                                        onSliceClick = { clicked ->
-                                            viewModel.setSelectedTypeSafe(clicked)
-                                        }
-                                    )
-                                } else {
-                                    Text(
-                                        "No category data found",
-                                        style = MaterialTheme.typography.bodyMedium
-                                    )
-                                }
-
-                                Spacer(Modifier.height(12.dp))
-
-                                // 🔹 Category list (with Pro preview logic)
-                                CategoryListCard(
-                                    title = null, // header already shown
-                                    items = categoryInsight.items,
-                                    locked = categoryInsight.isLocked,
-                                    onUpgrade = { viewModel.onUpgradeClicked() }
-                                )
-                            }
-                        }
-                    }
-                }
-
-                Spacer(Modifier.height(16.dp))
-            }
-
-            item {
-                MonthlyComparisonCard(
-                    comparison = comparison,
-                    onUpgrade = { viewModel.onUpgradeClicked() }
-                )
-                Spacer(Modifier.height(16.dp))
-            }
-            item {
-                WalletInsightCard(
-                    insight = walletInsight,
-                    onUpgrade = { viewModel.onUpgradeClicked() }
-                )
-                Spacer(Modifier.height(16.dp))
-            }
-
-
-            item {
-                // Sorting
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
-                    SortHeader(
-                        sortConfig = uiState.sortConfig,
-                        onSortChange = { viewModel.updateSort(it) }
-                    )
-                }
-
-                Spacer(Modifier.height(12.dp))
-            }
-            item {
-                if (freqFilter != FrequencyFilter.MONTHLY_ONLY) {
-                    Text(
-                        "Filtered by ${freqFilter.name.lowercase()} expenses",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = Color.Gray
-                    )
-                }
-            }
-
-            items(
-                items = insightRows,
-                key = { row ->
-                    when (row) {
-                        is UiTxnRow.Normal -> "tx-${row.tx.id}"
-                        is UiTxnRow.Grouped -> "group-${row.groupId}"
-                        is UiTxnRow.Section -> "section-${row.id}"
-
-                    }
-                }
-            ) { row ->
-                when (row) {
-                    is UiTxnRow.Normal -> {
-                        TransactionRow(
-                            sms = row.tx,
-                            isExpanded = expandedItemId == row.tx.id,
-                            onClick = {
-                                expandedItemId =
-                                    if (expandedItemId == row.tx.id) null else row.tx.id
-
-                                viewModel.onMessageClicked(it)
-                            },
-                            onChange = { freq ->
-                                viewModel.setExpenseFrequency(row.tx, freq)
-                            },
-                            onMarkAsSelfTransfer = { tx ->
-                                viewModel.markAsSelfTransfer(tx)
-                                viewModel.requestApplySelfRule(tx)
-                            },
-                            onUndoSelfTransfer = {
-                                viewModel.undoSelfTransfer(it)
-                            },
-                            onChangeCategory = { tx, category ->
-                                viewModel.changeMerchantCategory(
-                                    merchant = tx.merchant ?: return@TransactionRow,
-                                    category = category
-                                )
-                            },
-                            hasNeverUsedSelfTransfer = viewModel.hasNeverUsedSelfTransfer,
-                            onDebugClick = {
-                                viewModel.onMessageClicked(row.tx)
-                                viewModel.debugReprocessSms(row.tx.id)
-                            }
-                        )
-                    }
-
-                    is UiTxnRow.Grouped -> {
-                        GroupedMerchantRow(
-                            group = row,
-                            viewModel = viewModel,
-                            onMarkNotExpense = { _, _ -> }
-                        )
-                    }
-
-                    // 🔒 Explicitly ignore sections in Insights
-                    is UiTxnRow.Section -> {
-                        InternalTransferSectionHeader(
-                            title = row.title,
-                            count = row.count,
-                            collapsed = row.collapsed,
-                            onToggle = {
-                                when (row.id) {
-                                    "main_transactions" ->
-                                        viewModel.toggleMainSection()
-
-                                    "internal_transfers" ->
-                                        viewModel.toggleInternalSection()
-                                }
-                            }
-                        )
-                        Spacer(Modifier.height(8.dp))
-                    }
-
-                }
-            }
-
-        }
-    }
-}
 
 
 /* -----------------------------------------------------------

@@ -20,13 +20,15 @@ data class DashboardUiState(
     val finalList: List<SmsEntity> = emptyList(),
     val sortedList: List<SmsEntity> = emptyList(),
 
-    val totalsDebit: Double = 0.0,
-    val totalsCredit: Double = 0.0,
     val debitCreditTotals: Map<String, Double> = emptyMap(),
 
     val barData: Map<Int, Double> = emptyMap(),
-    val currencyCode: String = AppDefaults.DEFAULT_CURRENCY
+    val currencyCode: String = AppDefaults.DEFAULT_CURRENCY,
+    val isMultiCurrency: Boolean =false,
+    val totalsByCurrency: Map<String, Pair<Double, Double>> = emptyMap()
+
 )
+
 fun DashboardUiState.periodLabel(): String =
     when (mode) {
         DashboardMode.MONTH ->
