@@ -6,10 +6,12 @@ import androidx.room.withTransaction
 import com.spendwise.core.com.spendwise.core.ExpenseFrequency
 import com.spendwise.core.com.spendwise.core.NetZeroDebugLogger
 import com.spendwise.core.com.spendwise.core.NetZeroReason
+import com.spendwise.core.com.spendwise.core.SourceType
 import com.spendwise.core.com.spendwise.core.detector.CATEGORY_INVESTMENT
 import com.spendwise.core.com.spendwise.core.isCardBillPayment
 import com.spendwise.core.com.spendwise.core.isSystemInfoDebit
 import com.spendwise.core.com.spendwise.core.isWalletCredit
+import com.spendwise.core.com.spendwise.core.ml.SenderNormalizer
 import com.spendwise.core.detector.InvestmentOutflowDetector
 import com.spendwise.core.linked.LinkedTransactionDetector
 import com.spendwise.core.ml.CategoryType
@@ -20,6 +22,8 @@ import com.spendwise.core.ml.RawSms
 import com.spendwise.core.ml.SenderType
 import com.spendwise.core.transfer.InternalTransferDetector
 import com.spendwise.domain.SmsRepository
+import com.spendwise.domain.com.spendwise.feature.smsimport.data.ProcessingVersions
+import com.spendwise.domain.com.spendwise.feature.smsimport.data.RawHashUtil
 import com.spendwise.domain.com.spendwise.feature.smsimport.data.SmsTemplateMatcher
 import com.spendwise.domain.com.spendwise.feature.smsimport.data.SmsTemplateUtil
 import com.spendwise.domain.com.spendwise.feature.smsimport.data.localDate
@@ -234,27 +238,6 @@ class SmsRepositoryImpl @Inject constructor(
 
         emit(ImportEvent.OlderImportFinished)
     }
-
-
-
-    // ------------------------------------------------------------
-    // MANUAL SAVE
-    // ------------------------------------------------------------
-    override suspend fun saveManual(sender: String, body: String, timestamp: Long) {
-        val amount = SmsParser.parseAmount(body) ?: return
-        db.smsDao().insert(
-            SmsEntity(
-                sender = sender,
-                body = body,
-                timestamp = timestamp,
-                amount = amount,
-                merchant = null,
-                type = "MANUAL",
-                category = "OTHER"
-            )
-        )
-    }
-
 
 
     // ------------------------------------------------------------
@@ -714,37 +697,57 @@ class SmsRepositoryImpl @Inject constructor(
         date: LocalDate,
         note: String
     ) {
-        db.smsDao().insert(
-            SmsEntity(
-                sender = "MANUAL", // source
-                body = note,
-                timestamp = date
-                    .atTime(LocalTime.now())   // 👈 NOT startOfDay
-                    .atZone(ZoneId.systemDefault())
-                    .toInstant()
-                    .toEpochMilli(),
+        val timestamp =
+            date.atTime(LocalTime.now())   // user intent: “today-ish”
+                .atZone(ZoneId.systemDefault())
+                .toInstant()
+                .toEpochMilli()
 
-                amount = amount,
-                merchant = merchant,
-
-                // 🔒 Direction, not source
-                type = "DEBIT",
-                category = category.name,
-
-                // 🔒 Explicit safety
-                isNetZero = false,
-                linkType = null,
-                linkId = null,
-                linkConfidence = 0,
-                isIgnored = false,
-
-                updatedAt = System.currentTimeMillis()
-            )
+        val rawHash = RawHashUtil.compute(
+            sender = "MANUAL",
+            body = note,
+            timestamp = timestamp
         )
-        val count = db.smsDao().getAllOnce().size
-        Log.e("MANUAL_EXPENSE", "DB size after manual insert = $count")
 
+        val entity = SmsEntity(
+            // 🔒 Raw identity
+            sender = "MANUAL",
+            senderNormalized = "manual",
+            body = note,
+            timestamp = timestamp,
+            rawHash = rawHash,
+
+            // 🔒 Source & geography
+            sourceType = SourceType.MANUAL.name,
+            countryCode = "IN",
+            currencyCode = "INR",
+
+            // 🔒 Classification lineage
+            processingVersion = ProcessingVersions.CURRENT,
+
+            // 🔒 Money
+            amount = amount,
+            merchant = merchant,
+            type = "DEBIT",
+            category = category.name,
+
+            // 🔒 Safety invariants
+            isNetZero = false,
+            linkType = null,
+            linkId = null,
+            linkConfidence = 0,
+
+            isIgnored = false,
+            updatedAt = System.currentTimeMillis()
+        )
+
+        db.smsDao().insert(entity)
+
+        // Optional debug
+        val count = db.smsDao().getAllOnce().size
+        Log.d("MANUAL_EXPENSE", "DB size after manual insert = $count")
     }
+
 
 
     override suspend fun markIgnored(tx: SmsEntity) {
@@ -925,10 +928,31 @@ class SmsRepositoryImpl @Inject constructor(
             sms.body.contains("wallet", ignoreCase = true) &&
                     sms.body.contains("paid", ignoreCase = true)
 
-        val entity = SmsEntity(
+        // 🔒 Compute raw identity ONCE
+        val rawHash = RawHashUtil.compute(
             sender = sms.sender,
             body = sms.body,
+            timestamp = sms.timestamp
+        )
+
+        val entity = SmsEntity(
+            // ───────── Raw identity ─────────
+            sender = sms.sender,
+            senderNormalized = SenderNormalizer.normalize(sms.sender),
+            body = sms.body,
             timestamp = sms.timestamp,
+            rawHash = rawHash,
+
+            // ───────── Source & geography ─────────
+            sourceType = SourceType.SMS.name,
+            countryCode = "IN",
+            currencyCode = "INR",
+
+            // ───────── Classification lineage ─────────
+            processingVersion = ProcessingVersions.CURRENT,
+            updatedAt = System.currentTimeMillis(),
+
+            // ───────── Money & classification ─────────
             amount = result.amount,
             merchant = resolveMerchant(
                 detectedMerchant = result.merchant,
@@ -937,10 +961,11 @@ class SmsRepositoryImpl @Inject constructor(
             type = if (result.isCredit) "CREDIT" else "DEBIT",
             category = result.category.name,
 
-            // 🔒 NEVER pre-mark net-zero here
+            // ───────── Invariants ─────────
             isNetZero = false,
+            isIgnored = false,
 
-            // 🔒 SINGLE-SMS INTERNAL HANDLING (PRESERVED)
+            // ───────── Single-SMS internal handling (LOCKED) ─────────
             linkType = null,
             linkId =
                 if (isWalletSpend) null
@@ -970,6 +995,7 @@ class SmsRepositoryImpl @Inject constructor(
             )
         }
     }
+
 
 
 }

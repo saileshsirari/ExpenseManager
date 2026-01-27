@@ -11,7 +11,8 @@ import com.spendwise.core.Logger as Log
 @Entity(
     tableName = "sms",
     indices = [
-        Index(value = ["sender", "timestamp", "body"], unique = true)
+        Index(value = ["sender", "timestamp", "body"], unique = true),
+        Index(value = ["rawHash"])
     ]
 )
 data class SmsEntity(
@@ -40,7 +41,14 @@ data class SmsEntity(
     val linkId: String? = null,
     val linkType: String? = null,         // INTERNAL_TRANSFER / POSSIBLE_TRANSFER
     val linkConfidence: Int = 0,
-    val isNetZero: Boolean = false        // true when auto-excluded by linking
+    val isNetZero: Boolean = false ,       // true when auto-excluded by linking
+
+    val currencyCode: String = "INR",
+    val countryCode: String? = "IN",
+    val sourceType: String = "SMS",  // SMS | EMAIL | PUSH | MANUAL
+    val rawHash: String,
+    val senderNormalized: String?,
+    val processingVersion: Int = 1
 )
 
 private val walletRailKeywords = listOf(
