@@ -1,3 +1,65 @@
 <resources>
     <string name="app_name">SpendWise</string>
+    <!-- Self Transfer education -->
+    <string name="self_transfer_toast_applied">
+Marked as Self Transfer. Spending totals updated.
+</string>
+
+    <string name="self_transfer_explain_title">Self transfers are not spending</string>
+
+    <string name="self_transfer_explain_body">
+Money moved between your own accounts is always visible,
+but excluded from spending totals.
+</string>
+
+    <string name="self_transfer_explain_cta">Got it</string>
+
+    <!-- Dashboard -->
+    <string name="dashboard_preparing_messages">Preparing messages…</string>
+    <string name="dashboard_messages_progress">Messages — %1$d/%2$d</string>
+    <string name="dashboard_recent_transactions">Recent transactions</string>
+    <string name="dashboard_total_spent">Total spent</string>
+    <string name="dashboard_total_credit">Total credit</string>
+
+    <!-- Import -->
+    <string name="import_loading_older_messages">Loading older messages…</string>
+    <string name="import_messages_processed">%1$d / %2$d messages processed</string>
+    <string name="import_messages_processed_simple">%1$d messages processed</string>
+
+    <!-- Reclassification -->
+    <string name="reclassify_title">Improving transaction classification</string>
+    <string name="reclassify_progress">%1$d of %2$d transactions</string>
+    <string name="reclassify_starting">Starting…</string>
+
+    <!-- Actions -->
+    <string name="action_add_expense">Add expense</string>
+    <string name="action_insights">Insights</string>
+    <string name="action_open_insights">Open insights</string>
+
+    <!-- Self transfer -->
+    <string name="self_transfer_label">Self transfer</string>
+    <string name="self_transfer_hint">
+Is this just moving money between your own accounts?
+Mark as Self Transfer — it won’t count as spending.
+</string>
+    <string name="self_transfer_badge">Internal transfer</string>
+
+    <!-- Category / frequency -->
+    <string name="category_breakdown">Category breakdown</string>
+    <string name="no_category_data">No category data found</string>
+    <string name="expense_frequency">Expense frequency</string>
+    <string name="frequency_disabled_small_amount">
+Yearly / Irregular disabled for small amounts
+</string>
+
+    <!-- Pro / locked -->
+    <string name="pro_monthly_trends_title">Monthly trends are Pro</string>
+    <string name="pro_monthly_trends_body">
+See spending patterns across months.
+Your data stays the same.
+</string>
+
+    <!-- Generic -->
+    <string name="label_unknown">Unknown</string>
+
 </resources>

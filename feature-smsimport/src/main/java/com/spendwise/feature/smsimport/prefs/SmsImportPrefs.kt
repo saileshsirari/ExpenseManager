@@ -9,7 +9,7 @@ class SmsImportPrefs(context: Context) {
         context.getSharedPreferences("sms_import_prefs", Context.MODE_PRIVATE)
 
     companion object {
-        private const val KEY_IMPORT_DONE = "import_done"
+        private const val KEY_SELF_TRANSFER = "self_transfer"
         private const val KEY_RECENT_IMPORT_DONE = "recent_import_done"
         private const val KEY_OLDER_IMPORT_DONE = "older_import_done"
 
@@ -21,6 +21,10 @@ class SmsImportPrefs(context: Context) {
     var olderImportCompleted : Boolean
         get() = prefs.getBoolean(KEY_OLDER_IMPORT_DONE, false)
         set(value) = prefs.edit().putBoolean(KEY_OLDER_IMPORT_DONE, value).apply()
+
+    var selfTransferEverUsed : Boolean
+        get() = prefs.getBoolean(KEY_SELF_TRANSFER, false)
+        set(value) = prefs.edit().putBoolean(KEY_SELF_TRANSFER, value).apply()
 
     fun clear() {
         prefs.edit().clear().apply()

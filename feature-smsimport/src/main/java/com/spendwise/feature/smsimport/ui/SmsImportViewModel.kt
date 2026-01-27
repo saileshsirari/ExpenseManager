@@ -6,6 +6,7 @@ import android.os.Build
 import androidx.annotation.RequiresApi
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.spendwise.core.com.spendwise.core.AppDefaults
 import com.spendwise.core.com.spendwise.core.ExpenseFrequency
 import com.spendwise.core.com.spendwise.core.FrequencyFilter
 import com.spendwise.core.ml.CategoryType
@@ -135,6 +136,9 @@ class SmsImportViewModel @Inject constructor(
 
     val categoryTotalsForPeriod: StateFlow<List<CategoryTotal>> =
         combine(items, uiInputs, insightsFrequencyFilter) { list, input, freqFilter ->
+
+
+// Optional safety (debug only)
 
             list
                 .filterByPeriod(input.mode, input.period)
@@ -746,7 +750,8 @@ class SmsImportViewModel @Inject constructor(
                         visibleMainRows +
                         visibleInternalRows
 
-
+            val  currencyCode =
+                list.firstOrNull()?.currencyCode ?: AppDefaults.DEFAULT_CURRENCY
             // -------------------------------------------------
             // 13) UI State
             // -------------------------------------------------
@@ -765,7 +770,8 @@ class SmsImportViewModel @Inject constructor(
                 totalsCredit = totalCredit,
                 debitCreditTotals = debitCreditTotals,
                 showGroupedMerchants = input.showGroupedMerchants,
-                barData = barData
+                barData = barData,
+                currencyCode = currencyCode
             )
         }
             .flowOn(Dispatchers.Default)
@@ -968,7 +974,8 @@ class SmsImportViewModel @Inject constructor(
     fun setSelectedType(t: String?) = update { it.copy(selectedType = t) }
     fun setSelectedDay(d: Int?) = update { it.copy(selectedDay = d) }
     fun setSelectedMonth(m: Int?) = update { it.copy(selectedMonth = m) }
-
+    val hasNeverUsedSelfTransfer: Boolean =
+        !prefs.selfTransferEverUsed
     private fun update(block: (UiInputs) -> UiInputs) {
         _uiInputs.value = block(_uiInputs.value)
     }

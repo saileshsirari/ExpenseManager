@@ -1,5 +1,6 @@
 package com.spendwise.domain.com.spendwise.feature.smsimport.data
 
+import com.spendwise.core.com.spendwise.core.AppDefaults
 import com.spendwise.feature.smsimport.data.SmsEntity
 import com.spendwise.feature.smsimport.ui.UiTxnRow
 import java.time.YearMonth
@@ -23,7 +24,8 @@ data class DashboardUiState(
     val totalsCredit: Double = 0.0,
     val debitCreditTotals: Map<String, Double> = emptyMap(),
 
-    val barData: Map<Int, Double> = emptyMap()
+    val barData: Map<Int, Double> = emptyMap(),
+    val currencyCode: String = AppDefaults.DEFAULT_CURRENCY
 )
 fun DashboardUiState.periodLabel(): String =
     when (mode) {

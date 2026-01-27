@@ -3,7 +3,6 @@
 
 package com.spendwise.app.ui
 
-import android.R
 import android.os.Build
 import androidx.activity.compose.BackHandler
 import androidx.annotation.RequiresApi
@@ -27,6 +26,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
@@ -38,6 +38,7 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.CompareArrows
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
+import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -76,14 +77,17 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
 import androidx.navigation.NavController
+import com.spendwise.app.R
 import com.spendwise.app.navigation.Screen
 import com.spendwise.app.ui.dashboard.CategoryPieChart
 import com.spendwise.app.ui.dashboard.DashboardModeSelectorProAware
+import com.spendwise.app.util.MoneyFormatter
 import com.spendwise.core.com.spendwise.core.ExpenseFrequency
 import com.spendwise.core.com.spendwise.core.FrequencyFilter
 import com.spendwise.core.ml.CategoryType
@@ -100,6 +104,7 @@ import com.spendwise.feature.smsimport.ui.matchesFrequency
 import java.time.YearMonth
 import java.time.format.DateTimeFormatter
 import kotlin.math.roundToInt
+import android.R as androidR
 
 /* -----------------------------------------------------------
    1) Modern Minimal DashboardScreen
@@ -139,9 +144,13 @@ fun RedesignedDashboardScreen(
                 Spacer(Modifier.height(12.dp))
                 Text(
                     if (progress.total > 0)
-                        "Messages — ${progress.processed}/${progress.total}"
+                        stringResource(
+                            R.string.dashboard_messages_progress,
+                            progress.processed,
+                            progress.total
+                        )
                     else
-                        "Preparing messages…"
+                        stringResource(R.string.dashboard_preparing_messages)
                 )
             }
         }
@@ -192,7 +201,7 @@ fun RedesignedDashboardScreen(
                 actions = {
                     IconButton(onClick = { navController.navigate(Screen.Insights.route) }) {
                         Icon(
-                            painter = painterResource(id = R.drawable.ic_dialog_info),
+                            painter = painterResource(id = androidR.drawable.ic_dialog_info),
                             contentDescription = "Insights"
                         )
                     }
@@ -213,7 +222,7 @@ fun RedesignedDashboardScreen(
             if (isOlderImportRunning) {
                 item {
                     BackgroundImportStrip(
-                        message = "Loading older messages…",
+                        message = stringResource(R.string.import_loading_older_messages),
                         progress = olderProgress
                     )
                 }
@@ -286,6 +295,7 @@ fun RedesignedDashboardScreen(
                 SummaryHeader(
                     totalDebit = uiState.totalsDebit,
                     totalCredit = uiState.totalsCredit,
+                    currencyCode = uiState.currencyCode,
                     onOpenInsights = {
                         viewModel.prepareInsightsFromDashboard()
                         navController.navigate(Screen.Insights.route)
@@ -321,7 +331,7 @@ fun RedesignedDashboardScreen(
 
             item {
                 Text(
-                    "Recent transactions",
+                    stringResource(R.string.dashboard_recent_transactions),
                     style = MaterialTheme.typography.titleMedium,
                     modifier = Modifier.padding(vertical = 6.dp)
                 )
@@ -387,9 +397,11 @@ fun RedesignedDashboardScreen(
                                     category = category
                                 )
                             },
+                            hasNeverUsedSelfTransfer = viewModel.hasNeverUsedSelfTransfer,
                             onUndoSelfTransfer = {
                                 viewModel.undoSelfTransfer(it)
                             }
+
                         )
 
                         Spacer(Modifier.height(8.dp))
@@ -486,9 +498,16 @@ fun BackgroundImportStrip(
                 Text(
                     text =
                         if (it.total > 0)
-                            "${it.processed} / ${it.total} messages processed"
+                            stringResource(
+                                R.string.import_messages_processed,
+                                it.processed,
+                                it.total
+                            )
                         else
-                            "${it.processed} messages processed",
+                            stringResource(
+                                R.string.import_messages_processed_simple,
+                                it.processed
+                            ),
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -496,7 +515,6 @@ fun BackgroundImportStrip(
         }
     }
 }
-
 
 
 @Composable
@@ -634,7 +652,6 @@ fun ApplySelfTransferRuleDialog(
 }
 
 
-
 @Composable
 fun InternalTransferSectionHeader(
     title: String,
@@ -696,7 +713,6 @@ fun InsightsFrequencySelector(
         }
     }
 }
-
 
 
 fun FrequencyFilter.isEnabled(ui: InsightsUiState): Boolean =
@@ -790,7 +806,6 @@ private fun FrequencyChip(
 }
 
 
-
 @Composable
 fun ProExplainDialog(
     title: String,
@@ -824,6 +839,7 @@ fun ProExplainDialog(
 fun MonthlyTrendBarChart(
     bars: List<MonthlyBar>,
     isPro: Boolean,
+    currencyCode: String,
     onMonthSelected: (YearMonth) -> Unit,
     onUpgrade: () -> Unit
 ) {
@@ -854,6 +870,7 @@ fun MonthlyTrendBarChart(
             MonthlyBarItem(
                 bar = bar,
                 max = max,
+                currencyCode = currencyCode,
                 onClick = { onMonthSelected(bar.month) }
             )
         }
@@ -900,20 +917,10 @@ fun CollapsibleSectionHeader(
 private fun MonthlyBarItem(
     bar: MonthlyBar,
     max: Double,
+    currencyCode: String,
     onClick: () -> Unit
 ) {
-    fun formatRupeesCompact(amount: Double): String {
-        return when {
-            amount >= 1_00_000 ->
-                "₹${(amount / 1_00_000).roundToInt()}L"
 
-            amount >= 1_000 ->
-                "₹${(amount / 1_000).roundToInt()}K"
-
-            else ->
-                "₹${amount.roundToInt()}"
-        }
-    }
     val heightRatio = (bar.total / max).coerceIn(0.05, 1.0)
     val barHeight = 160.dp * heightRatio.toFloat()
 
@@ -928,7 +935,10 @@ private fun MonthlyBarItem(
 
         // 🔹 VALUE LABEL (NEW)
         Text(
-            text = formatRupeesCompact(bar.total),
+            text = MoneyFormatter.compact(
+                amount = bar.total,
+                currencyCode = currencyCode
+            ),
             style = MaterialTheme.typography.labelSmall.copy(
                 fontSize = 10.sp
             ),
@@ -1009,7 +1019,12 @@ fun InsightsScreen(
     val freqFilter by viewModel.insightsFrequencyFilter.collectAsState()
     val uiState by viewModel.uiState.collectAsState()
     BackHandler {
-        exitInsights(navController,viewModel,viewModel.uiState.value.mode,viewModel.uiState.value.period)
+        exitInsights(
+            navController,
+            viewModel,
+            viewModel.uiState.value.mode,
+            viewModel.uiState.value.period
+        )
     }
 
     // Reset filter whenever entering Insights
@@ -1057,10 +1072,15 @@ fun InsightsScreen(
                 title = { Text("Insights") },
                 navigationIcon = {
                     IconButton(onClick = {
-                        exitInsights(navController,viewModel,viewModel.uiState.value.mode,viewModel.uiState.value.period)
+                        exitInsights(
+                            navController,
+                            viewModel,
+                            viewModel.uiState.value.mode,
+                            viewModel.uiState.value.period
+                        )
                     }) {
                         Icon(
-                            painter = painterResource(id = R.drawable.ic_menu_close_clear_cancel),
+                            painter = painterResource(id = androidR.drawable.ic_menu_close_clear_cancel),
                             contentDescription = "Back"
                         )
                     }
@@ -1071,7 +1091,9 @@ fun InsightsScreen(
         ApplySelfTransferUiHost(viewModel)
         if (lockedMode != null) {
             ProExplainDialog(
-                title = "${lockedMode!!.name.lowercase().replaceFirstChar { it.uppercase() }} view is Pro",
+                title = "${
+                    lockedMode!!.name.lowercase().replaceFirstChar { it.uppercase() }
+                } view is Pro",
                 message = viewModel.explainDashboardModeLock(lockedMode!!),
                 onUpgrade = {
                     lockedMode = null
@@ -1124,6 +1146,7 @@ fun InsightsScreen(
                 MonthlyTrendBarChart(
                     bars = monthlyBars,
                     isPro = isPro,
+                    currencyCode = uiState.currencyCode,
                     onMonthSelected = { month ->
                         viewModel.setMode(DashboardMode.MONTH) // safe no-op if already month
                         viewModel.setPeriod(month)
@@ -1136,7 +1159,6 @@ fun InsightsScreen(
                 Spacer(Modifier.height(24.dp))
 
             }
-
 
 
             /* -------------------------------------------------------------
@@ -1334,6 +1356,7 @@ fun InsightsScreen(
                                     category = category
                                 )
                             },
+                            hasNeverUsedSelfTransfer = viewModel.hasNeverUsedSelfTransfer,
                             onDebugClick = {
                                 viewModel.onMessageClicked(row.tx)
                                 viewModel.debugReprocessSms(row.tx.id)
@@ -1359,6 +1382,7 @@ fun InsightsScreen(
                                 when (row.id) {
                                     "main_transactions" ->
                                         viewModel.toggleMainSection()
+
                                     "internal_transfers" ->
                                         viewModel.toggleInternalSection()
                                 }
@@ -1381,7 +1405,7 @@ fun InsightsScreen(
    ----------------------------------------------------------- */
 
 @Composable
-fun SummaryHeader(totalDebit: Double, totalCredit: Double, onOpenInsights: () -> Unit) {
+fun SummaryHeader(totalDebit: Double, totalCredit: Double, currencyCode: String, onOpenInsights: () -> Unit) {
     Row(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.SpaceBetween,
@@ -1389,17 +1413,31 @@ fun SummaryHeader(totalDebit: Double, totalCredit: Double, onOpenInsights: () ->
     ) {
         Column {
             Text("Total spent", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
-            Text("₹${totalDebit.toInt()}", style = MaterialTheme.typography.headlineSmall)
+            Text(
+                MoneyFormatter.format(
+                    amount = totalDebit,
+                    currencyCode = currencyCode
+                ), style = MaterialTheme.typography.headlineSmall
+            )
         }
         Column(horizontalAlignment = Alignment.End) {
             Text("Total credit", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
-            Text("₹${totalCredit.toInt()}", style = MaterialTheme.typography.titleMedium)
+            Text(
+                MoneyFormatter.format(
+                    amount = totalCredit,
+                    currencyCode = currencyCode
+                ),
+                style = MaterialTheme.typography.titleMedium
+            )
         }
     }
 }
-private fun exitInsights(navController: NavController, viewModel: SmsImportViewModel,
-                         mode: DashboardMode,
-                         period: YearMonth) {
+
+private fun exitInsights(
+    navController: NavController, viewModel: SmsImportViewModel,
+    mode: DashboardMode,
+    period: YearMonth
+) {
     // 🔒 Save current insights state
     viewModel.rememberInsightsContext(
         mode = mode,
@@ -1555,6 +1593,7 @@ fun GroupedMerchantRow(
                                 category = category
                             )
                         },
+                        hasNeverUsedSelfTransfer = viewModel.hasNeverUsedSelfTransfer,
                         onDebugClick = {
                             viewModel.onMessageClicked(tx)
                             viewModel.debugReprocessSms(tx.id)
@@ -1614,7 +1653,7 @@ private fun TransactionRowContent(
                     (sms.linkType == "INTERNAL_TRANSFER" || sms.linkType == "USER_SELF")
                 ) {
                     // show "Internal Transfer" badge
-                Row(
+                    Row(
                         verticalAlignment = Alignment.CenterVertically,
                         modifier = Modifier.padding(bottom = 6.dp)
                     ) {
@@ -1624,7 +1663,7 @@ private fun TransactionRowContent(
                             tint = Color(0xFF2E7D32)
                         )
                         Text(
-                            text = "Internal Transfer",
+                            text = stringResource(R.string.self_transfer_badge),
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.primary,
                             modifier = Modifier.padding(start = 6.dp)
@@ -1635,9 +1674,11 @@ private fun TransactionRowContent(
             }
             Column(horizontalAlignment = Alignment.End) {
                 Text(
-                    text =
-                        if (isCredit) "+₹${sms.amount.toInt()}"
-                        else "-₹${sms.amount.toInt()}",
+                    text = MoneyFormatter.format(
+                        amount = if (isCredit) sms.amount else -sms.amount,
+                        currencyCode = sms.currencyCode,
+                        showSign = true
+                    ),
                     style = MaterialTheme.typography.bodyLarge,
                     color = if (isCredit) Color(0xFF2E7D32) else Color.Red
                 )
@@ -1704,7 +1745,7 @@ fun ExpenseFrequencySelector(
 
                     val disabled =
                         isSmallAmount &&
-                                (freq == ExpenseFrequency.YEARLY )
+                                (freq == ExpenseFrequency.YEARLY)
 
                     DropdownMenuItem(
                         enabled = !disabled,
@@ -1753,6 +1794,7 @@ private const val MIN_AMOUNT_FOR_FREQUENCY_SELECTOR = 1000.0
 fun TransactionRow(
     sms: SmsEntity,
     isExpanded: Boolean,
+    hasNeverUsedSelfTransfer: Boolean,
     onClick: (SmsEntity) -> Unit,
     onDebugClick: () -> Unit,
     onChange: (ExpenseFrequency) -> Unit,
@@ -1792,25 +1834,56 @@ fun TransactionRow(
                         .padding(horizontal = 16.dp, vertical = 12.dp),
                     verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
+                    // 🔒 EDUCATION: show only when user hasn't used Self Transfer yet
+                    if (
+                        !sms.isNetZero &&
+                        hasNeverUsedSelfTransfer   // boolean from VM / prefs
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .background(
+                                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f),
+                                    shape = RoundedCornerShape(8.dp)
+                                )
+                                .padding(10.dp),
+                            verticalAlignment = Alignment.Top
+                        ) {
+                            Icon(
+                                imageVector = Icons.Outlined.Info,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier
+                                    .size(18.dp)
+                                    .padding(top = 2.dp)
+                            )
+
+                            Spacer(Modifier.width(8.dp))
+
+                            Text(
+                                text = stringResource(R.string.self_transfer_hint),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text("Self transfer")
+                        Text(stringResource(R.string.self_transfer_label))
                         Switch(
                             checked = sms.isNetZero &&
                                     (sms.linkType == "INTERNAL_TRANSFER" || sms.linkType == "USER_SELF"),
-                                    onCheckedChange = { checked ->
+                            onCheckedChange = { checked ->
                                 if (checked) {
                                     onMarkAsSelfTransfer(sms)
-                                }
-                                else onUndoSelfTransfer(sms)
+                                } else onUndoSelfTransfer(sms)
                             }
                         )
                     }
-
-
 
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -1827,11 +1900,6 @@ fun TransactionRow(
                             )
                         }
                     }
-                    TextButton(
-                        onClick = onDebugClick
-                    ) {
-                        Text("Re-run classification (debug)")
-                    }
 
                     if (sms.amount >= MIN_AMOUNT_FOR_FREQUENCY_SELECTOR) {
                         ExpenseFrequencySelector(
@@ -1840,8 +1908,6 @@ fun TransactionRow(
                             onChange = onChange
                         )
                     }
-
-
 
                     if (!sms.merchant.isNullOrBlank() && !sms.category.isNullOrBlank()) {
                         Divider()
