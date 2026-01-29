@@ -338,13 +338,20 @@ class SmsImportViewModel @Inject constructor(
 
             val hasAnyData =
                 hasMonthlyData || hasYearlyData
+            val distinctCurrencies =
+                periodFiltered.map { it.currencyCode }.distinct()
+
+            val isMultiCurrency =
+                distinctCurrencies.size > 1
 
             InsightsUiState(
                 frequency = selectedFilter,
                 hasMonthlyData = hasMonthlyData,
                 hasYearlyData = hasYearlyData,
-                hasAnyData = hasAnyData
+                hasAnyData = hasAnyData,
+                isMultiCurrency = isMultiCurrency
             )
+
         }.stateIn(
             viewModelScope,
             SharingStarted.Eagerly,
@@ -352,7 +359,8 @@ class SmsImportViewModel @Inject constructor(
                 frequency = FrequencyFilter.MONTHLY_ONLY,
                 hasMonthlyData = false,
                 hasYearlyData = false,
-                hasAnyData = false
+                hasAnyData = false,
+                isMultiCurrency = false
             )
         )
 
@@ -361,8 +369,10 @@ class SmsImportViewModel @Inject constructor(
         val frequency: FrequencyFilter,
         val hasMonthlyData: Boolean,
         val hasYearlyData: Boolean,
-        val hasAnyData: Boolean
+        val hasAnyData: Boolean,
+        val isMultiCurrency: Boolean
     )
+
 
 
     fun prevPeriod() {

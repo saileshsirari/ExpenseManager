@@ -468,6 +468,7 @@ fun RedesignedDashboardScreen(
         }
     }
 }
+
 /* -----------------------------------------------------------
    2) Insights screen: full-size pie chart + category breakdown
    - Timeframe toggle (Month / Quarter / Year)
@@ -576,7 +577,7 @@ fun InsightsScreen(
                 .padding(padding)
                 .padding(16.dp)
         ) {
-            if (uiState.isMultiCurrency) {
+            if (insightsUi.isMultiCurrency) {
                 item {
                     InfoStrip(
                         title = stringResource(R.string.multi_currency_block_title),
@@ -614,7 +615,7 @@ fun InsightsScreen(
             // ----------------------------
             // 🔹 Monthly Trends
             // ----------------------------
-            if (!uiState.isMultiCurrency) {
+            if (!insightsUi.isMultiCurrency) {
                 item {
 
                     MonthlyTrendBarChart(
@@ -639,14 +640,8 @@ fun InsightsScreen(
             /* -------------------------------------------------------------
                 CATEGORY LIST
             ------------------------------------------------------------- */
-            if (uiState.isMultiCurrency) {
-                item {
-                    InfoStrip(
-                        title = stringResource(R.string.multi_currency_block_title),
-                        body = stringResource(R.string.multi_currency_block_body)
-                    )
-                }
-            } else {
+
+                if (!insightsUi.isMultiCurrency) {
                 item {
                     Card(
                         modifier = Modifier.fillMaxWidth(),
@@ -724,42 +719,36 @@ fun InsightsScreen(
                                     }
 
                                     Spacer(Modifier.height(8.dp))
-                                    if (uiState.isMultiCurrency) {
-                                        InfoStrip(
-                                            title = stringResource(R.string.multi_currency_block_title),
-                                            body = stringResource(R.string.multi_currency_block_body)
+
+                                    // 🔹 Pie chart
+                                    if (categoriesAll.isNotEmpty()) {
+                                        CategoryPieChart(
+                                            data = categoriesAll.map { it.total },
+                                            labels = categoriesAll.map { it.name },
+                                            colors = categoriesAll.map { it.color },
+                                            selectedLabel = uiState.selectedType,
+                                            onSliceClick = { clicked ->
+                                                viewModel.setSelectedTypeSafe(clicked)
+                                            }
                                         )
                                     } else {
-                                        // 🔹 Pie chart
-                                        if (categoriesAll.isNotEmpty()) {
-                                            CategoryPieChart(
-                                                data = categoriesAll.map { it.total },
-                                                labels = categoriesAll.map { it.name },
-                                                colors = categoriesAll.map { it.color },
-                                                selectedLabel = uiState.selectedType,
-                                                onSliceClick = { clicked ->
-                                                    viewModel.setSelectedTypeSafe(clicked)
-                                                }
-                                            )
-                                        } else {
-                                            Text(
-                                                "No category data found",
-                                                style = MaterialTheme.typography.bodyMedium
-                                            )
-                                        }
+                                        Text(
+                                            "No category data found",
+                                            style = MaterialTheme.typography.bodyMedium
+                                        )
                                     }
-
-                                    Spacer(Modifier.height(12.dp))
-
-
-                                    // 🔹 Category list (with Pro preview logic)
-                                    CategoryListCard(
-                                        title = null, // header already shown
-                                        items = categoryInsight.items,
-                                        locked = categoryInsight.isLocked,
-                                        onUpgrade = { viewModel.onUpgradeClicked() }
-                                    )
                                 }
+
+                                Spacer(Modifier.height(12.dp))
+
+
+                                // 🔹 Category list (with Pro preview logic)
+                                CategoryListCard(
+                                    title = null, // header already shown
+                                    items = categoryInsight.items,
+                                    locked = categoryInsight.isLocked,
+                                    onUpgrade = { viewModel.onUpgradeClicked() }
+                                )
                             }
                         }
                     }
@@ -775,13 +764,15 @@ fun InsightsScreen(
                 )
                 Spacer(Modifier.height(16.dp))
             }
+            if (!insightsUi.isMultiCurrency) {
 
-            item {
-                WalletInsightCard(
-                    walletInsight = walletInsight,
-                    onUpgrade = { viewModel.onUpgradeClicked() }
-                )
-                Spacer(Modifier.height(16.dp))
+                item {
+                    WalletInsightCard(
+                        walletInsight = walletInsight,
+                        onUpgrade = { viewModel.onUpgradeClicked() }
+                    )
+                    Spacer(Modifier.height(16.dp))
+                }
             }
 
 
@@ -1376,6 +1367,7 @@ fun MonthlyTrendBarChart(
         }
     }
 }
+
 @Composable
 fun InfoStrip(
     title: String,
@@ -1550,15 +1542,18 @@ fun LockedTrendPreview(onUpgrade: () -> Unit) {
 }
 
 
-
-
 /* -----------------------------------------------------------
    3) Small reusable components
    - SummaryHeader, QuickActionsRow, SmallDonutCard, TransactionRow
    ----------------------------------------------------------- */
 
 @Composable
-fun SummaryHeader(totalDebit: Double, totalCredit: Double, currencyCode: String, onOpenInsights: () -> Unit) {
+fun SummaryHeader(
+    totalDebit: Double,
+    totalCredit: Double,
+    currencyCode: String,
+    onOpenInsights: () -> Unit
+) {
     Row(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.SpaceBetween,
